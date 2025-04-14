@@ -175,3 +175,6 @@ cython_debug/
 
 # VSCode stuff i guess
 .vscode/
+
+# giant fasttext models and similar
+src/enochian_translation_team/tools/models/*

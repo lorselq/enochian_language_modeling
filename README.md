@@ -5,6 +5,8 @@ Hacking the Enochian language and Liber Loagaeth
 
 `dictionary.json` is, at present, not final—I am still refining the dictionary. A lot of this is under development—very early stages.
 
+You also will want to run `poetry run python -m src/enochian_translation_team/tools/train_fasttext_model.py` to get the models going before running `main.py`. The models are absolutely necessary for this to work.
+
 ## Agentic team plan (for phase one)
 
 1. Orchestrator Agent
