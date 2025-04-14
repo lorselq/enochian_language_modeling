@@ -9,9 +9,10 @@ You also will want to run `poetry run python -m src/enochian_translation_team/to
 
 ## Applied computational linguistics (for... pre-phase one)
 
-Throw FastText at it. See the above mentioned `train_fasttext_model.py` for some sense as to what I'm going for, comparing it to the `dictionary.json`.
+1. Throw FastText at it the `dictionary.json`. See the above mentioned `train_fasttext_model.py` for some sense as to what I'm going for.
+2. Once the `dictionary.json` is complete (I still have about eight to eleven letters to get through before it's done at this point, 4/14/2025), I can craft something that extracts possible roots based on semantic similarities.
 
-## Agentic team plan (for phase one)
+## Agentic team plan (for actually phase one)
 
 1. Orchestrator Agent
     - Role: Overseer and final arbiter
