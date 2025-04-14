@@ -345,7 +345,7 @@
     {
         "word": "ADGT",
         "normalized": "adgt",
-        "definition": "can (e.g.,",
+        "definition": "can, able to",
         "canon_word": true,
         "key_citations": [
             {
@@ -381,7 +381,7 @@
     },
     {
         "word": "ADMO",
-        "normalized": "",
+        "normalized": "admo",
         "definition": "God is man",
         "canon_word": false,
         "key_citations": [],
@@ -402,8 +402,8 @@
     },
     {
         "word": "ADLPH",
-        "normalized": "",
-        "definition": "",
+        "normalized": "adlph",
+        "definition": "among the first to give",
         "canon_word": false,
         "key_citations": [],
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
@@ -562,7 +562,7 @@
     },
     {
         "word": "AGES",
-        "normalized": "",
+        "normalized": "ages",
         "definition": "not the 4th",
         "canon_word": false,
         "key_citations": [],
@@ -736,7 +736,7 @@
     },
     {
         "word": "ALIDA",
-        "normalized": "",
+        "normalized": "alida",
         "definition": "one in name with",
         "canon_word": false,
         "key_citations": [],
@@ -872,7 +872,7 @@
         "definition": "those that fear God",
         "canon_word": true,
         "key_citations": [],
-        "commentary": "five books of mystery, part of the title of Liber Loagaeth, \"Amzes naghezes Hardeh.\" Also, consider HOXMARCH, \"fear of God\""
+        "commentary": "Five Books of Mystery, part of the title of Liber Loagaeth, \"Amzes naghezes Hardeh.\" Also, consider HOXMARCH, \"fear of God\""
     },
     {
         "word": "ANANAEL",
@@ -1393,10 +1393,19 @@
     },
     {
         "word": "AVINY",
-        "normalized": "",
-        "definition": "",
-        "canon_word": false,
-        "key_citations": [],
+        "normalized": "aviny",
+        "definition": "millstones",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9",
+                "context": "42:"
+            },
+            {
+                "location": "...they are in their eyes greater than *millstones* of the earth.\"",
+                "context": ""
+            }
+        ],
         "commentary": ""
     },
     {
@@ -2750,7 +2759,7 @@
     },
     {
         "word": "CEM",
-        "normalized": "",
+        "normalized": "cem",
         "definition": "of the nine,unto the nine,with the nine",
         "canon_word": false,
         "key_citations": [],
@@ -4074,7 +4083,7 @@
     },
     {
         "word": "DOSCH",
-        "normalized": "",
+        "normalized": "dosch",
         "definition": "of the night",
         "canon_word": false,
         "key_citations": [],
@@ -4670,8 +4679,8 @@
     },
     {
         "word": "EOAN",
-        "normalized": "",
-        "definition": "",
+        "normalized": "eoan",
+        "definition": "making",
         "canon_word": false,
         "key_citations": [],
         "commentary": "found in the Table of 12|perimeter of the Holy Table"
@@ -5495,14 +5504,6 @@
         "commentary": "origin unclear; came from the archidox dictionary, but no notes about where it's from"
     },
     {
-        "word": "GI",
-        "normalized": "",
-        "definition": "",
-        "canon_word": false,
-        "key_citations": [],
-        "commentary": ""
-    },
-    {
         "word": "GIAR",
         "normalized": "giar",
         "definition": "harvest",
@@ -5839,8 +5840,8 @@
     },
     {
         "word": "GORS",
-        "normalized": "",
-        "definition": "",
+        "normalized": "gors",
+        "definition": "praise, praises",
         "canon_word": false,
         "key_citations": [],
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
@@ -7264,14 +7265,6 @@
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
     },
     {
-        "word": "LEVITHMONG",
-        "normalized": "",
-        "definition": "",
-        "canon_word": false,
-        "key_citations": [],
-        "commentary": ""
-    },
-    {
         "word": "LEN",
         "normalized": "len",
         "definition": "presence of the Daughter of Light",
@@ -7536,8 +7529,8 @@
     },
     {
         "word": "LORSLQ",
-        "normalized": "",
-        "definition": "",
+        "normalized": "lorselq",
+        "definition": "flowers",
         "canon_word": true,
         "key_citations": [
             {
@@ -8026,7 +8019,7 @@
     },
     {
         "word": "MALS",
-        "normalized": "",
+        "normalized": "mals",
         "definition": "(the Enochian letter for 'P')",
         "canon_word": true,
         "key_citations": [],
@@ -8042,8 +8035,8 @@
     },
     {
         "word": "MANGET",
-        "normalized": "",
-        "definition": "",
+        "normalized": "manget",
+        "definition": "descended of God",
         "canon_word": false,
         "key_citations": [],
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
@@ -8252,7 +8245,7 @@
     },
     {
         "word": "MED",
-        "normalized": "",
+        "normalized": "med",
         "definition": "the star of five",
         "canon_word": false,
         "key_citations": [],
@@ -8600,7 +8593,7 @@
     },
     {
         "word": "MOZOD",
-        "normalized": "mozod",
+        "normalized": "moz",
         "definition": "joy of God",
         "canon_word": true,
         "key_citations": [],
@@ -8613,5 +8606,565 @@
         "canon_word": true,
         "key_citations": [],
         "commentary": "one of the secret names of God from the Great Table"
+    },
+    {
+        "word": "NA",
+        "normalized": "enay",
+        "definition": "Lord, the name of the trinity (when temporarily separated into three)",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Five Books, and occurs many times throughout Liber Loagaeth"
+    },
+    {
+        "word": "NA",
+        "normalized": "na",
+        "definition": "(the Enochian word for the letter 'H')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "alternate to NAHATH"
+    },
+    {
+        "word": "NADO",
+        "normalized": "nado",
+        "definition": "fiery God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAH",
+        "normalized": "nah",
+        "definition": "glorious",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAHA",
+        "normalized": "naha",
+        "definition": "glory of God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAHATH",
+        "normalized": "nahath",
+        "definition": "(the Enochian word for the letter 'H')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "alternate to NA"
+    },
+    {
+        "word": "NAB",
+        "normalized": "nab",
+        "definition": "Infinite God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NACRO",
+        "normalized": "nacro",
+        "definition": "renewal, resurrection",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAGEL",
+        "normalized": "nagel",
+        "definition": "the Lord of Hosts is self-begotten",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAGHEZES",
+        "normalized": "naghezes",
+        "definition": "worthiness (?)",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "part of the angelic title of Liber Loagaeth, AMZES NAGHEZES HARDEH, which translates to \"Let Those That Fear God, and Are Worthy, Read\""
+    },
+    {
+        "word": "NALVAGE",
+        "normalized": "nalvage",
+        "definition": "earth-fleer",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "a translation given for Nalvage's name, from True and Faithful Relations; the Latin given is \"Fuga Terrestrium\""
+    },
+    {
+        "word": "NANAEEL",
+        "normalized": "nanaeel",
+        "definition": "(my) power",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.50",
+                "context": "...you might work *my power*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NANBA",
+        "normalized": "nanba",
+        "definition": "thorns",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "17.6",
+                "context": "...whose wings are *thorns* to stir up vexation..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NAP",
+        "normalized": "nap",
+        "definition": "sword",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAPEAI",
+        "normalized": "napeai",
+        "definition": "swords",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "13.1",
+                "context": "...O you *swords of* the south..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NAPTA",
+        "normalized": "napta",
+        "definition": "(two-edged) swords",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.4",
+                "context": "...with *two-edged swords* flaming..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NAT",
+        "normalized": "nat",
+        "definition": "the Lord",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAX",
+        "normalized": "nax",
+        "definition": "wrath of God (previously listed as 'meaning unknown')",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAXT",
+        "normalized": "naxt",
+        "definition": "The Ruler of the Earth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NAZ",
+        "normalized": "naz",
+        "definition": "(something shaped like a rectangular prism)",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "commentary:"
+    },
+    {
+        "word": "NAZARTH",
+        "normalized": "nazarth",
+        "definition": "pillars of gladness",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.16",
+                "context": "...I fastened *pillars of gladness*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NAZAVABH",
+        "normalized": "nazavabh",
+        "definition": "hyacinth pillars",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.5",
+                "context": "...third heaven made of *hyacinth pillars*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NAZPSAD",
+        "normalized": "nazpsad",
+        "definition": "sword",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.15",
+                "context": "...the sun is as *a sword*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NEC",
+        "normalized": "nec",
+        "definition": "holiness",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NECRA",
+        "normalized": "necra",
+        "definition": "beginning with the Tree-of-Life",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NEG",
+        "normalized": "neg",
+        "definition": "holy",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NEH",
+        "normalized": "neh",
+        "definition": "holy God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NENNI",
+        "normalized": "nenni",
+        "definition": "you have become",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "from the dictionary provided on the archidox website, attributed to Crowley"
+    },
+    {
+        "word": "NES",
+        "normalized": "nes",
+        "definition": "holiness",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NETAAB",
+        "normalized": "netaab",
+        "definition": "government",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.34",
+                "context": "...placed you in 12 seats of *government*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NETAAIB",
+        "normalized": "netaaib",
+        "definition": "government",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.25",
+                "context": "...provided you *for the government* of the earth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NI",
+        "normalized": "ni",
+        "definition": "(the Enochian word for the number 28)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.12",
+                "context": "...they are become *28* living dwellings..."
+            }
+        ],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits"
+    },
+    {
+        "word": "NIA",
+        "normalized": "nia",
+        "definition": "the twenty-fourth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "NIBM",
+        "normalized": "nibm",
+        "definition": "season",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not used on its own, but can be extrapolated from a compound word of which it's a part"
+    },
+    {
+        "word": "NIDALI",
+        "normalized": "nidali",
+        "definition": "noises",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.83",
+                "context": "Come away, but not *your noises*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NIIS",
+        "normalized": "niis",
+        "definition": "come, come here",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.43",
+                "context": "...*come you*, and obey..."
+            },
+            {
+                "location": "8.46",
+                "context": "...*come*, appear to the terror of the earth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NIISA",
+        "normalized": "niisa",
+        "definition": "come away",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.31",
+                "context": "...*come away*! for I have prepared..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NIISO",
+        "normalized": "niiso",
+        "definition": "come away",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.34",
+                "context": "...*come away*! for the Thunders have spoken..."
+            },
+            {
+                "location": "9.66",
+                "context": "...*come away*! and not your vials..."
+            },
+            {
+                "location": "10.80",
+                "context": "...*come away*! but not your noises..."
+            },
+            {
+                "location": "11.15",
+                "context": "...*come away*! and they gathered them together..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NIZ",
+        "normalized": "niz",
+        "definition": "28 of them, they the 28",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NO",
+        "normalized": "no",
+        "definition": "the Hexagram",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NOALN",
+        "normalized": "noaln",
+        "definition": "may be",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.51",
+                "context": "...that the glory of her *may be* always drunken..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOAN",
+        "normalized": "noan",
+        "definition": "to become",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.33",
+                "context": "For *you are become* a building..."
+            },
+            {
+                "location": "3.5",
+                "context": "...*you are become* the skirts of justice..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOAR",
+        "normalized": "noar",
+        "definition": "is become",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.69",
+                "context": "His name *is become* mighty amongst us."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOAS",
+        "normalized": "noas",
+        "definition": "to become",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.5",
+                "context": "The mighty sounds...*are become* as olives..."
+            },
+            {
+                "location": "11.19",
+                "context": "...and *became* the house of death."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOASMI",
+        "normalized": "noasmi",
+        "definition": "let become",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.97",
+                "context": "His buildings, *let them become* caves..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOBLOH",
+        "normalized": "nobloh",
+        "definition": "palms, palms of",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.27",
+                "context": "...trussed you together as *the palms of* my hands..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOCO",
+        "normalized": "noco",
+        "definition": "servant",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.83",
+                "context": "...for I am *a servant of* the same your God..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOGES",
+        "normalized": "noges",
+        "definition": "the Hexagram is not the fourth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NOIB",
+        "normalized": "noib",
+        "definition": "yea, yes",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.71",
+                "context": "...woe, woe, *yea* woe be to the earth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOL",
+        "normalized": "nol",
+        "definition": "the first Hexagram",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NOMIG",
+        "normalized": "nomig",
+        "definition": "even (as)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.60",
+                "context": "...bringeth forth 1000 *even as* the heart of man..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NONCA",
+        "normalized": "nonca",
+        "definition": "you, to you",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.11",
+                "context": "...*to you* it is said, behold..."
+            }
+        ],
+        "commentary": ""
     }
 ]
