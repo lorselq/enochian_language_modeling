@@ -1,8 +1,9 @@
 import os
-from crewai import Agent, Task, Crew
+from typing import Callable, Optional
+from crewai import Agent, Task, Crew, CrewOutput
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
 
-def run_crew():
+def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str, str], None]] = None) -> CrewOutput:
     from dotenv import load_dotenv
     load_dotenv(override=True)
 
@@ -31,7 +32,8 @@ def run_crew():
         backstory="An expert in theoretical and comparative linguistics with an obsession for lost languages.",
         tools=[linguist_tool],
         verbose=True,
-        llm=local_model_name
+        llm=local_model_name,
+        callbacks = [stream_callback] if stream_callback else []
     )
 
     orchestrator = Agent(
@@ -40,7 +42,8 @@ def run_crew():
         backstory="An experienced linguist and editor who oversees complex language decoding projects.",
         tools=[orchestrator_tool],
         verbose=True,
-        llm=local_model_name
+        llm=local_model_name,
+        callbacks = [stream_callback] if stream_callback else []
     )
 
     # --- TASK SETUP ---
@@ -72,7 +75,12 @@ def run_crew():
         verbose=True
     )
 
-    print("[INFO] Running the linguistic agentic team...")
+    if stream_callback:
+        stream_callback("orchestrator", "_Initializing semantic tribunal..._")
+
     result = crew.kickoff()
-    print("\n=== Final Output ===")
-    print(result)
+
+    if stream_callback:
+        stream_callback("orchestrator", f"**Final verdict:**\n\n{result}")
+
+    return result

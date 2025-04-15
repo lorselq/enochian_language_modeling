@@ -3,7 +3,9 @@ Hacking the Enochian language and Liber Loagaeth—because why not look at gloss
 
 ## notes
 
-`dictionary.json` is, at present, not final—I am still refining the dictionary. A lot of this is under development—very early stages.
+To run it, use `poetry run enochian-gui`.
+
+`dictionary.json` is, at present, not final (it currently lives in `src/enochian_translation_team/data/dictionary.json`—I am still refining the dictionary. A lot of this is under development—very early stages.
 
 You also will want to run `poetry run python -m src/enochian_translation_team/tools/train_fasttext_model.py` to get the models going before running `main.py`. The models are absolutely necessary for this to work.
 
