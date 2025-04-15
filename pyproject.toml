@@ -17,8 +17,11 @@ gensim = "^4.3.3"
 scikit-learn = "^1.6.1"
 python-levenshtein = "^0.27.1"
 sentence-transformers = "^4.0.2"
+streamlit = "^1.44.1"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.poetry.scripts]
+enochian-gui = "enochian_translation_team.main:main"

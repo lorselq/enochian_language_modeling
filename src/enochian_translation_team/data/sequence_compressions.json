@@ -1,0 +1,15 @@
+[
+    {
+      "from": "pirg",
+      "to": "prg",
+      "confidence": "high",
+      "direction": "from"
+    },
+    {
+      "from": "purg",
+      "to": "prg",
+      "confidence": "high",
+      "direction": "from"
+    }
+  ]
+  
