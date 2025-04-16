@@ -92,7 +92,7 @@ def load_model(path):
     return FastText.load(path)
 
 # === 8. Main ===
-if __name__ == "__main__":
+def main():
     paths = get_config_paths()
 
     print("[+] Loading corpus...")
@@ -114,3 +114,6 @@ if __name__ == "__main__":
     save_model(model, paths["model_output"])
 
     print("[✓] Done. Use inspect_model.py to examine your weird beautiful word-children.")
+    
+if __name__ == "__main__":
+    main()

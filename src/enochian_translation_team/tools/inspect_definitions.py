@@ -6,36 +6,25 @@ from sentence_transformers import SentenceTransformer, util
 from enochian_translation_team.utils.config import get_config_paths
 
 # === 0. Establish substitution map for later reference ===
-def establish_subst_map():
-    return {
-        "a": ["a", "un"],
-        "b": ["b", "be", "bi", "pa", "pah"],
-        "c": ["c", "t", "veh", "ve"],
-        "d": ["d", "de", "di"],
-        "e": ["e", "graph", "graf"],
-        "f": ["f", "ef", "or"],
-        "g": ["g", "ge", "ged"],
-        "h": ["h", "na", "nahath"],
-        "i": ["i", "y", "j", "gon"],
-        "l": ["l", "el", "ur"],
-        "m": ["m", "em", "tal"],
-        "n": ["n", "en", "drux", "drun", "dru"],
-        "o": ["o", "med"],
-        "p": ["p", "mal", "mals"],
-        "q": ["q", "qu", "qua", "ger"],
-        "s": ["s", "es", "fam"],
-        "t": ["t", "c", "gisg"],
-        "u": ["u", "v", "w", "van", "uan"],
-        "v": ["v", "u", "w", "van", "uan"],
-        "x": ["x", "ex", "pal"],
-        "z": ["z", "zod", "ceph", "cef"]
-    }
+def load_substitution_map():
+    path = get_config_paths()["substitution_map"]
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    
+    subst_map = {}
+    for k, v in raw.items():
+        subs = []
+        for alt in v["alternates"]:
+            if alt["direction"] in ["to", "both"]:
+                subs.append(alt["value"])
+        subst_map[k] = subs if subs else [k]
+    return subst_map
 
 # === 1. Load Dictionary ===
 def load_entries():
     path = get_config_paths()["dictionary"]
     with open(path, "r", encoding="utf-8") as f:
-        return [e for e in json.load(f) if e.get("normalized")]
+        return json.load(f)
 
 # === 2. Load Model ===
 def load_fasttext():
@@ -75,13 +64,12 @@ def definition_similarity(def1, def2, sentence_model):
     return float(util.cos_sim(emb1, emb2))
 
 # === 6. Find Similar Words ===
-def find_semantically_similar_words(ft_model, sent_model, entries, target_word, topn=10):
-    fasttext_weight = 0.6
-    definition_weight = 0.4
+def find_semantically_similar_words(ft_model, sent_model, entries, target_word, subst_map, topn=11):
+    fasttext_weight = 0.45
+    definition_weight = 0.55
     
-    subst_map = establish_subst_map()
     normalized_query = normalize_form(target_word)
-    variants = generate_variants(normalized_query, subst_map, max_subs=2)
+    variants = generate_variants(normalized_query, subst_map)
 
     target_entry = next((e for e in entries if normalize_form(e["normalized"]) == normalized_query), None)
     if not target_entry:
@@ -94,31 +82,40 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
         if cand_norm == normalized_query:
             continue
 
-        # Check if candidate word is a variant match
-        variant_score = max((ft_model.wv.similarity(v, cand_norm)
-                             for v in variants if v in ft_model.wv and cand_norm in ft_model.wv), default=0.0)
+        # FastText similarity (max across variants)
+        ft_score = 0.0
+        if cand_norm in ft_model.wv:
+            ft_score = max(
+                (ft_model.wv.similarity(v, cand_norm) for v in variants if v in ft_model.wv),
+                default=0.0
+            )
 
-        # Semantic definition similarity
-        def_score = definition_similarity(target_entry.get("definition", ""), entry.get("definition", ""), sent_model)
+        # Semantic similarity (definitions)
+        def_score = definition_similarity(
+            target_entry.get("definition", ""),
+            entry.get("definition", ""),
+            sent_model
+        )
 
-        # Combined score
-        final_score = (fasttext_weight * variant_score) + (definition_weight * def_score)
+        # Combined weighted score
+        final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
 
         results.append({
             "word": entry["word"],
             "normalized": entry["normalized"],
             "definition": entry.get("definition", ""),
-            "fasttext": round(variant_score, 3),
+            "fasttext": round(ft_score, 3),
             "semantic": round(def_score, 3),
             "score": round(final_score, 3),
-            "levenshtein": levenshtein_distance(normalized_query, cand_norm)
+            "levenshtein": levenshtein_distance(normalized_query, cand_norm),
+            "citations": entry.get("key_citations", [])
         })
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:topn]
 
 # === 7. CLI Entry Point ===
-if __name__ == "__main__":
+def main():
     if len(sys.argv) < 2:
         print("Usage: poetry run python inspect_model.py <word>")
         sys.exit(1)
@@ -128,12 +125,25 @@ if __name__ == "__main__":
     entries = load_entries()
     ft_model = load_fasttext()
     sent_model = load_sentence_model()
+    subst_map = load_substitution_map()
 
     print(f"[+] Querying semantically similar roots for: '{query}'\n")
-    results = find_semantically_similar_words(ft_model, sent_model, entries, query)
-
+    results = find_semantically_similar_words(
+        ft_model=ft_model,
+        sent_model=sent_model,
+        entries=entries,
+        target_word=query,
+        subst_map=subst_map
+    )
+    
     for r in results:
-        print(f"  - {r['normalized']} (score: {r['score']}, fast: {r['fasttext']}, sem: {r['semantic']}, lev: {r['levenshtein']}): {r['definition']}")
+        print(f"\n🔹 {r['word']} (score: {r['score']} | FT: {r['fasttext']} | Sem: {r['semantic']} | Lev: {r['levenshtein']})")
+        print(f"   ↳ {r['definition']}")
+        for c in r["citations"]:
+            print(f"     📜 {c['context']}")
 
     if not results:
         print("[!] No similar words found.")
+
+if __name__ == "__main__":
+    main()
