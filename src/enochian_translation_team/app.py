@@ -1,9 +1,30 @@
-# src/enochian_translation_team/app.py
-
+import datetime
+from pathlib import Path
+from collections import defaultdict
 import streamlit as st
+import streamlit.components.v1 as components
 from enochian_translation_team.crew import run_crew  # Import here, safely
 # Placeholder for future import!! We will get there...
 # from enochian_translation_team.tools.extract_roots import run_root_extraction
+
+token_buffers = defaultdict(str)
+placeholders = {}
+
+def save_log_to_txt():
+    if "log" not in st.session_state or not st.session_state.log:
+        st.warning("🫥 Nothing to log.")
+        return
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = Path("src/enochian_translation_team/logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{timestamp}_log.txt"
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        for role, message in st.session_state.log:
+            f.write(f"{role}: {message.strip()}\n\n")
+
+    st.success(f"📁 Log saved to `{log_path}`")
 
 custom_css = """
 <style>
@@ -80,34 +101,36 @@ custom_css = """
 """
 # --- Streamlit Setup ---
 st.set_page_config(page_title="Enochian Language Modeling Interface", layout="wide")
+
 st.title("📜 Enochian Language Modeling Interface")
+st.markdown(custom_css, unsafe_allow_html=True)
 st.markdown("Because why not look at glossolalia with a fresh set of AIs.")
 
 # --- Sidebar Configuration ---
 st.sidebar.header("⚙️ Configuration")
 dictionary_percent = st.sidebar.slider("Percent of dictionary to process:", 1, 100, 100)
 
-st.markdown(custom_css, unsafe_allow_html=True)
-
 # --- Callback Function ---
 def stream_callback(role, message):
-    if "log" not in st.session_state:
-        st.session_state.log = []
-
-    # Assign emoji badge
+    # Set up emoji and display name
     emoji_map = {
         "Computational Linguist": "💻",
         "Adjudicator": "👩‍⚖️",
         "Skeptic": "🤔",
-        "Archivist": "📚"
+        "Archivist": "📚",
+        "Maestro": "🪄"
     }
-
     badge = emoji_map.get(role, "👤")
-    display_role = f"{badge} {role}"
+    display_name = f"{badge} {role}"
 
-    st.session_state.log.append((display_role, message))
-    with st.chat_message(display_role):
-        st.markdown(message)
+    # Create message box only once
+    if role not in placeholders:
+        with st.chat_message(display_name, avatar=badge):
+            placeholders[role] = st.empty()
+
+    # Append token and update display
+    token_buffers[role] += message
+    placeholders[role].markdown(token_buffers[role])
 
 # --- Button to Trigger Agent Task ---
 if st.sidebar.button("🧠 Extract Root Words"):
@@ -115,17 +138,15 @@ if st.sidebar.button("🧠 Extract Root Words"):
 
     st.markdown("### 💬 Agent Chat Log")
 
-    with st.chat_message("🪄 Maestro"):
-        st.markdown("_Initializing semantic tribunal..._")
+
+    with st.chat_message("ai", avatar="🪄"):
+        st.markdown("**Initializing semantic tribunal...**")
 
     # TEMP: hardcoded word, definition
     run_crew(word="AAI", definition="amongst", stream_callback=stream_callback)
 
-    st.success("Crew has completed their assigned task. Hooray.")
+    st.success("Crew has completed their assigned task. Hooray. 🎉")
 
-# --- Log re-display (e.g., page refresh) ---
-if "log" in st.session_state and st.session_state.log:
-    st.markdown("### 💬 Agent Chat Log (History)")
-    for role, message in st.session_state.log:
-        with st.chat_message(role):
-            st.markdown(message)
+    for role, text in token_buffers.items():
+            st.session_state.log.append((role, text))
+    save_log_to_txt()
