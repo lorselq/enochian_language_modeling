@@ -1,9 +1,8 @@
 import os
 import time
-from openai import OpenAI
 from typing import Optional, Callable
+from openai import OpenAI
 from crewai.tools import BaseTool
-
 
 class QueryModelTool(BaseTool):
     name: str = "Query LM Studio"
@@ -13,7 +12,9 @@ class QueryModelTool(BaseTool):
     )
 
     def _run(
-        self, prompt: str, stream_callback: Optional[Callable[[str], None]] = None
+        self,
+        prompt: str,
+        stream_callback: Optional[Callable[[str, str], None]] = None
     ) -> str:
         try:
             client = OpenAI(
@@ -40,8 +41,7 @@ class QueryModelTool(BaseTool):
                     if content:
                         response_text += content
                         if stream_callback:
-                            stream_callback(content)
-                            time.sleep(0.01)
+                            stream_callback(self.name, content)
                 except Exception as inner:
                     print(f"[!] Inner stream failure: {inner}")
 

@@ -127,6 +127,7 @@ def stream_callback(role, message):
     if role not in placeholders:
         with st.chat_message(display_name, avatar=badge):
             placeholders[role] = st.empty()
+        token_buffers[role] = ""
 
     # Append token and update display
     token_buffers[role] += message
@@ -139,8 +140,8 @@ if st.sidebar.button("🧠 Extract Root Words"):
     st.markdown("### 💬 Agent Chat Log")
 
 
-    with st.chat_message("ai", avatar="🪄"):
-        st.markdown("**Initializing semantic tribunal...**")
+    with st.chat_message("Maestro", avatar="🪄"):
+        st.markdown("_**Initializing semantic tribunal...**_")
 
     # TEMP: hardcoded word, definition
     run_crew(word="AAI", definition="amongst", stream_callback=stream_callback)

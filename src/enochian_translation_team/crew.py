@@ -88,7 +88,7 @@ def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str
         stream_callback("Computational Linguist", "**Computational Linguist:**")
 
     if stream_callback:
-        linguist_callback = lambda msg: stream_callback("Computational Linguist", msg)
+        linguist_callback = (lambda _, msg: stream_callback("Computational Linguist", msg)) if stream_callback else None
     else:
         linguist_callback = None
 
@@ -101,7 +101,7 @@ def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str
         stream_callback("Adjudicator", "**Adjudicator:**")
 
     if stream_callback:
-        adjudicator_callback = lambda msg: stream_callback("Adjudicator", msg)
+        adjudicator_callback = (lambda _, msg: stream_callback("Adjudicator", msg)) if stream_callback else None
     else:
         adjudicator_callback = None
 
