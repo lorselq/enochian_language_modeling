@@ -5,10 +5,9 @@ description = ""
 authors = ["Lorselq <lorselq@gmail.com>"]
 readme = "README.md"
 packages = [{ include = "enochian_translation_team", from = "src" }]
-package-mode = false
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
+python = ">=3.11,<3.12"
 crewai = ">=0.114.0,<0.115.0"
 python-dotenv = "^1.1.0"
 openai = "^1.73.0"
@@ -24,4 +23,7 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
+enochian-build-fasttext = "enochian_translation_team.tools.train_fasttext_model:main"
+enochian-build-ngram-index = "enochian_translation_team.utils.build_ngram_index:main"
+enochian-inspect = "enochian_translation_team.tools.inspect_definitions:main"
 enochian-gui = "enochian_translation_team.main:main"

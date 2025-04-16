@@ -39,7 +39,7 @@ def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str
 
     # --- AGENT SETUP ---
     linguist = Agent(
-        role="Computational Linguist",
+        role="Linguist",
         goal="Propose plausible root structures for Enochian words.",
         backstory="An expert in theoretical and comparative linguistics with an obsession for lost languages.",
         tools=[linguist_tool],
@@ -85,10 +85,10 @@ def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str
     )
 
     if stream_callback:
-        stream_callback("Computational Linguist", "**Computational Linguist:**")
+        stream_callback("Linguist", "**Linguist:**")
 
     if stream_callback:
-        linguist_callback = (lambda _, msg: stream_callback("Computational Linguist", msg)) if stream_callback else None
+        linguist_callback = (lambda _, msg: stream_callback("Linguist", msg)) if stream_callback else None
     else:
         linguist_callback = None
 
@@ -111,6 +111,6 @@ def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str
     )
 
     return {
-        "Computational Linguist": linguist_response,
+        "Linguist": linguist_response,
         "Adjudicator": adjudicator_response
     }

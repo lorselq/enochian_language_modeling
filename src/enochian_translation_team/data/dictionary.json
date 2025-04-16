@@ -2,7 +2,7 @@
     {
         "word": "A",
         "normalized": "a",
-        "definition": "in,on,with",
+        "definition": "in, on, with",
         "canon_word": true,
         "key_citations": [],
         "commentary": ""
@@ -10,7 +10,7 @@
     {
         "word": "AAI",
         "normalized": "aai",
-        "definition": "amongst,amongst you",
+        "definition": "amongst, amongst you",
         "canon_word": true,
         "key_citations": [
             {
@@ -35,7 +35,7 @@
     {
         "word": "AAIOM",
         "normalized": "aaiom",
-        "definition": "amongst,amongst us",
+        "definition": "amongst, amongst us",
         "canon_word": true,
         "key_citations": [
             {
@@ -91,7 +91,7 @@
     {
         "word": "AATH",
         "normalized": "aath",
-        "definition": "",
+        "definition": "work (noun),deeds",
         "canon_word": true,
         "key_citations": [],
         "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do"
@@ -99,7 +99,7 @@
     {
         "word": "ABABALOND",
         "normalized": "ababalond",
-        "definition": "harlot,of a harlot",
+        "definition": "harlot, of a harlot",
         "canon_word": true,
         "key_citations": [
             {
@@ -273,7 +273,7 @@
     {
         "word": "AD",
         "normalized": "ad",
-        "definition": "in the third,with the third",
+        "definition": "in the third, with the third",
         "canon_word": false,
         "key_citations": [],
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
@@ -289,7 +289,7 @@
     {
         "word": "ADAO",
         "normalized": "adao",
-        "definition": "in the third star,with the third star",
+        "definition": "in the third star, with the third star",
         "canon_word": false,
         "key_citations": [],
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
@@ -345,7 +345,7 @@
     {
         "word": "ADGT",
         "normalized": "adgt",
-        "definition": "can, able to",
+        "definition": "can (e.g.,",
         "canon_word": true,
         "key_citations": [
             {
@@ -381,7 +381,7 @@
     },
     {
         "word": "ADMO",
-        "normalized": "admo",
+        "normalized": "",
         "definition": "God is man",
         "canon_word": false,
         "key_citations": [],
@@ -562,7 +562,7 @@
     },
     {
         "word": "AGES",
-        "normalized": "ages",
+        "normalized": "",
         "definition": "not the 4th",
         "canon_word": false,
         "key_citations": [],
@@ -736,7 +736,7 @@
     },
     {
         "word": "ALIDA",
-        "normalized": "alida",
+        "normalized": "",
         "definition": "one in name with",
         "canon_word": false,
         "key_citations": [],
@@ -753,7 +753,7 @@
     {
         "word": "ALLAR",
         "normalized": "allar",
-        "definition": "",
+        "definition": "to bind up",
         "canon_word": true,
         "key_citations": [
             {
@@ -1402,7 +1402,7 @@
                 "context": "42:"
             },
             {
-                "location": "...they are in their eyes greater than *millstones* of the earth.\"",
+                "location": "...in their eyes are *millstones* greater than the earth...\"",
                 "context": ""
             }
         ],
@@ -2759,7 +2759,7 @@
     },
     {
         "word": "CEM",
-        "normalized": "cem",
+        "normalized": "",
         "definition": "of the nine,unto the nine,with the nine",
         "canon_word": false,
         "key_citations": [],
@@ -4083,7 +4083,7 @@
     },
     {
         "word": "DOSCH",
-        "normalized": "dosch",
+        "normalized": "",
         "definition": "of the night",
         "canon_word": false,
         "key_citations": [],
@@ -8019,7 +8019,7 @@
     },
     {
         "word": "MALS",
-        "normalized": "mals",
+        "normalized": "",
         "definition": "(the Enochian letter for 'P')",
         "canon_word": true,
         "key_citations": [],
@@ -8245,7 +8245,7 @@
     },
     {
         "word": "MED",
-        "normalized": "med",
+        "normalized": "",
         "definition": "the star of five",
         "canon_word": false,
         "key_citations": [],
@@ -8330,9 +8330,14 @@
     {
         "word": "MICAOLI",
         "normalized": "micaoli",
-        "definition": "",
-        "canon_word": false,
-        "key_citations": [],
+        "definition": "mighty",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.1",
+                "context": "A *mighty* sound..."
+            }
+        ],
         "commentary": ""
     },
     {

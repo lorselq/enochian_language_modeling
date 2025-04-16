@@ -1,8 +1,8 @@
+import re
 import datetime
 from pathlib import Path
 from collections import defaultdict
 import streamlit as st
-import streamlit.components.v1 as components
 from enochian_translation_team.crew import run_crew  # Import here, safely
 # Placeholder for future import!! We will get there...
 # from enochian_translation_team.tools.extract_roots import run_root_extraction
@@ -10,19 +10,25 @@ from enochian_translation_team.crew import run_crew  # Import here, safely
 token_buffers = defaultdict(str)
 placeholders = {}
 
-def save_log_to_txt():
+def save_log_to_md():
     if "log" not in st.session_state or not st.session_state.log:
-        st.warning("🫥 Nothing to log.")
+        st.warning("🙃 Nothing to log.")
         return
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = Path("src/enochian_translation_team/logs")
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{timestamp}_log.txt"
+    log_path = log_dir / f"{timestamp}_log.md"
+
+    header_re = re.compile(r'^\*\*(.+?)\*\*:\s*', flags=re.MULTILINE)
 
     with open(log_path, "w", encoding="utf-8") as f:
         for role, message in st.session_state.log:
-            f.write(f"{role}: {message.strip()}\n\n")
+            # replace the **ROLE**: at the top with "## ROLE\n\n"
+            header_re = re.compile(r'^\*\*(.+?):\*\*', re.MULTILINE)
+            md = header_re.sub(lambda m: f"## {m.group(1)}", message, count=1)
+            # ensure two line‑breaks at the end of each entry
+            f.write(md.strip() + "\n\n")
 
     st.success(f"📁 Log saved to `{log_path}`")
 
@@ -114,7 +120,7 @@ dictionary_percent = st.sidebar.slider("Percent of dictionary to process:", 1, 1
 def stream_callback(role, message):
     # Set up emoji and display name
     emoji_map = {
-        "Computational Linguist": "💻",
+        "Linguist": "💻",
         "Adjudicator": "👩‍⚖️",
         "Skeptic": "🤔",
         "Archivist": "📚",
@@ -141,7 +147,7 @@ if st.sidebar.button("🧠 Extract Root Words"):
 
 
     with st.chat_message("Maestro", avatar="🪄"):
-        st.markdown("_**Initializing semantic tribunal...**_")
+        st.markdown("_Initializing semantic tribunal..._")
 
     # TEMP: hardcoded word, definition
     run_crew(word="AAI", definition="amongst", stream_callback=stream_callback)
@@ -150,4 +156,4 @@ if st.sidebar.button("🧠 Extract Root Words"):
 
     for role, text in token_buffers.items():
             st.session_state.log.append((role, text))
-    save_log_to_txt()
+    save_log_to_md()
