@@ -178,3 +178,4 @@ cython_debug/
 
 # giant fasttext models and similar
 src/enochian_translation_team/tools/models/*
+src/enochian_translation_team/logs/*

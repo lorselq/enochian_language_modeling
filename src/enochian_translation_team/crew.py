@@ -1,15 +1,15 @@
 import os
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 from crewai import Agent, Task, Crew, CrewOutput
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
 
-def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str, str], None]] = None) -> CrewOutput:
+def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str, str], None]] = None) -> dict[str, Union[str, CrewOutput]]:
     from dotenv import load_dotenv
     load_dotenv(override=True)
 
-    # --- TOOL SETUP ---
     local_model_name = os.environ["MODEL_NAME"]
 
+    # --- TOOL SETUP ---
     # Tool for the Linguist: smart, eager, deluded
     linguist_tool = QueryModelTool(system_prompt="""
     You are a computational linguist specializing in ancient, obscure, and constructed languages.
@@ -17,13 +17,25 @@ def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str
     Be confident and use linguistic terminology where appropriate.
     """)
 
-    # Tool for the Orchestrator: neutral and judgy
-    orchestrator_tool = QueryModelTool(system_prompt="""
+    # Tool for the adjudicator: neutral and judgy
+    adjudicator_tool = QueryModelTool(system_prompt="""
     You are a senior linguistics project manager.
     Your job is to evaluate proposals for root words in Enochian from other linguists.
     Review their reasoning and make a decision about whether the proposal is likely valid.
     Be concise, analytical, and slightly skeptical.
     """)
+    
+    # --- PROMPT SETUP ---
+    linguist_prompt = f"""
+    Analyze the Enochian word '{word}', which means '{definition}'.
+    Break it down into likely root components or affixes.
+    Provide reasoning for your breakdown.
+    """
+    
+    adjudicator_prompt = f"""
+    Review the linguistic analysis of the word '{word}'.
+    Evaluate whether the proposed components make sense and decide whether to accept the proposed roots.
+    """
 
     # --- AGENT SETUP ---
     linguist = Agent(
@@ -36,51 +48,69 @@ def run_crew(word: str, definition: str, stream_callback: Optional[Callable[[str
         callbacks = [stream_callback] if stream_callback else []
     )
 
-    orchestrator = Agent(
-        role="Orchestrator",
+    adjudicator = Agent(
+        role="Adjudicator",
         goal="Evaluate linguistic analyses and accept or reject proposed root words.",
         backstory="An experienced linguist and editor who oversees complex language decoding projects.",
-        tools=[orchestrator_tool],
+        tools=[adjudicator_tool],
         verbose=True,
         llm=local_model_name,
         callbacks = [stream_callback] if stream_callback else []
     )
 
-    # --- TASK SETUP ---
-    word = "AAI"
-    definition = "amongst"
-
+    # === TASKS ===
     linguist_task = Task(
         description=(
             f"Analyze the Enochian word '{word}', which means '{definition}'. "
-            f"Break it down into likely root components or affixes. Provide reasoning for your breakdown."
+            "Break it down into likely root components or affixes. Provide reasoning for your breakdown."
         ),
         expected_output="A proposed list of components (e.g., root, affix) and reasoning for each.",
         agent=linguist
     )
 
-    orchestrator_task = Task(
+    adjudicator_task = Task(
         description=(
             f"Review the linguistic analysis of the word '{word}'. "
             "Evaluate whether the proposed components make sense and decide whether to accept the proposed roots."
         ),
         expected_output="A clear decision: accept or reject the proposed root breakdown. Justify your response.",
-        agent=orchestrator
+        agent=adjudicator
     )
-    
-    # --- CREW SETUP ---
+
+    # === CREW ===
     crew = Crew(
-        agents=[linguist, orchestrator],
-        tasks=[linguist_task, orchestrator_task],
+        agents=[linguist, adjudicator],
+        tasks=[linguist_task, adjudicator_task],
         verbose=True
     )
 
     if stream_callback:
-        stream_callback("orchestrator", "_Initializing semantic tribunal..._")
-
-    result = crew.kickoff()
+        stream_callback("Computational Linguist", "**Computational Linguist:**")
 
     if stream_callback:
-        stream_callback("orchestrator", f"**Final verdict:**\n\n{result}")
+        linguist_callback = lambda msg: stream_callback("Computational Linguist", msg)
+    else:
+        linguist_callback = None
 
-    return result
+    linguist_response = linguist_tool.run(
+        prompt=linguist_prompt,
+        stream_callback=linguist_callback
+    )
+
+    if stream_callback:
+        stream_callback("Adjudicator", "**Adjudicator:**")
+
+    if stream_callback:
+        adjudicator_callback = lambda msg: stream_callback("Adjudicator", msg)
+    else:
+        adjudicator_callback = None
+
+    adjudicator_response = adjudicator_tool.run(
+        prompt=adjudicator_prompt,
+        stream_callback=adjudicator_callback
+    )
+
+    return {
+        "Computational Linguist": linguist_response,
+        "Adjudicator": adjudicator_response
+    }
