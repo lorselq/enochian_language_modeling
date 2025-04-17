@@ -4,7 +4,7 @@ from gensim.models import FastText
 class MorphemeCandidateFinder:
     def __init__(self, ngram_path, fasttext_model_path, dictionary_entries):
         self.ngram_index = self._load_ngram_index(ngram_path)
-        self.fasttext_model = FastText.load(fasttext_model_path)
+        self.fasttext_model = FastText.load(str(fasttext_model_path))
         self.dictionary = {entry["normalized"].lower(): entry for entry in dictionary_entries}
         self.known_words = set(self.dictionary.keys())
 

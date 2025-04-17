@@ -3,8 +3,8 @@ import subprocess
 
 def main():
     if refresh_env():
-        print("[✓] Launching Streamlit app...")
-        subprocess.run(["streamlit", "run", "src/enochian_translation_team/app.py"])
+        print("[✓] Launching CLI version...")
+        subprocess.run(["python", "-m", "enochian_translation_team.app"])
     else:
         print("[ERROR] Could not initialize environment. GUI launch aborted.")
 

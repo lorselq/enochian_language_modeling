@@ -2,7 +2,7 @@ import json
 from collections import defaultdict
 from enochian_translation_team.utils.config import get_config_paths
 
-def build_ngram_index(entries, min_n=1, max_n=4):
+def build_ngram_index(entries, min_n=1, max_n=5):
     index = defaultdict(set)
     for entry in entries:
         if not entry.get("canon_word") or not entry.get("definition"):
@@ -21,14 +21,21 @@ def save_index(index, path):
 def load_words(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+    
+def load_ngrams(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-def main():
+def build_and_save_ngram_index():
     paths = get_config_paths()
     print("[+] Loading dictionary...")
     entries = load_words(paths["dictionary"])
     index = build_ngram_index(entries)
     save_index(index, paths["ngram_index"])
     print(f"[✓] N-gram index saved to {paths['ngram_index']}")
+
+def main():
+    build_and_save_ngram_index()
 
 if __name__ == "__main__":
     main()

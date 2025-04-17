@@ -1,0 +1,266 @@
+from crewai import Agent, Task, Crew
+from enochian_translation_team.tools.query_model_tool import QueryModelTool
+
+
+def select_definitions(def_list, max_words=50):
+    selected = []
+    total_words = 0
+
+    for d in def_list:
+        word_count = len(d.split())
+        if total_words + word_count > max_words:
+            break
+        selected.append(d)
+        total_words += word_count
+
+    return selected
+
+
+def safe_output(crew_output) -> dict:
+    if not crew_output:
+        return {}
+
+    try:
+        return getattr(crew_output, "raw_output", {})
+    except Exception as e:
+        print(f"[!] Failed to extract output: {e}")
+        return {}
+
+
+def debate_ngram(
+    root: str, candidates: list[dict], stats_summary: str, stream_callback=None
+):
+    def_list = [(c.get("word", ""), c.get("definition", "")) for c in candidates if c]
+    joined_defs = [
+        f"{word.strip()} — {definition.strip()}"
+        for word, definition in def_list
+        if word and definition
+    ]
+    selected_defs = select_definitions(joined_defs, max_words=50)
+    root_def_summary = " | ".join(selected_defs) + (
+        "..." if len(joined_defs) > len(selected_defs) else ""
+    )
+
+    # === AGENTS ===
+    linguist_tool = QueryModelTool(
+        system_prompt="You are a bold and insightful computational linguist specializing in the Enochian language—a constructed system with irregular morphology and uncertain origins. Your job is to analyze a proposed root by examining semantic and morphological overlap across multiple words. Identify patterns in prefixes, suffixes, or repeated substrings that suggest shared structure. Support your hypothesis by referencing similarities in definitions, glosses, or contextual usage from citations. Do not use natural language etymologies (e.g., English or Latin roots). Justify relationships based solely on internal evidence across Enochian terms. Your tone should be confident and scholarly. Provide specific examples and explain why the connection is more than coincidental. Absolutely be thorough in your justifications."
+    )
+    linguist = Agent(
+        role="Linguist",
+        goal="Analyze the semantic relationships between these Enochian words and their definitions. Identify shared morphemes or root candidates based on: shared character substrings (especially prefixes/suffixes); overlapping definitions or conceptual meanings; patterns in usage across citations. Justify why these words might be related, but never use English etymology to substantiate a proposed Enochian root word. Reference actual text segments or gloss overlaps.",
+        backstory="A creative, inventive, and excited linguist with deep pattern recognition skills, always hopeful to discover something new and great.",
+        tools=[linguist_tool],
+        verbose=True,
+        callbacks=[stream_callback] if stream_callback else [],
+    )
+
+    skeptic_tool = QueryModelTool(
+        system_prompt="You are a skeptical linguist reviewing a proposed root analysis in the Enochian language. Your goal is to uncover weak reasoning, accidental pattern-matching, or semantic mismatches. Examine whether the proposed words actually share meaningful definitions, or whether the morphological overlap is superficial (e.g., short or common letter combinations). Challenge vague or speculative claims. Look for missing evidence or inconsistent logic. If the root hypothesis is flawed, explain why. If you believe a stronger candidate exists—or the groupings should be split—make a concise counterproposal. You are sharp, analytical, and unafraid to criticize overreach."
+    )
+    skeptic = Agent(
+        role="Skeptic",
+        goal="You are a skeptical linguist. Critically examine the Linguist's proposed root and semantic analysis. Look for: weak reasoning or overgeneralization; words grouped together without strong definition overlap; n-grams that appear coincidentally (e.g., short, common patterns). Propose stronger alternatives if you have them, or explain why a proposal lacks rigor.",
+        backstory="A cynical critic with linguistic expertise and a grudge against bad etymology.",
+        tools=[skeptic_tool],
+        verbose=True,
+        callbacks=[stream_callback] if stream_callback else [],
+    )
+
+    adjudicator_tool = QueryModelTool(
+        system_prompt="Review the arguments from both the Linguist and the Skeptic. Make a final determination: should this root be accepted as a meaningful candidate? Be concise and definitive. A short rationale is fine, but it must address key reasoning on both sides."
+    )
+    adjudicator = Agent(
+        role="Adjudicator",
+        goal="Make a judgment call based on both sides.",
+        backstory="A supervising linguist who wants solid reasoning before accepting newly proposed root words as part of the lexicon.",
+        tools=[adjudicator_tool],
+        verbose=True,
+        callbacks=[stream_callback] if stream_callback else [],
+    )
+
+    archivist_tool = QueryModelTool(
+        system_prompt="Summarize the root debate. Include the root, who said what, and the final verdict."
+    )
+    archivist = Agent(
+        role="Archivist",
+        goal="Summarize the outcome of the debate for recordkeeping.",
+        backstory="A meticulous historian recording linguistic discoveries.",
+        tools=[archivist_tool],
+        verbose=True,
+        callbacks=[stream_callback] if stream_callback else [],
+    )
+
+    # === TASKS ===
+    propose = Task(
+        description=f"""Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions.\n\nDefinitions to consider (they are pipe-delimited):\n{root_def_summary}
+        """,
+        expected_output="A strong case for the root, citing semantic and morphological evidence.",
+        agent=linguist,
+    )
+
+    counter = Task(
+        description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences.",
+        expected_output="A thorough and convincing rebuttal to the Linguist's proposal to add the new root word to the records.",
+        agent=skeptic,
+        context=[propose],
+    )
+
+    defense = Task(
+        description="Defend the original linguistic hypothesis. Respond to the Skeptic's objections directly.",
+        expected_output="",
+        agent=linguist,
+        context=[propose, counter],
+    )
+
+    counter2 = Task(
+        description="Issue a final rebuttal if the defense failed to address key concerns.",
+        expected_output="",
+        agent=skeptic,
+        context=[propose, counter, defense],
+    )
+
+    ruling = Task(
+        description="Make a ruling. Accept or reject the root proposal. Justify briefly.",
+        expected_output="A ruling as to whether or not to accept or reject the proposed root word. Justify the decision briefly.",
+        agent=adjudicator,
+        context=[propose, counter, defense, counter2],
+    )
+
+    record = Task(
+        description="Summarize the debate and the final outcome in 2-3 sentences.",
+        expected_output="A brief summarization of the debate and its outcome.",
+        agent=archivist,
+        context=[propose, counter, defense, counter2, ruling],
+    )
+
+    # === Direct Tool Access with Streaming ===
+    GRAY = "\033[90m"
+    RESET = "\033[0m"
+    
+    linguist_cb = (
+        (lambda r, m: stream_callback("Linguist", m)) if stream_callback else None
+    )
+    skeptic_cb = (
+        (lambda r, m: stream_callback("Skeptic", m)) if stream_callback else None
+    )
+    adjudicator_cb = (
+        (lambda r, m: stream_callback("Adjudicator", m)) if stream_callback else None
+    )
+    archivist_cb = (
+        (lambda r, m: stream_callback("Archivist", m)) if stream_callback else None
+    )
+
+    # === LINGUIST 1 ===
+    if stream_callback:
+        stream_callback("Linguist", "**Linguist:**")
+
+    print(
+        f"\n\n{GRAY}>>>🥸\tLinguist's turn to propose...\nProposal prompt:\n",
+        propose.description,
+        "\n",
+    )
+
+    linguist_response = linguist_tool._run(
+        prompt=propose.description,
+        stream_callback=linguist_cb,
+        print_chunks=True,
+        role_name="🥸\tLinguist",
+    )
+
+    # === SKEPTIC 1 ===
+    if stream_callback:
+        stream_callback("Skeptic", "**Skeptic:**")
+
+    print(
+        "\n\n>>>🤔\tSkeptic's turn to refute...\nRefutation prompt:\n",
+        counter.description,
+        "\n",
+    )
+
+    skeptic_response = skeptic_tool._run(
+        prompt=counter.description + f"\n\nSkeptic said: {linguist_response}",
+        stream_callback=skeptic_cb,
+        print_chunks=True,
+        role_name="🤔\tSkeptic",
+    )
+
+    # === LINGUIST 2 ===
+    if stream_callback:
+        stream_callback("Linguist", "**Linguist (Defense):**")
+
+    print(
+        "\n\n>>>🥸\tLinguist's turn to defend...\nDefense prompt:\n", defense.description, "\n"
+    )
+
+    defense_response = linguist_tool._run(
+        prompt=defense.description + f"\n\nLinguist said: {skeptic_response}",
+        stream_callback=linguist_cb,
+        print_chunks=True,
+        role_name="🥸\tLinguist",
+    )
+
+    # === SKEPTIC 2 ===
+    if stream_callback:
+        stream_callback("Skeptic", "**Skeptic (Rebuttal):**")
+
+    print(
+        "\n\n>>>🤔\tSkeptic's turn to rebuttal...\nFinal word:\n", counter2.description, "\n"
+    )
+    rebuttal_response = skeptic_tool._run(
+        prompt=counter2.description + f"\n\nSkeptic replied: {defense_response}",
+        stream_callback=skeptic_cb,
+        print_chunks=True,
+        role_name="🤔\tSkeptic",
+    )
+
+    # === ADJUDICATOR ===
+
+    if stream_callback:
+        stream_callback("Adjudicator", "**Adjudicator:**")
+
+    print(
+        "\n\n>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\nRuling:\n",
+        ruling.description,
+        "\n",
+    )
+
+    adjudicator_response = adjudicator_tool._run(
+        prompt=ruling.description
+        + f"\n\nLinguist: {linguist_response}\n\nSkeptic: {skeptic_response}\n\nDefense: {defense_response}\n\nFinal Skeptic: {rebuttal_response}",
+        stream_callback=adjudicator_cb,
+        print_chunks=True,
+        role_name="👩‍⚖️\tAdjudicator",
+    )
+
+    # === ARCHIVIST ===
+    if stream_callback:
+        stream_callback("Archivist", "**Archivist:**")
+
+    print("\n\n>>>📜\tArchivist's turn to record...\nRecord>>\n", record.description, "\n")
+
+    archivist_summary = archivist_tool._run(
+        prompt=record.description
+        + f"\n\nLinguist: {linguist_response}\n\nSkeptic: {skeptic_response}\n\nAdjudicator: {adjudicator_response}",
+        stream_callback=archivist_cb,
+        print_chunks=True,
+        role_name="📜\tArchivist",
+    )
+
+    return {
+        "Linguist": linguist_response,
+        "Skeptic": skeptic_response,
+        "Defense": defense_response,
+        "Rebuttal": rebuttal_response,
+        "Adjudicator": adjudicator_response,
+        "Archivist": archivist_summary,
+        "summary": archivist_summary,
+        "raw_output": {
+            "Linguist": linguist_response,
+            "Skeptic": skeptic_response,
+            "Defense": defense_response,
+            "Rebuttal": rebuttal_response,
+            "Adjudicator": adjudicator_response,
+            "Archivist": archivist_summary,
+            "summary": archivist_summary,
+        },
+    }
