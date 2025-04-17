@@ -1,5 +1,6 @@
+# query_model_tool.py
+
 import os
-import time
 from typing import Optional, Callable
 from openai import OpenAI
 from crewai.tools import BaseTool
@@ -14,15 +15,19 @@ class QueryModelTool(BaseTool):
     def _run(
         self,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str], None]] = None
+        stream_callback: Optional[Callable[[str, str], None]] = None,
+        print_chunks: bool = False,
+        role_name: Optional[str] = None
     ) -> str:
         try:
+            print(f">>>{role_name} speaking...")
             client = OpenAI(
                 base_url=os.getenv("OPENAI_API_BASE", "http://localhost:1234/v1"),
                 api_key=os.getenv("OPENAI_API_KEY", "sk-local-testing"),
             )
 
             response_text = ""
+            role = role_name or self.name  # Fallback to tool name if no role given
 
             completion = client.chat.completions.create(
                 model=os.getenv("MODEL_NAME", "deepseek-r1-distill-qwen-7b"),
@@ -41,7 +46,9 @@ class QueryModelTool(BaseTool):
                     if content:
                         response_text += content
                         if stream_callback:
-                            stream_callback(self.name, content)
+                            stream_callback(role, content)
+                        if print_chunks:
+                            print(f"{content}", end="", flush=True)
                 except Exception as inner:
                     print(f"[!] Inner stream failure: {inner}")
 

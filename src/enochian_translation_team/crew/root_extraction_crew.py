@@ -1,0 +1,284 @@
+import json
+import numpy as np
+from gensim.models import FastText
+from sentence_transformers import SentenceTransformer
+from enochian_translation_team.tools.debate_engine import debate_ngram, safe_output
+from enochian_translation_team.utils.config import get_config_paths
+from enochian_translation_team.utils.semantic_search import find_semantically_similar_words, compute_cluster_cohesion
+from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
+from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index, load_ngrams
+
+class RootExtractionCrew:
+    def __init__(self):
+        paths = get_config_paths()
+        self.dictionary_path = paths["dictionary"]
+        self.model_path = paths["model_output"]
+        self.subst_map_path = paths["substitution_map"]
+        self.output_path = paths["root_word_insights"]
+        self.ngram_path = paths["ngram_index"]
+        self.processed_ngrams_path = paths["processed_ngrams"]
+        
+        # Reprocess ngrams
+        build_and_save_ngram_index()
+
+        # Load everything
+        self.entries = self.load_entries()
+        self.subst_map = self.load_subst_map()
+        self.ngrams = load_ngrams(self.ngram_path)
+        self.fasttext = FastText.load(str(self.model_path))
+        self.sent_model = SentenceTransformer("all-MiniLM-L6-v2")
+        self.candidate_finder = MorphemeCandidateFinder(
+            ngram_path=self.ngram_path,
+            fasttext_model_path=self.model_path,
+            dictionary_entries=self.entries
+        )
+
+        # Keep track of processed roots
+        self.processed_ngrams = set()
+
+    def load_processed_ngrams(self):
+        try:
+            with open(self.processed_ngrams_path, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except FileNotFoundError:
+            return set()
+
+    def save_processed_ngrams(self):
+        with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
+            json.dump(sorted(list(self.processed_ngrams)), f, indent=2)
+
+
+    def load_entries(self):
+        with open(self.dictionary_path, "r", encoding="utf-8") as f:
+            return [e for e in json.load(f) if e.get("normalized") and e.get("definition") and e.get("canon_word")]
+
+    def load_subst_map(self):
+        with open(self.subst_map_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        subst_map = {}
+        for k, v in raw.items():
+            subs = [alt["value"] for alt in v["alternates"] if alt["direction"] in ["to", "both"]]
+            subst_map[k] = subs if subs else [k]
+        return subst_map
+
+    def extract_ngrams(self, word, min_n=1, max_n=4):
+        ngrams = set()
+        word = word.lower()
+        for n in range(min_n, max_n + 1):
+            for i in range(len(word) - n + 1):
+                ngram = word[i:i+n]
+                if ngram not in self.processed_ngrams:
+                    ngrams.add(ngram)
+        return ngrams
+    
+    def _get_source_label(self, sem, idx):
+        if sem and idx:
+            return "both"
+        elif sem:
+            return "semantic"
+        elif idx:
+            return "index"
+        return "unknown"
+
+    def evaluate_ngram(self, ngram, cluster, stream_callback=None):
+        definitions = [c["definition"] for c in cluster if c["definition"]]
+        cohesion_score = compute_cluster_cohesion(definitions, self.sent_model)
+        semantic_hits = sum(1 for c in cluster if c["source"] in ("semantic", "both"))
+        semantic_coverage = round(semantic_hits / len(cluster), 3) if cluster else 0.0
+
+        # Get trimmed gloss list for agent input
+        trimmed_cluster = [
+            {"word": c.get("word", ""), "definition": c.get("definition", "")}
+            for c in cluster if c.get("definition")
+        ]
+
+        # Summarize stats for agents
+        stats_summary = (
+            f"The proposed root '{ngram}' has:\n"
+            f"- Cohesion Score: {cohesion_score} (semantic similarity among definitions)\n"
+            f"- Semantic Coverage: {semantic_coverage} ({semantic_hits}/{len(cluster)} words match semantically)\n"
+            f"- Candidate Count: {len(cluster)}"
+        )
+
+        # Let the agents have their nerd war
+        debate_result = debate_ngram(
+            root=ngram,
+            candidates=trimmed_cluster,
+            stats_summary=stats_summary,
+            stream_callback=stream_callback
+        )
+
+        # Access the raw output
+        raw = safe_output(debate_result) if hasattr(debate_result, "raw_output") else {}
+
+        result = {
+            "root": ngram,
+            "candidates": cluster,
+            "cohesion": str(cohesion_score),
+            "semantic_coverage": str(semantic_coverage),
+            "summary": raw.get("summary", "[No summary]"),
+        }
+
+        # Include role-specific responses
+        for role in ["Linguist", "Skeptic", "Adjudicator", "Archivist"]:
+            if role in raw:
+                result[role] = raw[role]
+    
+        return result
+
+        
+    def run_with_streaming(self, max_words=None, stream_callback=None):
+        output = []
+        seen_words = 0
+
+        for entry in self.entries:
+            word = entry["normalized"]
+            ngrams = self.extract_ngrams(word)
+
+            for ngram in ngrams:
+                if ngram in self.processed_ngrams:
+                    continue
+                self.processed_ngrams.add(ngram)
+
+                semantic_candidates = find_semantically_similar_words(
+                    ft_model=self.fasttext,
+                    sent_model=self.sent_model,
+                    entries=self.entries,
+                    target_word=ngram,
+                    subst_map=self.subst_map,
+                    topn=20
+                )
+
+                index_candidates = self.candidate_finder.get_candidates(
+                    ngram=ngram,
+                    top_n=20,
+                    similarity_threshold=0.35,
+                    include_context=True
+                )
+
+                sem_norms = {c["normalized"] for c in semantic_candidates}
+                index_norms = {c["normalized"] for c in index_candidates}
+                overlap = sem_norms & index_norms
+
+                if len(overlap) < 2:
+                    continue
+
+                merged_cluster = []
+                for word in (sem_norms | index_norms):
+                    sem_entry = next((c for c in semantic_candidates if c["normalized"] == word), None)
+                    index_entry = next((c for c in index_candidates if c["normalized"] == word), None)
+                    if not sem_entry and index_entry:
+                        continue
+
+                    merged_cluster.append({
+                        "word": sem_entry["word"] if sem_entry else index_entry["word"] if index_entry else word,
+                        "normalized": word,
+                        "definition": sem_entry.get("definition") if sem_entry else index_entry.get("definition") if index_entry else "",
+                        "fasttext": float(sem_entry.get("fasttext", 0.0)) if sem_entry else 0.0,
+                        "semantic": float(sem_entry.get("semantic", 0.0)) if sem_entry else 0.0,
+                        "source": self._get_source_label(sem_entry, index_entry)
+                    })
+
+                evaluated = self.evaluate_ngram(ngram, merged_cluster)
+                evaluated["overlap_count"] = len(overlap)
+
+                output.append(evaluated)
+
+                # Stream out each agent’s statement
+                if stream_callback:
+                    for role in ["Linguist", "Skeptic", "Adjudicator", "Archivist"]:
+                        if role in evaluated:
+                            stream_callback(role, evaluated[role])
+                    stream_callback("Archivist", f"{evaluated['summary']}\n\n")
+
+            seen_words += 1
+            if max_words and seen_words >= max_words:
+                break
+
+        self.save_results(output)
+        self.save_processed_ngrams()
+
+    def run(self, max_words=None, min_cluster_size=2):
+        output = []
+        seen_words = 0
+
+        for entry in self.entries:
+            word = entry["normalized"]
+            ngrams = self.extract_ngrams(word)
+
+            for ngram in ngrams:
+                # Mark ngram as processed
+                if ngram in self.processed_ngrams:
+                    continue
+                self.processed_ngrams.add(ngram)
+
+
+                # Step 1: Get candidates from both paths
+                semantic_candidates = find_semantically_similar_words(
+                    ft_model=self.fasttext,
+                    sent_model=self.sent_model,
+                    entries=self.entries,
+                    target_word=ngram,
+                    subst_map=self.subst_map,
+                    topn=20
+                )
+
+                index_candidates = self.candidate_finder.get_candidates(
+                    ngram=ngram,
+                    top_n=20,
+                    similarity_threshold=0.35,
+                    include_context=True
+                )
+
+                # Get normalized names for easy comparison
+                sem_norms = {c["normalized"] for c in semantic_candidates}
+                index_norms = {c["normalized"] for c in index_candidates}
+                overlap = sem_norms & index_norms
+
+                if len(overlap) < min_cluster_size:
+                    continue
+
+                # Step 2: Merge info and score
+                merged_cluster = []
+                dropped_count = 0
+                for word in (sem_norms | index_norms):
+                    sem_entry = next((c for c in semantic_candidates if c["normalized"] == word), None)
+                    index_entry = next((c for c in index_candidates if c["normalized"] == word), None)
+                    # Coarse filter: skip if it's index-only—which means it is probably noise
+                    if not sem_entry and index_entry:
+                        dropped_count += 1
+                        continue
+
+                    sem_word = sem_entry["word"] if sem_entry else None
+                    idx_word = index_entry["word"] if index_entry else None
+                    merged_cluster.append({
+                        "word": sem_word or idx_word or word,
+                        "normalized": word,
+                        "definition": (sem_entry["definition"] if sem_entry and "definition" in sem_entry else
+                                    index_entry["definition"] if index_entry and "definition" in index_entry else ""),
+                        "fasttext": sem_entry.get("fasttext", 0.0) if sem_entry else 0.0,
+                        "semantic": sem_entry.get("semantic", 0.0) if sem_entry else 0.0,
+                        "source": self._get_source_label(sem_entry, index_entry)
+                    })
+                evaluated = self.evaluate_ngram(ngram, merged_cluster)
+                evaluated["overlap_count"] = len(overlap)
+                evaluated["dropped_index_only"] = dropped_count
+                output.append(evaluated)
+
+            seen_words += 1
+            if max_words and seen_words >= max_words:
+                break
+
+        output.sort(key=lambda x: (x["cohesion"], x["overlap_count"]), reverse=True)
+        self.save_results(output)
+        self.save_processed_ngrams()
+
+
+    def run_root_extraction_gui(self, max_words=3, stream_callback=None):
+        crew = RootExtractionCrew()
+        crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
+
+
+    def save_results(self, data):
+        with open(self.output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)

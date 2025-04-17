@@ -65,8 +65,8 @@ def definition_similarity(def1, def2, sentence_model):
 
 # === 6. Find Similar Words ===
 def find_semantically_similar_words(ft_model, sent_model, entries, target_word, subst_map, topn=11):
-    fasttext_weight = 0.45
-    definition_weight = 0.55
+    fasttext_weight = 0.53
+    definition_weight = 0.47
     
     normalized_query = normalize_form(target_word)
     variants = generate_variants(normalized_query, subst_map)
