@@ -20,9 +20,13 @@ class QueryModelTool(BaseTool):
         print_chunks: bool = False,
         role_name: Optional[str] = None,
     ) -> str:
+        GRAY = "\033[90m"
         RESET = "\033[0m"
         try:
-            print(f"{RESET}>>>{role_name} speaking...")
+            if role_name and "Linguist" in role_name and "Lead" not in role_name:
+                print(f"{GRAY}")
+            else:
+                print(f"{RESET}>>>{role_name} speaking...")
             client = OpenAI(
                 base_url=os.getenv(
                     "OPENAI_API_BASE", "this-will-fail-if-doesn't-work-lol"
