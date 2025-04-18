@@ -1,3 +1,4 @@
+from typing import Optional
 from crewai import Agent, Task, Crew
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
 
@@ -36,7 +37,7 @@ def safe_output(crew_output) -> dict:
 
 
 def debate_ngram(
-    root: str, candidates: list[dict], stats_summary: str, stream_callback=None
+    root: str, candidates: list[dict], stats_summary: str, stream_callback=None, root_entry: Optional[dict] = None
 ):
     def_list = [
         (
@@ -50,10 +51,23 @@ def debate_ngram(
         for word, definition in def_list
         if word and definition
     ]
+    if root_entry is None:
+        root_entry = next((c for c in candidates if c.get("word", "").lower() == root.lower()), None)
     selected_defs = select_definitions(joined_defs, max_words=50)
     root_def_summary = " | ".join(selected_defs) + (
         "..." if len(joined_defs) > len(selected_defs) else ""
     )
+    
+    if root_entry and root_entry.get("definition"):
+        extra_prompt = (
+            f"⚠️ Reminder: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. Consider this as a potential anchor.\n"
+        )
+        skeptic_hint = (
+            f"\n\n🧐 Note: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. This may lend weight to its inclusion, or it may be a red herring. Consider this in your critique."
+        )
+    else:
+        extra_prompt = ""
+        skeptic_hint = ""
 
     # === AGENTS ===
     linguist_tool = QueryModelTool(
@@ -106,14 +120,14 @@ def debate_ngram(
 
     # === TASKS ===
     propose = Task(
-        description=f"""Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions.\n\nDefinitions and citations contained in [] to consider (they are pipe-delimited):\n{root_def_summary}
+        description=f"""{extra_prompt}Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions.\n\nDefinitions and citations contained in [] to consider (they are pipe-delimited and strongly ordered from most to least relevant):\n{root_def_summary}
         """,
         expected_output="A strong case for the root, citing semantic and morphological evidence.",
         agent=linguist,
     )
 
     counter = Task(
-        description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences.",
+        description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences." + skeptic_hint,
         expected_output="A thorough and convincing rebuttal to the Linguist's proposal to add the new root word to the records.",
         agent=skeptic,
         context=[propose],
@@ -168,7 +182,7 @@ def debate_ngram(
         stream_callback("Linguist", "**Linguist:**")
 
     print(
-        f"\n\n>>>🥸\tLinguist's turn to propose...\n{GRAY}Proposal prompt:\n",
+        f"\n\n>>>🥸\tLinguist's turn to propose a new root word...\n{GRAY}Proposal prompt:\n",
         propose.description,
         "\n",
     )
@@ -185,7 +199,7 @@ def debate_ngram(
         stream_callback("Skeptic", "**Skeptic:**")
 
     print(
-        "\n\n>>>🤔\tSkeptic's turn to refute...\n{GRAY}Refutation prompt:\n",
+        f"\n\n>>>🤔\tSkeptic's turn to refute...\n{GRAY}Refutation prompt:\n",
         counter.description,
         "\n",
     )
@@ -202,7 +216,7 @@ def debate_ngram(
         stream_callback("Linguist", "**Linguist (Defense):**")
 
     print(
-        "\n\n>>>🥸\tLinguist's turn to defend...\n{GRAY}Defense prompt:\n", defense.description, "\n"
+        f"\n\n>>>🥸\tLinguist's turn to defend...\n{GRAY}Defense prompt:\n", defense.description, "\n"
     )
 
     linguist_defense = linguist_tool._run(
@@ -217,7 +231,7 @@ def debate_ngram(
         stream_callback("Skeptic", "**Skeptic (Rebuttal):**")
 
     print(
-        "\n\n>>>🤔\tSkeptic's turn to rebuttal...\n{GRAY}Final word:\n", counter2.description, "\n"
+        f"\n\n>>>🤔\tSkeptic's turn to rebuttal...\n{GRAY}Final word:\n", counter2.description, "\n"
     )
     rebuttal_response = skeptic_tool._run(
         prompt=counter2.description + f"\n\nLinguist said: {linguist_defense}",
@@ -232,7 +246,7 @@ def debate_ngram(
         stream_callback("Adjudicator", "**Adjudicator:**")
 
     print(
-        "\n\n>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\n{GRAY}Ruling:\n",
+        f"\n\n>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\n{GRAY}Ruling:\n",
         ruling.description,
         "\n",
     )
@@ -249,7 +263,7 @@ def debate_ngram(
     if stream_callback:
         stream_callback("Archivist", "**Archivist:**")
 
-    print("\n\n>>>📜\tArchivist's turn to record...\n{GRAY}Record>>\n", record.description, "\n")
+    print(f"\n\n>>>📜\tArchivist's turn to record...\n{GRAY}Record>>\n", record.description, "\n")
 
     archivist_summary = archivist_tool._run(
         prompt=record.description

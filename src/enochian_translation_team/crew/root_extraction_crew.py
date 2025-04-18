@@ -110,35 +110,57 @@ class RootExtractionCrew:
         semantic_hits = sum(1 for c in cluster if c["source"] in ("semantic", "both"))
         semantic_coverage = round(semantic_hits / len(cluster), 3) if cluster else 0.0
 
-        # Get trimmed gloss list for agent input
+        # Build the full trimmed cluster and find anchor if it exists
         trimmed_cluster = []
+        anchor_entry = None
+        ngram_lower = ngram.lower()
+        root_entry = None
+        
         for c in cluster:
             if not c.get("definition"):
                 continue
 
-            # Safely extract citation contexts
             citations = c.get("citations", [])
             if citations and isinstance(citations[0], dict):
-                contexts = [
-                    cite.get("context", "").strip()
-                    for cite in citations
-                    if cite.get("context")
-                ]
+                contexts = [cite.get("context", "").strip() for cite in citations if cite.get("context")]
             else:
-                contexts = citations  # fallback if it's already a list of strings (for whatever reason)
+                contexts = citations
 
             definition = f"{c.get('definition', '')} [{' / '.join(contexts[:2])}]" if contexts else c.get("definition", "")
 
-
-            trimmed_cluster.append(
-                {
-                    "word": c.get("word", ""),
+            entry = {
+                "word": c.get("word", ""),
+                "definition": definition,
+                "normalized": c.get("normalized", "").lower(),
+            }
+            # Check if this is the literal ngram word
+            if entry.get("normalized", "") == ngram_lower or entry.get("word", "").lower() == ngram_lower:
+                root_entry = c.copy()  # <- This preserves all fields
+                anchor_entry = {
+                    "word": f"{c.get('word', '')} ⭐️ (root form)",
                     "definition": definition,
+                    "normalized": c.get("normalized", "").lower(),
                 }
+            else:
+                trimmed_cluster.append(entry)
+        
+        # If anchor exists, put it at the top
+        if anchor_entry:
+            trimmed_cluster.insert(0, anchor_entry)
+        
+        # Check for exact-match anchor word in the cluster
+        if root_entry and root_entry.get("definition"):
+            root_callout = (
+                f"📌 Note: The proposed root '{ngram}' is itself a defined word: "
+                f"**{root_entry.get('definition')}**\n"
+                "This may indicate its role as a base morpheme from which related forms are derived.\n"
             )
-
+        else:
+            root_callout = ""
+        
         # Summarize stats for agents
         stats_summary = (
+            f"{root_callout}"
             f"The proposed root '{ngram}' has:\n"
             f"- Cohesion Score: {cohesion_score} (semantic similarity among definitions)\n"
             f"- Semantic Coverage: {semantic_coverage} ({semantic_hits}/{len(cluster)} words match semantically)\n"
@@ -151,6 +173,7 @@ class RootExtractionCrew:
             candidates=trimmed_cluster,
             stats_summary=stats_summary,
             stream_callback=stream_callback,
+            root_entry=root_entry
         )
 
         # Access the raw output
@@ -217,14 +240,26 @@ class RootExtractionCrew:
                     continue
 
                 merged_cluster = []
-                for word in sem_norms | index_norms:
-                    sem_entry = next(
-                        (c for c in semantic_candidates if c["normalized"] == word),
-                        None,
-                    )
-                    index_entry = next(
-                        (c for c in index_candidates if c["normalized"] == word), None
-                    )
+                merged_words = []
+                seen = set()
+
+                # Start with semantic candidates — already sorted by priority/score
+                for c in semantic_candidates:
+                    norm = c["normalized"]
+                    if norm not in seen:
+                        merged_words.append(norm)
+                        seen.add(norm)
+
+                # Add index-only extras at the end
+                for c in index_candidates:
+                    norm = c["normalized"]
+                    if norm not in seen:
+                        merged_words.append(norm)
+                        seen.add(norm)
+
+                for word in merged_words:
+                    sem_entry = next((c for c in semantic_candidates if c["normalized"] == word), None)
+                    index_entry = next((c for c in index_candidates if c["normalized"] == word), None)
                     if not sem_entry and index_entry:
                         continue
 

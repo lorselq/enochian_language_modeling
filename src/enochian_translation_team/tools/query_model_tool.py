@@ -5,6 +5,7 @@ from typing import Optional, Callable
 from openai import OpenAI
 from crewai.tools import BaseTool
 
+
 class QueryModelTool(BaseTool):
     name: str = "Query LM Studio"
     description: str = "Sends a prompt to the local LLM for linguistic analysis."
@@ -17,13 +18,15 @@ class QueryModelTool(BaseTool):
         prompt: str,
         stream_callback: Optional[Callable[[str, str], None]] = None,
         print_chunks: bool = False,
-        role_name: Optional[str] = None
+        role_name: Optional[str] = None,
     ) -> str:
         RESET = "\033[0m"
         try:
             print(f"{RESET}>>>{role_name} speaking...")
             client = OpenAI(
-                base_url=os.getenv("OPENAI_API_BASE", "this-will-fail-if-doesn't-work-lol"),
+                base_url=os.getenv(
+                    "OPENAI_API_BASE", "this-will-fail-if-doesn't-work-lol"
+                ),
                 api_key=os.getenv("OPENAI_API_KEY", "sk-local-testing"),
             )
 
@@ -52,9 +55,6 @@ class QueryModelTool(BaseTool):
                             print(f"{content}", end="", flush=True)
                 except Exception as inner:
                     print(f"[!] Inner stream failure: {inner}")
-            
-            print("[Debug] OpenAI client initialized.", flush=True)
-            print(f"[Debug] Prompt length: {len(prompt)}", flush=True)
 
             try:
                 for i, chunk in enumerate(completion):
@@ -62,9 +62,11 @@ class QueryModelTool(BaseTool):
                     ...
             except Exception as stream_err:
                 print(f"[!] Stream iteration failure: {stream_err}")
-            
+
             if not response_text:
-                print(f"[!] No content returned for role {role_name}. Stream probably failed.")
+                print(
+                    f"[!] No content returned for role {role_name}. Stream probably failed."
+                )
 
             return response_text or "[ERROR] No content returned from model."
 

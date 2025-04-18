@@ -46,7 +46,7 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
     results = []
     for entry in entries:
         cand_norm = normalize_form(entry["normalized"])
-        if cand_norm == normalized_query:
+        if cand_norm == normalized_query and entry["word"].lower() != target_word.lower():
             continue
 
         # FastText similarity (max across variants)
