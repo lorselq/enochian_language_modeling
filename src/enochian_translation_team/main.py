@@ -4,6 +4,8 @@ import subprocess
 def main():
     if refresh_env():
         print("[✓] Launching CLI version...")
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
         subprocess.run(["python", "-m", "enochian_translation_team.app"])
     else:
         print("[ERROR] Could not initialize environment. GUI launch aborted.")

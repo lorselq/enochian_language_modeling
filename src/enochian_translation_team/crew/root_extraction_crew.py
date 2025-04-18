@@ -1,12 +1,19 @@
 import json
-import numpy as np
+from collections import Counter, defaultdict
 from gensim.models import FastText
 from sentence_transformers import SentenceTransformer
 from enochian_translation_team.tools.debate_engine import debate_ngram, safe_output
 from enochian_translation_team.utils.config import get_config_paths
-from enochian_translation_team.utils.semantic_search import find_semantically_similar_words, compute_cluster_cohesion
+from enochian_translation_team.utils.semantic_search import (
+    find_semantically_similar_words,
+    compute_cluster_cohesion,
+)
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
-from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index, load_ngrams
+from enochian_translation_team.utils.build_ngram_index import (
+    build_and_save_ngram_index,
+    load_ngrams,
+)
+
 
 class RootExtractionCrew:
     def __init__(self):
@@ -17,7 +24,7 @@ class RootExtractionCrew:
         self.output_path = paths["root_word_insights"]
         self.ngram_path = paths["ngram_index"]
         self.processed_ngrams_path = paths["processed_ngrams"]
-        
+
         # Reprocess ngrams
         build_and_save_ngram_index()
 
@@ -30,7 +37,7 @@ class RootExtractionCrew:
         self.candidate_finder = MorphemeCandidateFinder(
             ngram_path=self.ngram_path,
             fasttext_model_path=self.model_path,
-            dictionary_entries=self.entries
+            dictionary_entries=self.entries,
         )
 
         # Keep track of processed roots
@@ -47,17 +54,24 @@ class RootExtractionCrew:
         with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
             json.dump(sorted(list(self.processed_ngrams)), f, indent=2)
 
-
     def load_entries(self):
         with open(self.dictionary_path, "r", encoding="utf-8") as f:
-            return [e for e in json.load(f) if e.get("normalized") and e.get("definition") and e.get("canon_word")]
+            return [
+                e
+                for e in json.load(f)
+                if e.get("normalized") and e.get("definition") and e.get("canon_word")
+            ]
 
     def load_subst_map(self):
         with open(self.subst_map_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
         subst_map = {}
         for k, v in raw.items():
-            subs = [alt["value"] for alt in v["alternates"] if alt["direction"] in ["to", "both"]]
+            subs = [
+                alt["value"]
+                for alt in v["alternates"]
+                if alt["direction"] in ["to", "both"]
+            ]
             subst_map[k] = subs if subs else [k]
         return subst_map
 
@@ -66,11 +80,21 @@ class RootExtractionCrew:
         word = word.lower()
         for n in range(min_n, max_n + 1):
             for i in range(len(word) - n + 1):
-                ngram = word[i:i+n]
+                ngram = word[i : i + n]
                 if ngram not in self.processed_ngrams:
                     ngrams.add(ngram)
         return ngrams
-    
+
+    def get_ngram_frequencies(self, min_n=1, max_n=4):
+        counter = Counter()
+        for entry in self.entries:
+            word = entry["normalized"].lower()
+            for n in range(min_n, max_n + 1):
+                for i in range(len(word) - n + 1):
+                    ngram = word[i : i + n]
+                    counter[ngram] += 1
+        return counter
+
     def _get_source_label(self, sem, idx):
         if sem and idx:
             return "both"
@@ -87,10 +111,31 @@ class RootExtractionCrew:
         semantic_coverage = round(semantic_hits / len(cluster), 3) if cluster else 0.0
 
         # Get trimmed gloss list for agent input
-        trimmed_cluster = [
-            {"word": c.get("word", ""), "definition": c.get("definition", "")}
-            for c in cluster if c.get("definition")
-        ]
+        trimmed_cluster = []
+        for c in cluster:
+            if not c.get("definition"):
+                continue
+
+            # Safely extract citation contexts
+            citations = c.get("citations", [])
+            if citations and isinstance(citations[0], dict):
+                contexts = [
+                    cite.get("context", "").strip()
+                    for cite in citations
+                    if cite.get("context")
+                ]
+            else:
+                contexts = citations  # fallback if it's already a list of strings (for whatever reason)
+
+            definition = f"{c.get('definition', '')} [{' / '.join(contexts[:2])}]" if contexts else c.get("definition", "")
+
+
+            trimmed_cluster.append(
+                {
+                    "word": c.get("word", ""),
+                    "definition": definition,
+                }
+            )
 
         # Summarize stats for agents
         stats_summary = (
@@ -105,17 +150,22 @@ class RootExtractionCrew:
             root=ngram,
             candidates=trimmed_cluster,
             stats_summary=stats_summary,
-            stream_callback=stream_callback
+            stream_callback=stream_callback,
         )
 
         # Access the raw output
         raw = safe_output(debate_result) if hasattr(debate_result, "raw_output") else {}
 
+        tiered_groups = defaultdict(list)
+        for c in cluster:
+            tier = c.get("tier", "❌ Untiered")
+            tiered_groups[tier].append(c)
+
         result = {
             "root": ngram,
-            "candidates": cluster,
             "cohesion": str(cohesion_score),
             "semantic_coverage": str(semantic_coverage),
+            "tiered_candidates": dict(tiered_groups),  # Make it JSON-serializable
             "summary": raw.get("summary", "[No summary]"),
         }
 
@@ -123,13 +173,13 @@ class RootExtractionCrew:
         for role in ["Linguist", "Skeptic", "Adjudicator", "Archivist"]:
             if role in raw:
                 result[role] = raw[role]
-    
+
         return result
 
-        
     def run_with_streaming(self, max_words=None, stream_callback=None):
         output = []
         seen_words = 0
+        ngram_counts = self.get_ngram_frequencies()
 
         for entry in self.entries:
             word = entry["normalized"]
@@ -137,6 +187,9 @@ class RootExtractionCrew:
 
             for ngram in ngrams:
                 if ngram in self.processed_ngrams:
+                    continue
+                if ngram_counts[ngram] <= 1:
+                    print(f"[Skipped] '{ngram}' only appears in 1 word. Ignoring it.")
                     continue
                 self.processed_ngrams.add(ngram)
 
@@ -146,14 +199,14 @@ class RootExtractionCrew:
                     entries=self.entries,
                     target_word=ngram,
                     subst_map=self.subst_map,
-                    topn=20
+                    topn=20,
                 )
 
                 index_candidates = self.candidate_finder.get_candidates(
                     ngram=ngram,
                     top_n=20,
                     similarity_threshold=0.35,
-                    include_context=True
+                    include_context=True,
                 )
 
                 sem_norms = {c["normalized"] for c in semantic_candidates}
@@ -164,20 +217,61 @@ class RootExtractionCrew:
                     continue
 
                 merged_cluster = []
-                for word in (sem_norms | index_norms):
-                    sem_entry = next((c for c in semantic_candidates if c["normalized"] == word), None)
-                    index_entry = next((c for c in index_candidates if c["normalized"] == word), None)
+                for word in sem_norms | index_norms:
+                    sem_entry = next(
+                        (c for c in semantic_candidates if c["normalized"] == word),
+                        None,
+                    )
+                    index_entry = next(
+                        (c for c in index_candidates if c["normalized"] == word), None
+                    )
                     if not sem_entry and index_entry:
                         continue
 
-                    merged_cluster.append({
-                        "word": sem_entry["word"] if sem_entry else index_entry["word"] if index_entry else word,
-                        "normalized": word,
-                        "definition": sem_entry.get("definition") if sem_entry else index_entry.get("definition") if index_entry else "",
-                        "fasttext": float(sem_entry.get("fasttext", 0.0)) if sem_entry else 0.0,
-                        "semantic": float(sem_entry.get("semantic", 0.0)) if sem_entry else 0.0,
-                        "source": self._get_source_label(sem_entry, index_entry)
-                    })
+                    merged_cluster.append(
+                        {
+                            "word": (
+                                sem_entry["word"]
+                                if sem_entry
+                                else index_entry["word"] if index_entry else word
+                            ),
+                            "normalized": word,
+                            "definition": (
+                                sem_entry.get("definition")
+                                if sem_entry
+                                else (
+                                    index_entry.get("definition") if index_entry else ""
+                                )
+                            ),
+                            "fasttext": (
+                                float(sem_entry.get("fasttext", 0.0))
+                                if sem_entry
+                                else 0.0
+                            ),
+                            "semantic": (
+                                float(sem_entry.get("semantic", 0.0))
+                                if sem_entry
+                                else 0.0
+                            ),
+                            "source": self._get_source_label(sem_entry, index_entry),
+                            "citations": list(
+                                {
+                                    c.get("context", "").strip()
+                                    for c in (
+                                        sem_entry.get("citations", [])
+                                        if sem_entry
+                                        else []
+                                    )
+                                    + (
+                                        index_entry.get("citations", [])
+                                        if index_entry
+                                        else []
+                                    )
+                                    if c.get("context")
+                                }
+                            ),
+                        }
+                    )
 
                 evaluated = self.evaluate_ngram(ngram, merged_cluster)
                 evaluated["overlap_count"] = len(overlap)
@@ -212,7 +306,6 @@ class RootExtractionCrew:
                     continue
                 self.processed_ngrams.add(ngram)
 
-
                 # Step 1: Get candidates from both paths
                 semantic_candidates = find_semantically_similar_words(
                     ft_model=self.fasttext,
@@ -220,14 +313,14 @@ class RootExtractionCrew:
                     entries=self.entries,
                     target_word=ngram,
                     subst_map=self.subst_map,
-                    topn=20
+                    topn=20,
                 )
 
                 index_candidates = self.candidate_finder.get_candidates(
                     ngram=ngram,
                     top_n=20,
                     similarity_threshold=0.35,
-                    include_context=True
+                    include_context=True,
                 )
 
                 # Get normalized names for easy comparison
@@ -241,9 +334,14 @@ class RootExtractionCrew:
                 # Step 2: Merge info and score
                 merged_cluster = []
                 dropped_count = 0
-                for word in (sem_norms | index_norms):
-                    sem_entry = next((c for c in semantic_candidates if c["normalized"] == word), None)
-                    index_entry = next((c for c in index_candidates if c["normalized"] == word), None)
+                for word in sem_norms | index_norms:
+                    sem_entry = next(
+                        (c for c in semantic_candidates if c["normalized"] == word),
+                        None,
+                    )
+                    index_entry = next(
+                        (c for c in index_candidates if c["normalized"] == word), None
+                    )
                     # Coarse filter: skip if it's index-only—which means it is probably noise
                     if not sem_entry and index_entry:
                         dropped_count += 1
@@ -251,15 +349,28 @@ class RootExtractionCrew:
 
                     sem_word = sem_entry["word"] if sem_entry else None
                     idx_word = index_entry["word"] if index_entry else None
-                    merged_cluster.append({
-                        "word": sem_word or idx_word or word,
-                        "normalized": word,
-                        "definition": (sem_entry["definition"] if sem_entry and "definition" in sem_entry else
-                                    index_entry["definition"] if index_entry and "definition" in index_entry else ""),
-                        "fasttext": sem_entry.get("fasttext", 0.0) if sem_entry else 0.0,
-                        "semantic": sem_entry.get("semantic", 0.0) if sem_entry else 0.0,
-                        "source": self._get_source_label(sem_entry, index_entry)
-                    })
+                    merged_cluster.append(
+                        {
+                            "word": sem_word or idx_word or word,
+                            "normalized": word,
+                            "definition": (
+                                sem_entry["definition"]
+                                if sem_entry and "definition" in sem_entry
+                                else (
+                                    index_entry["definition"]
+                                    if index_entry and "definition" in index_entry
+                                    else ""
+                                )
+                            ),
+                            "fasttext": (
+                                sem_entry.get("fasttext", 0.0) if sem_entry else 0.0
+                            ),
+                            "semantic": (
+                                sem_entry.get("semantic", 0.0) if sem_entry else 0.0
+                            ),
+                            "source": self._get_source_label(sem_entry, index_entry),
+                        }
+                    )
                 evaluated = self.evaluate_ngram(ngram, merged_cluster)
                 evaluated["overlap_count"] = len(overlap)
                 evaluated["dropped_index_only"] = dropped_count
@@ -273,11 +384,9 @@ class RootExtractionCrew:
         self.save_results(output)
         self.save_processed_ngrams()
 
-
     def run_root_extraction_gui(self, max_words=3, stream_callback=None):
         crew = RootExtractionCrew()
         crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
-
 
     def save_results(self, data):
         with open(self.output_path, "w", encoding="utf-8") as f:

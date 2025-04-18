@@ -66,6 +66,25 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
 
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
 
+        if cand_norm.startswith(normalized_query) or cand_norm.endswith(normalized_query):
+            final_score += 0.11
+
+        if cand_norm.startswith(normalized_query) or cand_norm.endswith(normalized_query):
+            priority = 2  # Top tier: starts or ends with the root
+        elif normalized_query in cand_norm:
+            priority = 1  # Middle tier: contains root
+        else:
+            priority = 0  # Lowest: no apparent connection
+        
+        if priority == 2 and final_score > 0.85:
+            tier = "🔥 Very Strong"
+        elif priority == 2:
+            tier = "✅ Strong"
+        elif priority == 1:
+            tier = "🤷 Possible"
+        else:
+            tier = "❌ Weak"
+        
         if final_score < min_similarity:
             continue
 
@@ -76,9 +95,11 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
             "fasttext": round(ft_score, 3),
             "semantic": round(def_score, 3),
             "score": round(final_score, 3),
+            "priority": priority,
+            "tier": tier,
             "levenshtein": levenshtein_distance(normalized_query, cand_norm),
             "citations": entry.get("key_citations", [])
         })
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+    results.sort(key=lambda x: (-x["priority"], -x["score"]))
     return results[:topn]
