@@ -73,7 +73,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run root extraction CLI.")
     parser.add_argument(
-        "--max_words", type=int, default=3, help="Max words to process (0 for all)"
+        "--max_words", type=int, default=1, help="Max words to process (0 for all)"
     )
     args = parser.parse_args()
 

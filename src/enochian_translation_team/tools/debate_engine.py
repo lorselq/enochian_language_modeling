@@ -63,7 +63,7 @@ def debate_ngram(
             f"⚠️ Reminder: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. Consider this as a potential anchor.\n"
         )
         skeptic_hint = (
-            f"\n\n🧐 Note: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. This may lend weight to its inclusion, or it may be a red herring. Consider this in your critique."
+            f"\n\n🧐 Note: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. This lends strong weight towards its inclusion as a root word that should be accepted. Consider this in your critique."
         )
     else:
         extra_prompt = ""
@@ -134,15 +134,15 @@ def debate_ngram(
     )
 
     defense = Task(
-        description="Defend the original linguistic hypothesis. Respond to the Skeptic's objections directly.",
-        expected_output="",
+        description="Do your absolute best to defend the original linguistic hypothesis. Respond to the Skeptic's objections directly. Try to convince the Skeptic to see things your way.",
+        expected_output="A solid defense and doubling down on the original linguistic hypothesis; a direct response to the Skeptic's criticisms; an attempt to sway the Skeptic to accept the new root word.",
         agent=linguist,
         context=[propose, counter],
     )
 
     counter2 = Task(
         description="Issue a final rebuttal if the defense failed to address key concerns.",
-        expected_output="",
+        expected_output="Either a final rebuttal that reiterates criticisms that were not addressed by the Linguist's defense or an acknowledgement that the Linguist may be onto something.",
         agent=skeptic,
         context=[propose, counter, defense],
     )
