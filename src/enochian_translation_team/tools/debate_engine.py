@@ -129,14 +129,15 @@ def debate_ngram(
     #         callbacks=[stream_callback] if stream_callback else [],
     #     ),
     # }
+    about_enochiana = "As a bit of context about the Enochian language: the root words are derived from Enochian, the language Adam spoke (from the Biblical Adam and Eve), and is allegedly used as a form of celestial speech by angels and other divine entities; there are many Christian (and Gnostic) undertones in the language, and the known words' main focus is divine cosmology, theology, and human action and government."
 
     tasks = {
         "propose": Task(
-            description=f"""{extra_prompt}Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions.\n\nDefinitions and citations contained in [] to consider (they are pipe-delimited and strongly ordered from most to least relevant):\n{root_def_summary}""",
+            description=f"""{extra_prompt}Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions.{about_enochiana}\n\nConsider the following definitions and citations contained within [] (they are pipe-delimited and strongly ordered from most to least relevant):\n{root_def_summary}""",
             expected_output="A strong case for the root, citing semantic and morphological evidence.",
         ),
         "synthesize": Task(
-            description=f"You're the lead linguist. Given multiple root analyses by junior linguists, synthesize them into one strong, cohesive proposal with the best arguments only, giving preference to common ideas.",
+            description=f"You're the lead linguist. Given multiple root analyses by junior linguists, synthesize them into one strong, cohesive proposal with the best arguments only, giving preference to common ideas. {about_enochiana}",
             expected_output="A strong case for the root, citing semantic and morphological evidence.",
         ),
         "counter": Task(
@@ -167,7 +168,7 @@ def debate_ngram(
             ),
         ),
         "gloss": Task(
-            description=f'The adjudicator has approved the root "{root}". Respond ONLY with a dictionary-style definition for the root word. It should take the format of "[root] - [definition]". Again, provide ONLY the word and its definition. What follows is information you can use to base your definition on:\n',
+            description=f'The adjudicator has approved the root "{root}". Your responsibility is to respond ONLY with a dictionary-style definition for the root word. For your definition, focus on the semantics rather than how the word functions in the language. Your response must take the form of "[root] - [definition]". Again, provide ONLY the word and its definition. What follows is information you can use to base your definition on; again, your definition must be of the form "[root] - [definition]".\n\n',
             expected_output="A thorough and meaningful dictionary-style definition."
         )
     }
