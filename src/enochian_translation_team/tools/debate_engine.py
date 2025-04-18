@@ -3,7 +3,7 @@ from crewai import Agent, Task, Crew
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
 
 
-def select_definitions(def_list, max_words=50):
+def select_definitions(def_list, max_words=75):
     selected = []
     total_words = 0
 
@@ -37,34 +37,30 @@ def safe_output(crew_output) -> dict:
 
 
 def debate_ngram(
-    root: str, candidates: list[dict], stats_summary: str, stream_callback=None, root_entry: Optional[dict] = None
+    root: str,
+    candidates: list[dict],
+    stats_summary: str,
+    stream_callback=None,
+    root_entry: Optional[dict] = None,
 ):
-    def_list = [
-        (
-            c.get("word", ""),
-            c.get("definition", "")
-        )
-        for c in candidates if c
-    ]
+    def_list = [(c.get("word", ""), c.get("definition", "")) for c in candidates if c]
     joined_defs = [
         f"{word.strip()} — {definition.strip()}"
         for word, definition in def_list
         if word and definition
     ]
     if root_entry is None:
-        root_entry = next((c for c in candidates if c.get("word", "").lower() == root.lower()), None)
-    selected_defs = select_definitions(joined_defs, max_words=50)
+        root_entry = next(
+            (c for c in candidates if c.get("word", "").lower() == root.lower()), None
+        )
+    selected_defs = select_definitions(joined_defs, max_words=75)
     root_def_summary = " | ".join(selected_defs) + (
         "..." if len(joined_defs) > len(selected_defs) else ""
     )
-    
+
     if root_entry and root_entry.get("definition"):
-        extra_prompt = (
-            f"⚠️ Reminder: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. Consider this as a potential anchor.\n"
-        )
-        skeptic_hint = (
-            f"\n\n🧐 Note: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. This lends strong weight towards its inclusion as a root word that should be accepted. Consider this in your critique."
-        )
+        extra_prompt = f"⚠️ Reminder: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. Consider this as a potential anchor.\n"
+        skeptic_hint = f"\n\n🧐 Note: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. This lends strong weight towards its inclusion as a root word that should be accepted. Consider this in your critique."
     else:
         extra_prompt = ""
         skeptic_hint = ""
@@ -75,7 +71,7 @@ def debate_ngram(
     )
     linguist = Agent(
         role="Linguist",
-        goal="Analyze the semantic relationships between these Enochian words and their definitions. Identify shared morphemes or root candidates based on: shared character substrings (especially prefixes/suffixes); overlapping definitions or conceptual meanings; patterns in usage across citations. Justify why these words might be related, but never use English etymology to substantiate a proposed Enochian root word. Reference actual text segments or gloss overlaps.",
+        goal="Analyze the semantic relationships between these Enochian words and their definitions. Identify shared morphemes or root candidates based on: shared character substrings (especially prefixes/suffixes); overlapping definitions or conceptual meanings; patterns in usage across citations. Justify why these words might be related, but never use English, Greek, Latin, or Hebrew etymology to substantiate a proposed Enochian root word. Never use hypothetical Enochian words you've made up to justify your arguments; use only the ones provided in the prompts. Reference actual text segments or gloss overlaps.",
         backstory="A creative, inventive, and excited linguist with deep pattern recognition skills, always hopeful to discover something new and great.",
         tools=[linguist_tool],
         verbose=True,
@@ -83,7 +79,7 @@ def debate_ngram(
     )
 
     skeptic_tool = QueryModelTool(
-        system_prompt="You are a skeptical linguist reviewing a proposed root analysis in the Enochian language. Your goal is to uncover weak reasoning, accidental pattern-matching, or semantic mismatches. Examine whether the proposed words actually share meaningful definitions, or whether the morphological overlap is superficial (e.g., short or common letter combinations). Challenge vague or speculative claims. Look for missing evidence or inconsistent logic. If the root hypothesis is flawed, explain why. If you believe a stronger candidate exists—or the groupings should be split—make a concise counterproposal. You are sharp, analytical, and unafraid to criticize overreach."
+        system_prompt="You are a skeptical linguist reviewing a proposed root analysis in the Enochian language. Your goal is to uncover weak reasoning, accidental pattern-matching, or semantic mismatches. Examine whether the proposed words actually share meaningful definitions. Challenge vague or speculative claims. Look for missing evidence or inconsistent logic. If the root hypothesis is flawed, explain why. If you believe a stronger candidate exists—which is something you would like—make a concise counterproposal. You are sharp, analytical, and unafraid to criticize overreach."
     )
     skeptic = Agent(
         role="Skeptic",
@@ -127,7 +123,8 @@ def debate_ngram(
     )
 
     counter = Task(
-        description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences." + skeptic_hint,
+        description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences."
+        + skeptic_hint,
         expected_output="A thorough and convincing rebuttal to the Linguist's proposal to add the new root word to the records.",
         agent=skeptic,
         context=[propose],
@@ -155,7 +152,7 @@ def debate_ngram(
     )
 
     record = Task(
-        description="Summarize the debate and the final outcome in 2-3 sentences.",
+        description="Summarize the debate and the final outcome in 3-4 sentences. Be sure to cover the strongest arguments for an against.",
         expected_output="A brief summarization of the debate and its outcome.",
         agent=archivist,
         context=[propose, counter, defense, counter2, ruling],
@@ -163,7 +160,7 @@ def debate_ngram(
 
     # === Direct Tool Access with Streaming ===
     GRAY = "\033[90m"
-    
+
     linguist_cb = (
         (lambda r, m: stream_callback("Linguist", m)) if stream_callback else None
     )
@@ -216,7 +213,9 @@ def debate_ngram(
         stream_callback("Linguist", "**Linguist (Defense):**")
 
     print(
-        f"\n\n>>>🥸\tLinguist's turn to defend...\n{GRAY}Defense prompt:\n", defense.description, "\n"
+        f"\n\n>>>🥸\tLinguist's turn to defend...\n{GRAY}Defense prompt:\n",
+        defense.description,
+        "\n",
     )
 
     linguist_defense = linguist_tool._run(
@@ -231,9 +230,11 @@ def debate_ngram(
         stream_callback("Skeptic", "**Skeptic (Rebuttal):**")
 
     print(
-        f"\n\n>>>🤔\tSkeptic's turn to rebuttal...\n{GRAY}Final word:\n", counter2.description, "\n"
+        f"\n\n>>>🤔\tSkeptic's turn to rebuttal...\n{GRAY}Final word:\n",
+        counter2.description,
+        "\n",
     )
-    rebuttal_response = skeptic_tool._run(
+    skeptic_rebuttal = skeptic_tool._run(
         prompt=counter2.description + f"\n\nLinguist said: {linguist_defense}",
         stream_callback=skeptic_cb,
         print_chunks=True,
@@ -253,7 +254,7 @@ def debate_ngram(
 
     adjudicator_response = adjudicator_tool._run(
         prompt=ruling.description
-        + f"\n\nLinguist: {linguist_response}\n\nSkeptic: {skeptic_response}\n\nDefense: {linguist_defense}\n\nFinal Skeptic: {rebuttal_response}",
+        + f"\n\nLinguist: {linguist_response}\n\nSkeptic: {skeptic_response}\n\nDefense: {linguist_defense}\n\nFinal Skeptic: {skeptic_rebuttal}",
         stream_callback=adjudicator_cb,
         print_chunks=True,
         role_name="👩‍⚖️\tAdjudicator",
@@ -263,31 +264,60 @@ def debate_ngram(
     if stream_callback:
         stream_callback("Archivist", "**Archivist:**")
 
-    print(f"\n\n>>>📜\tArchivist's turn to record...\n{GRAY}Record>>\n", record.description, "\n")
+    print(
+        f"\n\n>>>📜\tArchivist's turn to record...\n{GRAY}Record>>\n",
+        record.description,
+        "\n",
+    )
 
     archivist_summary = archivist_tool._run(
         prompt=record.description
-        + f"\n\nLinguist: {linguist_response}\n\nSkeptic: {skeptic_response}\n\nAdjudicator: {adjudicator_response}",
+        + f"\n\nLinguist: {linguist_response}\n\nSkeptic: {skeptic_response}\n\nLinguist: {linguist_defense}\n\nSkeptic: {skeptic_rebuttal}\n\nAdjudicator: {adjudicator_response}",
         stream_callback=archivist_cb,
         print_chunks=True,
         role_name="📜\tArchivist",
+    )
+
+    archivist_summary_formatted = (
+        "=== LINGUIST ===\n"
+        + linguist_response.strip()
+        + "\n\n=== SKEPTIC ===\n"
+        + skeptic_response.strip()
+        + "\n\n=== DEFENSE ===\n"
+        + linguist_defense.strip()
+        + "\n\n=== REBUTTAL ===\n"
+        + skeptic_rebuttal.strip()
+        + "\n\n=== ADJUDICATOR ===\n"
+        + adjudicator_response.strip()
+        + "\n\n=== ARCHIVIST ===\n"
+        + archivist_summary.strip()
+    )
+
+    tldr_tool = QueryModelTool(
+        system_prompt="You are a helpful summarizer. You don't repeat anything anyone says and you use your own words."
+    )
+
+    tldr_summary = tldr_tool._run(
+        prompt="Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments and takeaways, and briefly indicating whether or not the root word proposal was accepted:\n\n"
+        + archivist_summary_formatted,
+        stream_callback=None,
     )
 
     return {
         "Linguist": linguist_response,
         "Skeptic": skeptic_response,
         "Defense": linguist_defense,
-        "Rebuttal": rebuttal_response,
+        "Rebuttal": skeptic_rebuttal,
         "Adjudicator": adjudicator_response,
-        "Archivist": archivist_summary,
-        "summary": archivist_summary,
+        "Archivist": archivist_summary_formatted,
+        "summary": tldr_summary,
         "raw_output": {
             "Linguist": linguist_response,
             "Skeptic": skeptic_response,
             "Defense": linguist_defense,
-            "Rebuttal": rebuttal_response,
+            "Rebuttal": skeptic_rebuttal,
             "Adjudicator": adjudicator_response,
-            "Archivist": archivist_summary,
-            "summary": archivist_summary,
+            "Archivist": archivist_summary_formatted,
+            "summary": tldr_summary,
         },
     }

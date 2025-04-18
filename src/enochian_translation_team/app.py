@@ -60,7 +60,7 @@ def stream_callback(role, message):
         if log_entries[i][0] == role:
             log_entries[i] = (role, token_buffers[role])
 
-def main(max_words: Optional[int] = 1):
+def main(max_words: Optional[int] = 5):
     print("🪄 Initializing semantic tribunal...\n")
     crew = RootExtractionCrew()
     crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
@@ -73,7 +73,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run root extraction CLI.")
     parser.add_argument(
-        "--max_words", type=int, default=1, help="Max words to process (0 for all)"
+        "--max_words", type=int, default=5, help="Max words to process (0 for all)"
     )
     args = parser.parse_args()
 

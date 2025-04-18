@@ -39,7 +39,7 @@ class QueryModelTool(BaseTool):
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.5,
+                temperature=0.2,
                 stream=True,
             )
 

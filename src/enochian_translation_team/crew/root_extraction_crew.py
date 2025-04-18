@@ -177,7 +177,16 @@ class RootExtractionCrew:
         )
 
         # Access the raw output
-        raw = safe_output(debate_result) if hasattr(debate_result, "raw_output") else {}
+        print("[DEBUG] Debate result keys:", list(debate_result.keys()))
+        print("[DEBUG] raw_output keys:", list(debate_result.get("raw_output", {}).keys()))
+        
+        if isinstance(debate_result, dict):
+            raw = debate_result.get("raw_output", {})
+        elif hasattr(debate_result, "raw_output"):
+            raw = safe_output(debate_result)
+        else:
+            raw = {}
+
 
         tiered_groups = defaultdict(list)
         for c in cluster:
