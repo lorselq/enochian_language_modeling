@@ -2,6 +2,7 @@ import json
 from collections import Counter, defaultdict
 from gensim.models import FastText
 from sentence_transformers import SentenceTransformer
+from enochian_translation_team.utils.logger import save_log
 from enochian_translation_team.tools.debate_engine import debate_ngram, safe_output
 from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.semantic_search import (
@@ -51,8 +52,16 @@ class RootExtractionCrew:
             return set()
 
     def save_processed_ngrams(self):
+        try:
+            with open(self.processed_ngrams_path, "r", encoding="utf-8") as f:
+                existing = set(json.load(f))
+        except (FileNotFoundError, json.JSONDecodeError):
+            existing = set()
+
+        combined = existing | self.processed_ngrams
+
         with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
-            json.dump(sorted(list(self.processed_ngrams)), f, indent=2)
+            json.dump(sorted(list(combined)), f, indent=2)
 
     def load_entries(self):
         with open(self.dictionary_path, "r", encoding="utf-8") as f:
@@ -115,18 +124,26 @@ class RootExtractionCrew:
         anchor_entry = None
         ngram_lower = ngram.lower()
         root_entry = None
-        
+
         for c in cluster:
             if not c.get("definition"):
                 continue
 
             citations = c.get("citations", [])
             if citations and isinstance(citations[0], dict):
-                contexts = [cite.get("context", "").strip() for cite in citations if cite.get("context")]
+                contexts = [
+                    cite.get("context", "").strip()
+                    for cite in citations
+                    if cite.get("context")
+                ]
             else:
                 contexts = citations
 
-            definition = f"{c.get('definition', '')} [{' / '.join(contexts[:2])}]" if contexts else c.get("definition", "")
+            definition = (
+                f"{c.get('definition', '')} [{' / '.join(contexts[:2])}]"
+                if contexts
+                else c.get("definition", "")
+            )
 
             entry = {
                 "word": c.get("word", ""),
@@ -134,7 +151,10 @@ class RootExtractionCrew:
                 "normalized": c.get("normalized", "").lower(),
             }
             # Check if this is the literal ngram word
-            if entry.get("normalized", "") == ngram_lower or entry.get("word", "").lower() == ngram_lower:
+            if (
+                entry.get("normalized", "") == ngram_lower
+                or entry.get("word", "").lower() == ngram_lower
+            ):
                 root_entry = c.copy()  # <- This preserves all fields
                 anchor_entry = {
                     "word": f"{c.get('word', '')} ⭐️ (root form)",
@@ -143,11 +163,11 @@ class RootExtractionCrew:
                 }
             else:
                 trimmed_cluster.append(entry)
-        
+
         # If anchor exists, put it at the top
         if anchor_entry:
             trimmed_cluster.insert(0, anchor_entry)
-        
+
         # Check for exact-match anchor word in the cluster
         if root_entry and root_entry.get("definition"):
             root_callout = (
@@ -157,7 +177,7 @@ class RootExtractionCrew:
             )
         else:
             root_callout = ""
-        
+
         # Summarize stats for agents
         stats_summary = (
             f"{root_callout}"
@@ -173,20 +193,15 @@ class RootExtractionCrew:
             candidates=trimmed_cluster,
             stats_summary=stats_summary,
             stream_callback=stream_callback,
-            root_entry=root_entry
+            root_entry=root_entry,
         )
 
-        # Access the raw output
-        print("[DEBUG] Debate result keys:", list(debate_result.keys()))
-        print("[DEBUG] raw_output keys:", list(debate_result.get("raw_output", {}).keys()))
-        
         if isinstance(debate_result, dict):
             raw = debate_result.get("raw_output", {})
         elif hasattr(debate_result, "raw_output"):
             raw = safe_output(debate_result)
         else:
             raw = {}
-
 
         tiered_groups = defaultdict(list)
         for c in cluster:
@@ -210,6 +225,7 @@ class RootExtractionCrew:
 
     def run_with_streaming(self, max_words=None, stream_callback=None):
         output = []
+        log_entries = []
         seen_words = 0
         ngram_counts = self.get_ngram_frequencies()
 
@@ -267,8 +283,13 @@ class RootExtractionCrew:
                         seen.add(norm)
 
                 for word in merged_words:
-                    sem_entry = next((c for c in semantic_candidates if c["normalized"] == word), None)
-                    index_entry = next((c for c in index_candidates if c["normalized"] == word), None)
+                    sem_entry = next(
+                        (c for c in semantic_candidates if c["normalized"] == word),
+                        None,
+                    )
+                    index_entry = next(
+                        (c for c in index_candidates if c["normalized"] == word), None
+                    )
                     if not sem_entry and index_entry:
                         continue
 
@@ -316,11 +337,16 @@ class RootExtractionCrew:
                             ),
                         }
                     )
-
+                
                 evaluated = self.evaluate_ngram(ngram, merged_cluster)
                 evaluated["overlap_count"] = len(overlap)
 
                 output.append(evaluated)
+
+                self.save_results(output)
+                self.save_processed_ngrams()
+                if "Archivist" in evaluated:
+                    save_log([("Archivist", evaluated["Archivist"])], label=ngram)
 
                 # Stream out each agent’s statement
                 if stream_callback:
@@ -332,9 +358,6 @@ class RootExtractionCrew:
             seen_words += 1
             if max_words and seen_words >= max_words:
                 break
-
-        self.save_results(output)
-        self.save_processed_ngrams()
 
     def run(self, max_words=None, min_cluster_size=2):
         output = []
@@ -432,6 +455,19 @@ class RootExtractionCrew:
         crew = RootExtractionCrew()
         crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
 
-    def save_results(self, data):
+    def save_results(self, new_data):
+        # Load existing results if they exist
+        try:
+            with open(self.output_path, "r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            existing_data = []
+
+        # Combine existing and new
+        combined_data = {}
+        for item in existing_data + new_data:
+            combined_data[item["root"]] = item
+
+        # Save all back to file
         with open(self.output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            json.dump(list(combined_data.values()), f, indent=2)

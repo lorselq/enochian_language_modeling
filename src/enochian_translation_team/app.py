@@ -10,24 +10,6 @@ token_buffers = defaultdict(str)
 log_entries = []
 
 
-def save_log_to_md(log_entries):
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_dir = Path("logs")
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{timestamp}_log.md"
-
-    header_re = re.compile(r"^\*\*(.+?)\*\*:\s*", flags=re.MULTILINE)
-
-    with open(log_path, "w", encoding="utf-8") as f:
-        for role, message in log_entries:
-            # Clean and format for Markdown
-            header_re = re.compile(r"^\*\*(.+?):\*\*", re.MULTILINE)
-            md = header_re.sub(lambda m: f"## {m.group(1)}", message, count=1)
-            f.write(md.strip() + "\n\n")
-
-    print(f"\n📁 Log saved to `{log_path}`")
-
-
 def stream_callback(role, message):
     badge = {
         "Linguist": "👩‍💻",
@@ -65,7 +47,6 @@ def main(max_words: Optional[int] = 5):
     crew = RootExtractionCrew()
     crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
     print("\n🎉 Crew has completed their assigned task.")
-    save_log_to_md(log_entries)
 
 
 if __name__ == "__main__":
