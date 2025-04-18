@@ -177,6 +177,7 @@ cython_debug/
 .vscode/
 
 # giant fasttext models and similar
+logs/*
 src/enochian_translation_team/tools/models/*
 src/enochian_translation_team/logs/*
 src/enochian_translation_team/data/ngram_index.json
