@@ -23,7 +23,7 @@ class QueryModelTool(BaseTool):
         GRAY = "\033[90m"
         RESET = "\033[0m"
         try:
-            if role_name and "Linguist" in role_name and "Lead" not in role_name:
+            if role_name and "Junior" in role_name:
                 print(f"{GRAY}")
             else:
                 print(f"{RESET}>>>{role_name} speaking...")
@@ -43,7 +43,7 @@ class QueryModelTool(BaseTool):
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
+                temperature=0.5,
                 stream=True,
             )
 

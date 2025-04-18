@@ -350,10 +350,13 @@ class RootExtractionCrew:
 
                 # Stream out each agent’s statement
                 if stream_callback:
-                    for role in ["Linguist", "Skeptic", "Adjudicator", "Archivist"]:
+                    for role in ["Linguist", "Skeptic", "Adjudicator"]:
                         if role in evaluated:
                             stream_callback(role, evaluated[role])
-                    stream_callback("Archivist", f"{evaluated['summary']}\n\n")
+                    # Show only the TLDR, labeled clearly
+                    if "summary" in evaluated:
+                        stream_callback("📜 Summary", f"{evaluated['summary']}\n")
+
 
             seen_words += 1
             if max_words and seen_words >= max_words:
