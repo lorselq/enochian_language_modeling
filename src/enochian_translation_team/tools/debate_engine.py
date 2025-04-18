@@ -7,9 +7,17 @@ def select_definitions(def_list, max_words=50):
     total_words = 0
 
     for d in def_list:
-        word_count = len(d.split())
+        # Only count words before the first citation bracket
+        bracket_index = d.find(" [")
+        if bracket_index != -1:
+            word_slice = d[:bracket_index]
+        else:
+            word_slice = d
+        word_count = len(word_slice.split())
+
         if total_words + word_count > max_words:
             break
+
         selected.append(d)
         total_words += word_count
 
@@ -30,7 +38,13 @@ def safe_output(crew_output) -> dict:
 def debate_ngram(
     root: str, candidates: list[dict], stats_summary: str, stream_callback=None
 ):
-    def_list = [(c.get("word", ""), c.get("definition", "")) for c in candidates if c]
+    def_list = [
+        (
+            c.get("word", ""),
+            c.get("definition", "")
+        )
+        for c in candidates if c
+    ]
     joined_defs = [
         f"{word.strip()} — {definition.strip()}"
         for word, definition in def_list
@@ -92,7 +106,7 @@ def debate_ngram(
 
     # === TASKS ===
     propose = Task(
-        description=f"""Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions.\n\nDefinitions to consider (they are pipe-delimited):\n{root_def_summary}
+        description=f"""Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions.\n\nDefinitions and citations contained in [] to consider (they are pipe-delimited):\n{root_def_summary}
         """,
         expected_output="A strong case for the root, citing semantic and morphological evidence.",
         agent=linguist,
@@ -135,7 +149,6 @@ def debate_ngram(
 
     # === Direct Tool Access with Streaming ===
     GRAY = "\033[90m"
-    RESET = "\033[0m"
     
     linguist_cb = (
         (lambda r, m: stream_callback("Linguist", m)) if stream_callback else None
@@ -155,7 +168,7 @@ def debate_ngram(
         stream_callback("Linguist", "**Linguist:**")
 
     print(
-        f"\n\n{GRAY}>>>🥸\tLinguist's turn to propose...\nProposal prompt:\n",
+        f"\n\n>>>🥸\tLinguist's turn to propose...\n{GRAY}Proposal prompt:\n",
         propose.description,
         "\n",
     )
@@ -172,13 +185,13 @@ def debate_ngram(
         stream_callback("Skeptic", "**Skeptic:**")
 
     print(
-        "\n\n>>>🤔\tSkeptic's turn to refute...\nRefutation prompt:\n",
+        "\n\n>>>🤔\tSkeptic's turn to refute...\n{GRAY}Refutation prompt:\n",
         counter.description,
         "\n",
     )
 
     skeptic_response = skeptic_tool._run(
-        prompt=counter.description + f"\n\nSkeptic said: {linguist_response}",
+        prompt=counter.description + f"\n\nLinguist said: {linguist_response}",
         stream_callback=skeptic_cb,
         print_chunks=True,
         role_name="🤔\tSkeptic",
@@ -189,11 +202,11 @@ def debate_ngram(
         stream_callback("Linguist", "**Linguist (Defense):**")
 
     print(
-        "\n\n>>>🥸\tLinguist's turn to defend...\nDefense prompt:\n", defense.description, "\n"
+        "\n\n>>>🥸\tLinguist's turn to defend...\n{GRAY}Defense prompt:\n", defense.description, "\n"
     )
 
-    defense_response = linguist_tool._run(
-        prompt=defense.description + f"\n\nLinguist said: {skeptic_response}",
+    linguist_defense = linguist_tool._run(
+        prompt=defense.description + f"\n\nSkeptic said: {skeptic_response}",
         stream_callback=linguist_cb,
         print_chunks=True,
         role_name="🥸\tLinguist",
@@ -204,10 +217,10 @@ def debate_ngram(
         stream_callback("Skeptic", "**Skeptic (Rebuttal):**")
 
     print(
-        "\n\n>>>🤔\tSkeptic's turn to rebuttal...\nFinal word:\n", counter2.description, "\n"
+        "\n\n>>>🤔\tSkeptic's turn to rebuttal...\n{GRAY}Final word:\n", counter2.description, "\n"
     )
     rebuttal_response = skeptic_tool._run(
-        prompt=counter2.description + f"\n\nSkeptic replied: {defense_response}",
+        prompt=counter2.description + f"\n\nLinguist said: {linguist_defense}",
         stream_callback=skeptic_cb,
         print_chunks=True,
         role_name="🤔\tSkeptic",
@@ -219,14 +232,14 @@ def debate_ngram(
         stream_callback("Adjudicator", "**Adjudicator:**")
 
     print(
-        "\n\n>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\nRuling:\n",
+        "\n\n>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\n{GRAY}Ruling:\n",
         ruling.description,
         "\n",
     )
 
     adjudicator_response = adjudicator_tool._run(
         prompt=ruling.description
-        + f"\n\nLinguist: {linguist_response}\n\nSkeptic: {skeptic_response}\n\nDefense: {defense_response}\n\nFinal Skeptic: {rebuttal_response}",
+        + f"\n\nLinguist: {linguist_response}\n\nSkeptic: {skeptic_response}\n\nDefense: {linguist_defense}\n\nFinal Skeptic: {rebuttal_response}",
         stream_callback=adjudicator_cb,
         print_chunks=True,
         role_name="👩‍⚖️\tAdjudicator",
@@ -236,7 +249,7 @@ def debate_ngram(
     if stream_callback:
         stream_callback("Archivist", "**Archivist:**")
 
-    print("\n\n>>>📜\tArchivist's turn to record...\nRecord>>\n", record.description, "\n")
+    print("\n\n>>>📜\tArchivist's turn to record...\n{GRAY}Record>>\n", record.description, "\n")
 
     archivist_summary = archivist_tool._run(
         prompt=record.description
@@ -249,7 +262,7 @@ def debate_ngram(
     return {
         "Linguist": linguist_response,
         "Skeptic": skeptic_response,
-        "Defense": defense_response,
+        "Defense": linguist_defense,
         "Rebuttal": rebuttal_response,
         "Adjudicator": adjudicator_response,
         "Archivist": archivist_summary,
@@ -257,7 +270,7 @@ def debate_ngram(
         "raw_output": {
             "Linguist": linguist_response,
             "Skeptic": skeptic_response,
-            "Defense": defense_response,
+            "Defense": linguist_defense,
             "Rebuttal": rebuttal_response,
             "Adjudicator": adjudicator_response,
             "Archivist": archivist_summary,

@@ -19,10 +19,11 @@ class QueryModelTool(BaseTool):
         print_chunks: bool = False,
         role_name: Optional[str] = None
     ) -> str:
+        RESET = "\033[0m"
         try:
-            print(f">>>{role_name} speaking...")
+            print(f"{RESET}>>>{role_name} speaking...")
             client = OpenAI(
-                base_url=os.getenv("OPENAI_API_BASE", "http://localhost:1234/v1"),
+                base_url=os.getenv("OPENAI_API_BASE", "this-will-fail-if-doesn't-work-lol"),
                 api_key=os.getenv("OPENAI_API_KEY", "sk-local-testing"),
             )
 
@@ -51,6 +52,19 @@ class QueryModelTool(BaseTool):
                             print(f"{content}", end="", flush=True)
                 except Exception as inner:
                     print(f"[!] Inner stream failure: {inner}")
+            
+            print("[Debug] OpenAI client initialized.", flush=True)
+            print(f"[Debug] Prompt length: {len(prompt)}", flush=True)
+
+            try:
+                for i, chunk in enumerate(completion):
+                    print(f"[Debug] Received chunk {i}", flush=True)
+                    ...
+            except Exception as stream_err:
+                print(f"[!] Stream iteration failure: {stream_err}")
+            
+            if not response_text:
+                print(f"[!] No content returned for role {role_name}. Stream probably failed.")
 
             return response_text or "[ERROR] No content returned from model."
 
