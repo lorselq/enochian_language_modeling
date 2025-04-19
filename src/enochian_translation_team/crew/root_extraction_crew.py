@@ -149,7 +149,15 @@ class RootExtractionCrew:
                 "word": c.get("word", ""),
                 "definition": definition,
                 "normalized": c.get("normalized", "").lower(),
+                "fasttext": c.get("fasttext", 0.0),
+                "semantic": c.get("semantic", 0.0),
+                "score": c.get("score", 0.0),
+                "tier": c.get("tier", "Untiered"),
+                "priority": c.get("priority", 0),
+                "citations": c.get("citations", []),
+                "source": c.get("source", "unknown"),
             }
+
             # Check if this is the literal ngram word
             if (
                 entry.get("normalized", "") == ngram_lower
@@ -205,8 +213,13 @@ class RootExtractionCrew:
 
         tiered_groups = defaultdict(list)
         for c in cluster:
-            tier = c.get("tier", "❌ Untiered")
+            tier = c.get("tier", "Untiered")
             tiered_groups[tier].append(c)
+            for c in cluster:
+                tier = c.get("tier", "Untiered")
+                tiered_groups[tier].append(c)
+            for group in tiered_groups.values():
+                group.sort(key=lambda x: (-x.get("score", 0), -x.get("priority", 0)))
 
         result = {
             "root": ngram,
@@ -296,16 +309,24 @@ class RootExtractionCrew:
                     merged_cluster.append(
                         {
                             "word": (
-                                sem_entry["word"]
+                                sem_entry.get("word")
                                 if sem_entry
-                                else index_entry["word"] if index_entry else word
+                                else (
+                                    index_entry.get("word", word)
+                                    if index_entry
+                                    else word
+                                )
                             ),
                             "normalized": word,
                             "definition": (
                                 sem_entry.get("definition")
                                 if sem_entry
                                 else (
-                                    index_entry.get("definition") if index_entry else ""
+                                    index_entry.get(
+                                        "definition", "ERROR: no definition provided"
+                                    )
+                                    if index_entry
+                                    else "ERROR: no definition provided"
                                 )
                             ),
                             "fasttext": (
@@ -317,6 +338,20 @@ class RootExtractionCrew:
                                 float(sem_entry.get("semantic", 0.0))
                                 if sem_entry
                                 else 0.0
+                            ),
+                            "score": (
+                                float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
+                            ),
+                            "tier": (
+                                sem_entry.get("tier", "Untiered")
+                                if sem_entry
+                                else "Untiered"
+                            ),
+                            "priority": (
+                                sem_entry.get("priority", 0) if sem_entry else 0
+                            ),
+                            "levenshtein": (
+                                sem_entry.get("levenshtein", 99) if sem_entry else 99
                             ),
                             "source": self._get_source_label(sem_entry, index_entry),
                             "citations": list(
@@ -337,7 +372,7 @@ class RootExtractionCrew:
                             ),
                         }
                     )
-                
+
                 evaluated = self.evaluate_ngram(ngram, merged_cluster)
                 evaluated["overlap_count"] = len(overlap)
 
@@ -350,13 +385,12 @@ class RootExtractionCrew:
 
                 # Stream out each agent’s statement
                 if stream_callback:
-                    for role in ["Linguist", "Skeptic", "Adjudicator"]:
+                    for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
                         if role in evaluated:
                             stream_callback(role, evaluated[role])
                     # Show only the TLDR, labeled clearly
-                    if "summary" in evaluated:
-                        stream_callback("📜 Summary", f"{evaluated['summary']}\n")
-
+                    # if "summary" in evaluated:
+                    #     stream_callback("📜 Summary", f"{evaluated['summary']}\n")
 
             seen_words += 1
             if max_words and seen_words >= max_words:
@@ -417,28 +451,70 @@ class RootExtractionCrew:
                         dropped_count += 1
                         continue
 
-                    sem_word = sem_entry["word"] if sem_entry else None
-                    idx_word = index_entry["word"] if index_entry else None
                     merged_cluster.append(
                         {
-                            "word": sem_word or idx_word or word,
+                            "word": (
+                                sem_entry.get("word")
+                                if sem_entry
+                                else (
+                                    index_entry.get("word", word)
+                                    if index_entry
+                                    else word
+                                )
+                            ),
                             "normalized": word,
                             "definition": (
-                                sem_entry["definition"]
-                                if sem_entry and "definition" in sem_entry
+                                sem_entry.get("definition")
+                                if sem_entry
                                 else (
-                                    index_entry["definition"]
-                                    if index_entry and "definition" in index_entry
-                                    else ""
+                                    index_entry.get(
+                                        "definition", "[ERROR: no definition provided]"
+                                    )
+                                    if index_entry
+                                    else "[ERROR: no definition provided]"
                                 )
                             ),
                             "fasttext": (
-                                sem_entry.get("fasttext", 0.0) if sem_entry else 0.0
+                                float(sem_entry.get("fasttext", 0.0))
+                                if sem_entry
+                                else 0.0
                             ),
                             "semantic": (
-                                sem_entry.get("semantic", 0.0) if sem_entry else 0.0
+                                float(sem_entry.get("semantic", 0.0))
+                                if sem_entry
+                                else 0.0
+                            ),
+                            "score": (
+                                float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
+                            ),
+                            "tier": (
+                                sem_entry.get("tier", "Untiered")
+                                if sem_entry
+                                else "Untiered"
+                            ),
+                            "priority": (
+                                sem_entry.get("priority", 0) if sem_entry else 0
+                            ),
+                            "levenshtein": (
+                                sem_entry.get("levenshtein", 99) if sem_entry else 99
                             ),
                             "source": self._get_source_label(sem_entry, index_entry),
+                            "citations": list(
+                                {
+                                    c.get("context", "").strip()
+                                    for c in (
+                                        sem_entry.get("citations", [])
+                                        if sem_entry
+                                        else []
+                                    )
+                                    + (
+                                        index_entry.get("citations", [])
+                                        if index_entry
+                                        else []
+                                    )
+                                    if c.get("context")
+                                }
+                            ),
                         }
                     )
                 evaluated = self.evaluate_ngram(ngram, merged_cluster)
