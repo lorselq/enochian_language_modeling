@@ -77,13 +77,13 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
             priority = 0  # Lowest: no apparent connection
         
         if priority == 2 and final_score > 0.85:
-            tier = "🔥 Very Strong"
+            tier = "Very strong connection"
         elif priority == 2:
-            tier = "✅ Strong"
+            tier = "Strong connection"
         elif priority == 1:
-            tier = "🤷 Possible"
+            tier = "Possible connection"
         else:
-            tier = "❌ Weak"
+            tier = "Weak to no connection"
         
         if final_score < min_similarity:
             continue

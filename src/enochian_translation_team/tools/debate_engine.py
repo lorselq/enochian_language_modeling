@@ -141,7 +141,7 @@ def debate_ngram(
             expected_output="A strong case for the root, citing semantic and morphological evidence.",
         ),
         "counter": Task(
-            description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences."
+            description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences. However, you should allow for somewhat generalized, abstract, and metaphorical meanings; established root words found previously tend to be abstract in nature, so it follows these will be too."
             + skeptic_hint,
             expected_output="A thorough and convincing rebuttal to the Linguist's proposal to add the new root word to the records.",
         ),
@@ -155,13 +155,16 @@ def debate_ngram(
         ),
         "ruling": Task(
             description=(
-                "Make a ruling. You must START your response with either:\n"
+                "Make a ruling based on the discussion after '+++'. You must START your response with either:\n"
                 "✅ ACCEPTED\n"
                 "or\n"
                 "❌ REJECTED\n"
                 "— Nothing else should come before this line.\n\n"
                 "Then provide a very brief justification in 1–3 sentences.\n"
-                "Be sure the verdict is the first line. This format is mandatory."
+                "Your ruling should come from a neutral perspective, but should allow for overgeneral and metaphorical meanings; established root words found previously are abstract in nature, so it follows these will be too. "
+                "Assume the data provided is all the data available to work with, and than the metrics provided are also derived from acceptable, rigorous processes.\n"
+                "Your role is to make a ruling based on the arguments provided.\n"
+                "Be sure the verdict is the first line. This format is mandatory.\n\n+++\n\n"
             ),
             expected_output=(
                 "A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a short rationale."
@@ -169,8 +172,8 @@ def debate_ngram(
         ),
         "gloss": Task(
             description=f'The adjudicator has approved the root "{root}". Your responsibility is to respond ONLY with a dictionary-style definition for the root word. For your definition, focus on the semantics rather than how the word functions in the language. Your response must take the form of "[root] - [definition]". Again, provide ONLY the word and its definition. What follows is information you can use to base your definition on; again, your definition must be of the form "[root] - [definition]".\n\n',
-            expected_output="A thorough and meaningful dictionary-style definition."
-        )
+            expected_output="A thorough and meaningful dictionary-style definition.",
+        ),
     }
 
     # === Direct Tool Access with Streaming ===
@@ -199,7 +202,7 @@ def debate_ngram(
 
     # === RESEARCH TEAM ===
     linguist_variants = []
-    for i in range(4):
+    for i in range(5):
         if i == 0:
             print(
                 f"{GRAY}Starting prompt for research team: {tasks['propose'].description}"
@@ -300,7 +303,6 @@ def debate_ngram(
     )
 
     # === ADJUDICATOR ===
-
     if stream_callback:
         stream_callback("Adjudicator", "**Adjudicator:**")
 
@@ -403,7 +405,12 @@ def debate_ngram(
         stream_callback=None,
     )
 
-    archivist_summary_formatted += "\n\n=== 📜 SUMMARY ===\n" + tldr_summary.strip()
+    archivist_summary_formatted = (
+        "\n\n=== 📜 SUMMARY ===\n"
+        + tldr_summary.strip()
+        + "\n\n\n========================\n====== TRANSCRIPT ======\n========================\n\n"
+        + archivist_summary_formatted
+    )
 
     return {
         "Linguist": linguist_proposal,
