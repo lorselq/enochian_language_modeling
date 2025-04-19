@@ -1,7 +1,4 @@
-import re
-import datetime
-from typing import Optional
-from pathlib import Path
+import argparse
 from collections import defaultdict
 from enochian_translation_team.crew.root_extraction_crew import RootExtractionCrew
 
@@ -42,16 +39,7 @@ def stream_callback(role, message):
         if log_entries[i][0] == role:
             log_entries[i] = (role, token_buffers[role])
 
-def main(max_words: Optional[int] = 5):
-    print("🪄 Initializing semantic tribunal...\n")
-    crew = RootExtractionCrew()
-    crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
-    print("\n🎉 Crew has completed their assigned task.")
-
-
-if __name__ == "__main__":
-    import argparse
-
+def main():
     parser = argparse.ArgumentParser(description="Run root extraction CLI.")
     parser.add_argument(
         "--max_words", type=int, default=5, help="Max words to process (0 for all)"
@@ -59,4 +47,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     max_words = None if args.max_words == 0 else args.max_words
-    main(max_words=max_words)
+    print("🪄 Initializing semantic tribunal...\n")
+    crew = RootExtractionCrew()
+    crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
+    print("\n🎉 Crew has completed their assigned task.")
+
+
+if __name__ == "__main__":
+    main()
