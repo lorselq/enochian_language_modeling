@@ -39,18 +39,22 @@ def stream_callback(role, message):
         if log_entries[i][0] == role:
             log_entries[i] = (role, token_buffers[role])
 
-def main():
-    parser = argparse.ArgumentParser(description="Run root extraction CLI.")
-    parser.add_argument(
-        "--max_words", type=int, default=5, help="Max words to process (0 for all)"
-    )
-    args = parser.parse_args()
 
-    max_words = None if args.max_words == 0 else args.max_words
+def main():
+    max_words = None
+    while max_words is None:
+        try:
+            max_words_input = input(
+                "How many root words should I process? (0 for all of them): "
+            )
+            max_words = int(max_words_input)
+        except ValueError:
+            print("Invalid number. Try typing a digit.")
+
     print("🪄 Initializing semantic tribunal...\n")
     crew = RootExtractionCrew()
     crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
-    print("\n🎉 Crew has completed their assigned task.")
+    print("\n\n🎉 The research team has completed their assigned task(s)!")
 
 
 if __name__ == "__main__":

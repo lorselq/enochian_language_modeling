@@ -25,7 +25,7 @@ class QueryModelTool(BaseTool):
         try:
             if role_name and "Junior" in role_name:
                 print(f"{GRAY}")
-            else:
+            elif stream_callback:
                 print(f"{RESET}>>>{role_name} speaking...")
             client = OpenAI(
                 base_url=os.getenv(
@@ -55,7 +55,7 @@ class QueryModelTool(BaseTool):
                         response_text += content
                         if stream_callback:
                             stream_callback(role, content)
-                        if print_chunks:
+                        if stream_callback and print_chunks:
                             print(f"{content}", end="", flush=True)
                 except Exception as inner:
                     print(f"[!] Inner stream failure: {inner}")
@@ -63,7 +63,6 @@ class QueryModelTool(BaseTool):
             try:
                 for i, chunk in enumerate(completion):
                     print(f"[Debug] Received chunk {i}", flush=True)
-                    ...
             except Exception as stream_err:
                 print(f"[!] Stream iteration failure: {stream_err}")
 

@@ -200,6 +200,11 @@ def debate_ngram(
     if stream_callback:
         stream_callback("Linguist", "**Linguist:**")
 
+    # separator between words
+    print("\n\n\n")
+    print(f"NOW DISCUSSING {root}")
+    print("\n\n\n")
+    
     # === RESEARCH TEAM ===
     linguist_variants = []
     for i in range(5):
