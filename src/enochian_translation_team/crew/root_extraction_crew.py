@@ -238,7 +238,6 @@ class RootExtractionCrew:
 
     def run_with_streaming(self, max_words=None, stream_callback=None):
         output = []
-        log_entries = []
         seen_words = 0
         ngram_counts = self.get_ngram_frequencies()
 
@@ -529,10 +528,6 @@ class RootExtractionCrew:
         output.sort(key=lambda x: (x["cohesion"], x["overlap_count"]), reverse=True)
         self.save_results(output)
         self.save_processed_ngrams()
-
-    def run_root_extraction_gui(self, max_words=3, stream_callback=None):
-        crew = RootExtractionCrew()
-        crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
 
     def save_results(self, new_data):
         # Load existing results if they exist
