@@ -43,12 +43,20 @@ def debate_ngram(
     stream_callback=None,
     root_entry: Optional[dict] = None,
 ):
-    def_list = [(c.get("word", ""), c.get("definition", "")) for c in candidates if c]
-    joined_defs = [
-        f"{word.strip()} — {definition.strip()}"
-        for word, definition in def_list
-        if word and definition
-    ]
+    joined_defs = []
+    for c in candidates:
+        word = c.get("word", "")
+        definition = c.get("definition", "")
+        fasttext = round(c.get("fasttext", 0.0), 3)
+        semantic = round(c.get("semantic", 0.0), 3)
+        tier = c.get("tier", "Untiered")
+
+        if word and definition:
+            line = (
+                f"{word.strip()} — {definition.strip()} "
+                f"<fasttext:{fasttext}, semantic similarity:{semantic}, tier:{tier}>"
+            )
+            joined_defs.append(line)
     if root_entry is None:
         root_entry = next(
             (c for c in candidates if c.get("word", "").lower() == root.lower()), None
@@ -130,15 +138,16 @@ def debate_ngram(
     #     ),
     # }
     about_enochiana = "As a bit of context about the Enochian language: the root words are derived from Enochian, the language Adam spoke (from the Biblical Adam and Eve), and is allegedly used as a form of celestial speech by angels and other divine entities; there are many Christian (and Gnostic) undertones in the language, and the known words' main focus is divine cosmology, theology, and human action and government."
+    about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
 
     tasks = {
         "propose": Task(
-            description=f"""{extra_prompt}Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions.{about_enochiana}\n\nConsider the following definitions and citations contained within [] (they are pipe-delimited and strongly ordered from most to least relevant):\n{root_def_summary}""",
+            description=f"""{extra_prompt}Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions. {about_enochiana} {about_metrics}\n\nWith the above in mind, consider the following definitions and citations contained within [] (they are pipe-delimited and strongly ordered from most to least relevant) in your evaluation of '{root}':\n{root_def_summary}""",
             expected_output="A strong case for the root, citing semantic and morphological evidence.",
         ),
         "synthesize": Task(
-            description=f"You're the lead linguist. Given multiple root analyses by junior linguists, synthesize them into one strong, cohesive proposal with the best arguments only, giving preference to common ideas. {about_enochiana}",
-            expected_output="A strong case for the root, citing semantic and morphological evidence.",
+            description=f"You're the lead linguist. Given multiple root analyses by junior linguists, synthesize them into one strong, cohesive proposal with the best arguments only, giving preference to common ideas. {about_enochiana}\nThe basis of the research team's arguments utilize metrics and definitions for the potential root, '{root}'. {about_metrics}\n\nThe research team used the following definitions with accompanying citations as part of their arguments, which are included here to provide further context:\n\n{root_def_summary}",
+            expected_output="A strong case for the root, citing semantic and morphological evidence, synthesizing the strongest points from the junior linguist team's research.",
         ),
         "counter": Task(
             description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences. However, you should allow for somewhat generalized, abstract, and metaphorical meanings; established root words found previously tend to be abstract in nature, so it follows these will be too."
@@ -202,8 +211,9 @@ def debate_ngram(
 
     # separator between words
     print("\n\n\n")
-    print(f"NOW DISCUSSING {root}")
-    print("\n\n\n")
+    print(f"==={(len('Now discussing the possible root word ') + len(f'<{root}>')) * '='}===")
+    print(f"===Now discussing the possible root word '{root}'===")
+    print(f"==={(len('Now discussing the possible root word ') + len(f'<{root}>')) * '='}===")
     
     # === RESEARCH TEAM ===
     linguist_variants = []

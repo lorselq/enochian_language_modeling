@@ -60,12 +60,6 @@ class QueryModelTool(BaseTool):
                 except Exception as inner:
                     print(f"[!] Inner stream failure: {inner}")
 
-            try:
-                for i, chunk in enumerate(completion):
-                    print(f"[Debug] Received chunk {i}", flush=True)
-            except Exception as stream_err:
-                print(f"[!] Stream iteration failure: {stream_err}")
-
             if not response_text:
                 print(
                     f"[!] No content returned for role {role_name}. Stream probably failed."
