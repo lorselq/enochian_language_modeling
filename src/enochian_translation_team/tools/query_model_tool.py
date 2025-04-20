@@ -55,7 +55,7 @@ class QueryModelTool(BaseTool):
                         response_text += content
                         if stream_callback:
                             stream_callback(role, content)
-                        if stream_callback and print_chunks:
+                        if print_chunks:
                             print(f"{content}", end="", flush=True)
                 except Exception as inner:
                     print(f"[!] Inner stream failure: {inner}")

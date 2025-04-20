@@ -9,5 +9,6 @@ def get_config_paths():
         "model_output": root / "src" / "enochian_translation_team" / "tools" / "models" / "enochian_fasttext.model",
         "ngram_index": root / "src" / "enochian_translation_team" / "data" / "ngram_index.json",
         "root_word_insights": root / "src" / "enochian_translation_team" / "data" / "root_word_insights.json",
-        "processed_ngrams": root / "src" / "enochian_translation_team" / "data" / "processed_ngrams.json"
+        "processed_ngrams": root / "src" / "enochian_translation_team" / "data" / "processed_ngrams.json",
+        "new_definitions": root / "src" / "enochian_translation_team" / "data" / "new_definitions.txt"
     }

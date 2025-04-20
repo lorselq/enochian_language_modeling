@@ -1,5 +1,6 @@
 import re
 import json
+from itertools import groupby
 from tqdm import tqdm
 from collections import Counter, defaultdict
 from gensim.models import FastText
@@ -27,6 +28,7 @@ class RootExtractionCrew:
         self.output_path = paths["root_word_insights"]
         self.ngram_path = paths["ngram_index"]
         self.processed_ngrams_path = paths["processed_ngrams"]
+        self.new_definitions_path = paths["new_definitions"]
 
         # Reprocess ngrams
         build_and_save_ngram_index()
@@ -107,6 +109,16 @@ class RootExtractionCrew:
                     ngram = word[i : i + n]
                     counter[ngram] += 1
         return counter
+    
+    def dedupe_by_normalized(self, entries):
+        seen = set()
+        unique = []
+        for entry in entries:
+            key = entry["normalized"]
+            if key not in seen:
+                seen.add(key)
+                unique.append(entry)
+        return unique
 
     def _get_source_label(self, sem, idx):
         if sem and idx:
@@ -208,17 +220,22 @@ class RootExtractionCrew:
         for c in cluster:
             tier = c.get("tier", "Untiered")
             tiered_groups[tier].append(c)
-            for c in cluster:
-                tier = c.get("tier", "Untiered")
-                tiered_groups[tier].append(c)
-            for group in tiered_groups.values():
-                group.sort(
-                    key=lambda x: (
-                        -x.get("priority", 0),
-                        -x.get("cluster_similarity", 0),
-                        -x.get("score", 0),
-                    )
+        for tier, group in tiered_groups.items():
+            group.sort(
+                key=lambda x: (
+                    -x.get("priority", 0),
+                    -x.get("cluster_similarity", 0),
+                    -x.get("score", 0),
                 )
+            )
+            seen = set()
+            unique = []
+            for entry in group:
+                key = entry.get("normalized", "").lower()
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(entry)
+            tiered_groups[tier] = unique
 
         # Let the agents have their nerd war
         debate_result = debate_ngram(
@@ -236,6 +253,8 @@ class RootExtractionCrew:
         else:
             raw = {}
 
+        print(f"[Debug] raw.keys() from the debate: " + ", ".join(raw.keys()))
+
         result = {
             "root": ngram,
             "cohesion": str(cohesion_score),
@@ -245,7 +264,7 @@ class RootExtractionCrew:
         }
 
         # Include role-specific responses
-        for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
+        for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator", "Archivist"]:
             if role in raw:
                 result[role] = raw[role]
 
@@ -327,7 +346,7 @@ class RootExtractionCrew:
                     )
                     if not sem_entry and index_entry:
                         continue
-
+                    
                     merged_cluster.append(
                         {
                             "word": (
@@ -364,11 +383,11 @@ class RootExtractionCrew:
                             "score": (
                                 float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
                             ),
-                            "tier": (
-                                sem_entry.get("tier", "Untiered")
-                                if sem_entry
-                                else "Untiered"
-                            ),
+                            # "tier": (
+                            #     sem_entry.get("tier", "Untiered")
+                            #     if sem_entry
+                            #     else "Untiered"
+                            # ),
                             "priority": (
                                 sem_entry.get("priority", 0) if sem_entry else 0
                             ),
@@ -400,10 +419,15 @@ class RootExtractionCrew:
 
                 output.append(evaluated)
 
+                print(f"\n\n[Debug] Roles in 'evaluated': " + ", ".join(evaluated.keys()))
                 self.save_results(output)
                 self.save_processed_ngrams()
                 if "Archivist" in evaluated:
                     save_log([("Archivist", evaluated["Archivist"])], label=ngram)
+                if "Glossator" in evaluated:
+                    with open(self.new_definitions_path, "a", encoding="utf-8") as f:
+                        f.write(f"{evaluated['Glossator'].strip()}\n")
+
 
                 processed_a_word = True
 

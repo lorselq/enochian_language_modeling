@@ -187,6 +187,7 @@ def debate_ngram(
 
     # === Direct Tool Access with Streaming ===
     GRAY = "\033[90m"
+    RESET = "\033[0m"
 
     linguist_cb = (
         (lambda r, m: stream_callback("Linguist", m)) if stream_callback else None
@@ -237,7 +238,7 @@ def debate_ngram(
 
     # === LEAD LINGUIST: 1 ===
     print(
-        f"\n\n>>>🥸\tLead Linguist's turn to propose a new root word...\nSynthesizing junior linguist's input into a meaningful argument:"
+        f"\n\n{RESET}>>>🥸\tLead Linguist's turn to propose a new root word...\nSynthesizing junior linguist's input into a meaningful argument:"
     )
 
     linguist_proposal = tools["synthesis"]._run(
@@ -252,9 +253,9 @@ def debate_ngram(
         stream_callback("Skeptic", "**Skeptic:**")
 
     print(
-        f"\n\n>>>🤔\tSkeptic's turn to refute...\n{GRAY}Refutation prompt:",
+        f"\n\n{RESET}>>>🤔\tSkeptic's turn to refute...\nRefutation prompt:{GRAY}",
         tasks["counter"].description,
-        "\n",
+        f"\n{RESET}",
     )
 
     skeptic_response = tools["skeptic"]._run(
@@ -275,9 +276,9 @@ def debate_ngram(
         stream_callback("Linguist", "**Linguist (Defense):**")
 
     print(
-        f"\n\n>>>🥸\tLead Linguist's turn to defend...\n{GRAY}Defense prompt:",
+        f"\n\n{RESET}>>>🥸\tLead Linguist's turn to defend...\nDefense prompt:{GRAY}",
         tasks["defend"].description,
-        "\n",
+        f"{RESET}\n",
     )
 
     linguist_defense = tools["linguist"]._run(
@@ -298,9 +299,9 @@ def debate_ngram(
         stream_callback("Skeptic", "**Skeptic (Rebuttal):**")
 
     print(
-        f"\n\n>>>🤔\tSkeptic's turn to rebuttal...\n{GRAY}Final word:",
+        f"\n\n{RESET}>>>🤔\tSkeptic's turn to rebuttal...\nFinal word:{GRAY}",
         tasks["rebuttal"].description,
-        "\n",
+        f"{RESET}\n",
     )
     skeptic_rebuttal = tools["skeptic"]._run(
         prompt="\n".join(
@@ -322,9 +323,9 @@ def debate_ngram(
         stream_callback("Adjudicator", "**Adjudicator:**")
 
     print(
-        f"\n\n>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\n{GRAY}Ruling:",
+        f"\n\n{RESET}>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\nRuling:{GRAY}",
         tasks["ruling"].description,
-        "\n",
+        f"{RESET}\n",
     )
 
     adjudicator_ruling = tools["adjudicator"]._run(
@@ -344,7 +345,7 @@ def debate_ngram(
     )
 
     # === GLOSSATOR ===
-    gloss = None
+    gloss = f"<there is no (new) definition for '{root.upper()}'>"
     if (
         adjudicator_ruling.strip().lower().startswith("✅ accepted")
         or adjudicator_ruling.strip().lower().startswith("accepted")
@@ -354,7 +355,7 @@ def debate_ngram(
             stream_callback("Glossator", "**Glossator:**")
 
         print(
-            f"\n\n>>>🧐\tGlossator's turn to provide a definition...\n{GRAY}Generating definition...\n"
+            f"\n\n{RESET}>>>🧐\tGlossator's turn to provide a definition...\nGenerating definition...\n"
         )
 
         gloss = tools["glossator"]._run(
@@ -433,6 +434,7 @@ def debate_ngram(
         "Defense": linguist_defense,
         "Rebuttal": skeptic_rebuttal,
         "Adjudicator": adjudicator_ruling,
+        "Glossator": gloss,
         "Archivist": archivist_summary_formatted,
         "summary": tldr_summary,
         "raw_output": {
@@ -441,6 +443,7 @@ def debate_ngram(
             "Defense": linguist_defense,
             "Rebuttal": skeptic_rebuttal,
             "Adjudicator": adjudicator_ruling,
+            "Glossator": gloss,
             "Archivist": archivist_summary_formatted,
             "summary": tldr_summary,
         },
