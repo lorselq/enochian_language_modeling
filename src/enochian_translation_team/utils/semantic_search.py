@@ -1,3 +1,4 @@
+from tqdm import tqdm
 from itertools import product, combinations
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
@@ -25,17 +26,16 @@ def definition_similarity(def1, def2, sentence_model):
     return float(util.cos_sim(emb1, emb2))
 
 def compute_cluster_cohesion(definitions, sentence_model):
-    from itertools import combinations
     if len(definitions) < 2:
         return 0.0
-    pairs = list(combinations(definitions, 2))
-    sims = []
-    for a, b in pairs:
-        sims.append(definition_similarity(a, b, sentence_model))
-    return round(sum(sims) / len(sims), 3)
+    embeddings = sentence_model.encode(definitions, convert_to_tensor=True)
+    cosine_scores = util.cos_sim(embeddings, embeddings)
+    upper_triangle_scores = cosine_scores.triu(diagonal=1).flatten()
+    relevant_scores = upper_triangle_scores[upper_triangle_scores != 0]
+    return round(float(relevant_scores.mean()), 3) if len(relevant_scores) else 0.0
 
 def find_semantically_similar_words(ft_model, sent_model, entries, target_word, subst_map, topn=10,
-                                    fasttext_weight=0.53, definition_weight=0.47, min_similarity=0.0):
+                                    fasttext_weight=0.40, definition_weight=0.60, min_similarity=0.0):
     normalized_query = normalize_form(target_word)
     variants = generate_variants(normalized_query, subst_map)
 
@@ -44,7 +44,7 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
         return []
 
     results = []
-    for entry in entries:
+    for entry in tqdm(entries, desc="Processing dictionary entries..."):
         cand_norm = normalize_form(entry["normalized"])
         if cand_norm == normalized_query and entry["word"].lower() != target_word.lower():
             continue
@@ -67,7 +67,7 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
 
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(normalized_query):
-            final_score += 0.11
+            final_score += 0.15
 
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(normalized_query):
             priority = 2  # Top tier: starts or ends with the root
@@ -79,14 +79,20 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
         if priority == 2 and final_score > 0.85:
             tier = "Very strong connection"
         elif priority == 2:
-            tier = "Strong connection"
-        elif priority == 1:
             tier = "Possible connection"
+        elif priority == 1:
+            tier = "Somewhat possible connection"
         else:
             tier = "Weak to no connection"
         
         if final_score < min_similarity:
             continue
+        
+        # Filter out garbage entries that define letters or numbers, which is frankly just noise at this point
+        definition_text = entry.get("definition", "").lower()
+        if "enochian word for the letter" in definition_text or "enochian word" in definition_text:
+            continue
+
 
         results.append({
             "word": entry["word"],
@@ -101,5 +107,19 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
             "citations": entry.get("key_citations", [])
         })
 
-    results.sort(key=lambda x: (-x["priority"], -x["score"]))
+    # Semantic cluster coherence
+    definitions = [r["definition"] for r in results]
+    if len(definitions) > 1:
+        embeddings = sent_model.encode(definitions, convert_to_tensor=True)
+        cosine_scores = util.cos_sim(embeddings, embeddings)
+
+        for i, entry in tqdm(enumerate(results), "Calculating cluster similarity..."):
+            sims = [cosine_scores[i][j].item() for j in range(len(results)) if j != i]
+            entry["cluster_similarity"] = sum(sims) / len(sims) if sims else 0.0
+    else:
+        for entry in results:
+            entry["cluster_similarity"] = 0.0
+
+    results.sort(key=lambda x: (x["priority"], x["cluster_similarity"], x["score"]), reverse=True)
+    print(f"[Debug] Cluster size for '{target_word}': {len(results)}")
     return results[:topn]

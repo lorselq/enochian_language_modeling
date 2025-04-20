@@ -9,20 +9,20 @@ log_entries = []
 
 def stream_callback(role, message):
     badge = {
-        "Linguist": "👩‍💻",
+        "Linguist": "🥸",
         "Skeptic": "🤔",
         "Adjudicator": "👩‍⚖️",
+        "Glossator": "🧐",
         "Archivist": "📚",
         "Maestro": "🪄",
     }.get(role, "👤")
 
-    is_first_token = role not in token_buffers or token_buffers[role] == ""
+    is_first_token = not token_buffers[role]
 
-    # Distinguish prompts visually
+    # Special formatting for prompt-like starter messages
     if message.strip().startswith(">>>"):
-        # Make prompt italic and grayish
-        formatted = f"\033[3;90m{message.replace('>>>', '')}\033[0m\n"
-        print(f"{formatted}", end="", flush=True)
+        formatted = f"\033[3;90m{message.replace('>>>', '').strip()}\033[0m\n"
+        print(formatted, end="", flush=True)
         return
 
     token_buffers[role] += message
@@ -32,12 +32,13 @@ def stream_callback(role, message):
 
     print(message, end="", flush=True)
 
-    # Logging for markdown
-    if not any(entry[0] == role for entry in log_entries):
-        log_entries.append((role, ""))
-    for i in range(len(log_entries)):
-        if log_entries[i][0] == role:
+    # Update log entries for markdown
+    for i, (r, text) in enumerate(log_entries):
+        if r == role:
             log_entries[i] = (role, token_buffers[role])
+            break
+    else:
+        log_entries.append((role, token_buffers[role]))
 
 
 def main():

@@ -1,4 +1,6 @@
+import re
 import json
+from tqdm import tqdm
 from collections import Counter, defaultdict
 from gensim.models import FastText
 from sentence_transformers import SentenceTransformer
@@ -42,13 +44,15 @@ class RootExtractionCrew:
         )
 
         # Keep track of processed roots
-        self.processed_ngrams = set()
+        self.processed_ngrams = self.load_processed_ngrams()
 
     def load_processed_ngrams(self):
         try:
             with open(self.processed_ngrams_path, "r", encoding="utf-8") as f:
                 return set(json.load(f))
         except FileNotFoundError:
+            return set()
+        except json.decoder.JSONDecodeError:
             return set()
 
     def save_processed_ngrams(self):
@@ -90,7 +94,7 @@ class RootExtractionCrew:
         for n in range(min_n, max_n + 1):
             for i in range(len(word) - n + 1):
                 ngram = word[i : i + n]
-                if ngram not in self.processed_ngrams:
+                if ngram not in self.processed_ngrams and not re.search(r"\d", ngram):
                     ngrams.add(ngram)
         return ngrams
 
@@ -114,7 +118,11 @@ class RootExtractionCrew:
         return "unknown"
 
     def evaluate_ngram(self, ngram, cluster, stream_callback=None):
-        definitions = [c["definition"] for c in cluster if c["definition"]]
+        definitions = [
+            c["definition"]
+            for c in tqdm(cluster, desc=f"Evaluating cluster for {ngram.upper()}")
+            if c["definition"]
+        ]
         cohesion_score = compute_cluster_cohesion(definitions, self.sent_model)
         semantic_hits = sum(1 for c in cluster if c["source"] in ("semantic", "both"))
         semantic_coverage = round(semantic_hits / len(cluster), 3) if cluster else 0.0
@@ -146,7 +154,7 @@ class RootExtractionCrew:
             )
 
             entry = {
-                "word": c.get("word", ""),
+                "word": c.get("word", "").upper(),
                 "definition": definition,
                 "normalized": c.get("normalized", "").lower(),
                 "fasttext": c.get("fasttext", 0.0),
@@ -160,8 +168,9 @@ class RootExtractionCrew:
 
             # Check if this is the literal ngram word
             if (
-                entry.get("normalized", "") == ngram_lower
-                or entry.get("word", "").lower() == ngram_lower
+                entry.get("normalized", "")
+                == ngram_lower
+                #    or entry.get("word", "").lower() == ngram_lower    # temporarily suspended from action
             ):
                 root_entry = c.copy()  # <- This preserves all fields
                 anchor_entry = {
@@ -179,7 +188,7 @@ class RootExtractionCrew:
         # Check for exact-match anchor word in the cluster
         if root_entry and root_entry.get("definition"):
             root_callout = (
-                f"📌 Note: The proposed root '{ngram}' is itself a defined word: "
+                f"📌 Note: The proposed root '{ngram.upper()}' is itself a defined word: "
                 f"**{root_entry.get('definition')}**\n"
                 "This may indicate its role as a base morpheme from which related forms are derived.\n"
             )
@@ -189,15 +198,31 @@ class RootExtractionCrew:
         # Summarize stats for agents
         stats_summary = (
             f"{root_callout}"
-            f"The proposed root '{ngram}' has:\n"
-            f"- Cohesion Score: {cohesion_score} (semantic similarity among definitions)\n"
-            f"- Semantic Coverage: {semantic_coverage} ({semantic_hits}/{len(cluster)} words match semantically)\n"
+            f"The proposed root '{ngram.upper()}' has:\n"
+            f"- Cohesion Score: {cohesion_score} (semantic similarity among definitions; from 0.0 to 1.0, with higher being better)\n"
+            f"- Semantic Coverage: {round(semantic_coverage * 100, 1)}% ({semantic_hits}/{len(cluster)} words match semantically)\n"
             f"- Candidate Count: {len(cluster)}"
         )
 
+        tiered_groups = defaultdict(list)
+        for c in cluster:
+            tier = c.get("tier", "Untiered")
+            tiered_groups[tier].append(c)
+            for c in cluster:
+                tier = c.get("tier", "Untiered")
+                tiered_groups[tier].append(c)
+            for group in tiered_groups.values():
+                group.sort(
+                    key=lambda x: (
+                        -x.get("priority", 0),
+                        -x.get("cluster_similarity", 0),
+                        -x.get("score", 0),
+                    )
+                )
+
         # Let the agents have their nerd war
         debate_result = debate_ngram(
-            root=ngram,
+            root=ngram.upper(),
             candidates=trimmed_cluster,
             stats_summary=stats_summary,
             stream_callback=stream_callback,
@@ -211,26 +236,16 @@ class RootExtractionCrew:
         else:
             raw = {}
 
-        tiered_groups = defaultdict(list)
-        for c in cluster:
-            tier = c.get("tier", "Untiered")
-            tiered_groups[tier].append(c)
-            for c in cluster:
-                tier = c.get("tier", "Untiered")
-                tiered_groups[tier].append(c)
-            for group in tiered_groups.values():
-                group.sort(key=lambda x: (-x.get("score", 0), -x.get("priority", 0)))
-
         result = {
             "root": ngram,
             "cohesion": str(cohesion_score),
             "semantic_coverage": str(semantic_coverage),
-            "tiered_candidates": dict(tiered_groups),  # Make it JSON-serializable
+            "tiered_candidates": dict(tiered_groups),
             "summary": raw.get("summary", "[No summary]"),
         }
 
         # Include role-specific responses
-        for role in ["Linguist", "Skeptic", "Adjudicator", "Archivist"]:
+        for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
             if role in raw:
                 result[role] = raw[role]
 
@@ -240,12 +255,20 @@ class RootExtractionCrew:
         output = []
         seen_words = 0
         ngram_counts = self.get_ngram_frequencies()
+        print(
+            f"[Debug] You've set the maximum words to \033[38;5;178m{max_words}\033[0m."
+        )
 
         for entry in self.entries:
             word = entry["normalized"]
             ngrams = self.extract_ngrams(word)
 
-            for ngram in ngrams:
+            if all(n in self.processed_ngrams for n in ngrams):
+                continue
+
+            processed_a_word = False
+
+            for ngram in self.ngrams:
                 if ngram in self.processed_ngrams:
                     continue
                 if ngram_counts[ngram] <= 1:
@@ -308,10 +331,10 @@ class RootExtractionCrew:
                     merged_cluster.append(
                         {
                             "word": (
-                                sem_entry.get("word")
+                                sem_entry.get("word").upper()
                                 if sem_entry
                                 else (
-                                    index_entry.get("word", word)
+                                    index_entry.get("word", word).upper()
                                     if index_entry
                                     else word
                                 )
@@ -382,152 +405,18 @@ class RootExtractionCrew:
                 if "Archivist" in evaluated:
                     save_log([("Archivist", evaluated["Archivist"])], label=ngram)
 
+                processed_a_word = True
+
                 # Stream out each agent’s statement
                 if stream_callback:
                     for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
                         if role in evaluated:
                             stream_callback(role, evaluated[role])
-                    # Show only the TLDR, labeled clearly
-                    # if "summary" in evaluated:
-                    #     stream_callback("📜 Summary", f"{evaluated['summary']}\n")
 
-            seen_words += 1
-            if max_words and seen_words >= max_words:
-                break
-
-    def run(self, max_words=None, min_cluster_size=2):
-        output = []
-        seen_words = 0
-
-        for entry in self.entries:
-            word = entry["normalized"]
-            ngrams = self.extract_ngrams(word)
-
-            for ngram in ngrams:
-                # Mark ngram as processed
-                if ngram in self.processed_ngrams:
-                    continue
-                self.processed_ngrams.add(ngram)
-
-                # Step 1: Get candidates from both paths
-                semantic_candidates = find_semantically_similar_words(
-                    ft_model=self.fasttext,
-                    sent_model=self.sent_model,
-                    entries=self.entries,
-                    target_word=ngram,
-                    subst_map=self.subst_map,
-                    topn=20,
-                )
-
-                index_candidates = self.candidate_finder.get_candidates(
-                    ngram=ngram,
-                    top_n=20,
-                    similarity_threshold=0.35,
-                    include_context=True,
-                )
-
-                # Get normalized names for easy comparison
-                sem_norms = {c["normalized"] for c in semantic_candidates}
-                index_norms = {c["normalized"] for c in index_candidates}
-                overlap = sem_norms & index_norms
-
-                if len(overlap) < min_cluster_size:
-                    continue
-
-                # Step 2: Merge info and score
-                merged_cluster = []
-                dropped_count = 0
-                for word in sem_norms | index_norms:
-                    sem_entry = next(
-                        (c for c in semantic_candidates if c["normalized"] == word),
-                        None,
-                    )
-                    index_entry = next(
-                        (c for c in index_candidates if c["normalized"] == word), None
-                    )
-                    # Coarse filter: skip if it's index-only—which means it is probably noise
-                    if not sem_entry and index_entry:
-                        dropped_count += 1
-                        continue
-
-                    merged_cluster.append(
-                        {
-                            "word": (
-                                sem_entry.get("word")
-                                if sem_entry
-                                else (
-                                    index_entry.get("word", word)
-                                    if index_entry
-                                    else word
-                                )
-                            ),
-                            "normalized": word,
-                            "definition": (
-                                sem_entry.get("definition")
-                                if sem_entry
-                                else (
-                                    index_entry.get(
-                                        "definition", "[ERROR: no definition provided]"
-                                    )
-                                    if index_entry
-                                    else "[ERROR: no definition provided]"
-                                )
-                            ),
-                            "fasttext": (
-                                float(sem_entry.get("fasttext", 0.0))
-                                if sem_entry
-                                else 0.0
-                            ),
-                            "semantic": (
-                                float(sem_entry.get("semantic", 0.0))
-                                if sem_entry
-                                else 0.0
-                            ),
-                            "score": (
-                                float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
-                            ),
-                            "tier": (
-                                sem_entry.get("tier", "Untiered")
-                                if sem_entry
-                                else "Untiered"
-                            ),
-                            "priority": (
-                                sem_entry.get("priority", 0) if sem_entry else 0
-                            ),
-                            "levenshtein": (
-                                sem_entry.get("levenshtein", 99) if sem_entry else 99
-                            ),
-                            "source": self._get_source_label(sem_entry, index_entry),
-                            "citations": list(
-                                {
-                                    c.get("context", "").strip()
-                                    for c in (
-                                        sem_entry.get("citations", [])
-                                        if sem_entry
-                                        else []
-                                    )
-                                    + (
-                                        index_entry.get("citations", [])
-                                        if index_entry
-                                        else []
-                                    )
-                                    if c.get("context")
-                                }
-                            ),
-                        }
-                    )
-                evaluated = self.evaluate_ngram(ngram, merged_cluster)
-                evaluated["overlap_count"] = len(overlap)
-                evaluated["dropped_index_only"] = dropped_count
-                output.append(evaluated)
-
-            seen_words += 1
-            if max_words and seen_words >= max_words:
-                break
-
-        output.sort(key=lambda x: (x["cohesion"], x["overlap_count"]), reverse=True)
-        self.save_results(output)
-        self.save_processed_ngrams()
+            if processed_a_word:
+                seen_words += 1
+                if max_words and seen_words >= max_words:
+                    break
 
     def save_results(self, new_data):
         # Load existing results if they exist
