@@ -253,8 +253,6 @@ class RootExtractionCrew:
         else:
             raw = {}
 
-        print(f"[Debug] raw.keys() from the debate: " + ", ".join(raw.keys()))
-
         result = {
             "root": ngram,
             "cohesion": str(cohesion_score),
@@ -419,7 +417,6 @@ class RootExtractionCrew:
 
                 output.append(evaluated)
 
-                print(f"\n\n[Debug] Roles in 'evaluated': " + ", ".join(evaluated.keys()))
                 self.save_results(output)
                 self.save_processed_ngrams()
                 if "Archivist" in evaluated:
