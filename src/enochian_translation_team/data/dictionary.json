@@ -2,7 +2,7 @@
     {
         "word": "A",
         "normalized": "a",
-        "definition": "in, on, with",
+        "definition": "in,on,with",
         "canon_word": true,
         "key_citations": [],
         "commentary": ""
@@ -10,7 +10,7 @@
     {
         "word": "AAI",
         "normalized": "aai",
-        "definition": "amongst, amongst you",
+        "definition": "amongst,amongst you",
         "canon_word": true,
         "key_citations": [
             {
@@ -35,7 +35,7 @@
     {
         "word": "AAIOM",
         "normalized": "aaiom",
-        "definition": "amongst, amongst us",
+        "definition": "amongst,amongst us",
         "canon_word": true,
         "key_citations": [
             {
@@ -99,7 +99,7 @@
     {
         "word": "ABABALOND",
         "normalized": "ababalond",
-        "definition": "harlot, of a harlot",
+        "definition": "harlot,of a harlot",
         "canon_word": true,
         "key_citations": [
             {
@@ -273,7 +273,7 @@
     {
         "word": "AD",
         "normalized": "ad",
-        "definition": "in the third, with the third",
+        "definition": "in the third,with the third",
         "canon_word": false,
         "key_citations": [],
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
@@ -289,7 +289,7 @@
     {
         "word": "ADAO",
         "normalized": "adao",
-        "definition": "in the third star, with the third star",
+        "definition": "in the third star,with the third star",
         "canon_word": false,
         "key_citations": [],
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
@@ -381,7 +381,7 @@
     },
     {
         "word": "ADMO",
-        "normalized": "",
+        "normalized": "admo",
         "definition": "God is man",
         "canon_word": false,
         "key_citations": [],
@@ -562,7 +562,7 @@
     },
     {
         "word": "AGES",
-        "normalized": "",
+        "normalized": "ages",
         "definition": "not the 4th",
         "canon_word": false,
         "key_citations": [],
@@ -736,7 +736,7 @@
     },
     {
         "word": "ALIDA",
-        "normalized": "",
+        "normalized": "alida",
         "definition": "one in name with",
         "canon_word": false,
         "key_citations": [],
@@ -2759,7 +2759,7 @@
     },
     {
         "word": "CEM",
-        "normalized": "",
+        "normalized": "cem",
         "definition": "of the nine,unto the nine,with the nine",
         "canon_word": false,
         "key_citations": [],
@@ -2875,7 +2875,7 @@
             },
             {
                 "location": "9.56",
-                "context": "...upon their heads *are* marble..."
+                "context": "...upon their hands *are* marble..."
             },
             {
                 "location": "10.2",
@@ -3194,7 +3194,7 @@
         "key_citations": [
             {
                 "location": "9.58",
-                "context": "...upon their (hands) are marble *sleeves*."
+                "context": "...upon their hands are marble *sleeves*."
             }
         ],
         "commentary": ""
@@ -4083,7 +4083,7 @@
     },
     {
         "word": "DOSCH",
-        "normalized": "",
+        "normalized": "dosch",
         "definition": "of the night",
         "canon_word": false,
         "key_citations": [],
@@ -5442,7 +5442,7 @@
     {
         "word": "GER",
         "normalized": "ger",
-        "definition": "(the Enochian letter for Q)",
+        "definition": "(the Enochian letter for 'Q')",
         "canon_word": true,
         "key_citations": [],
         "commentary": "not part of the Keys, but it's confirmed to be true directly in Dee's journals"
@@ -8019,11 +8019,11 @@
     },
     {
         "word": "MALS",
-        "normalized": "",
+        "normalized": "mals",
         "definition": "(the Enochian letter for 'P')",
         "canon_word": true,
         "key_citations": [],
-        "commentary": ""
+        "commentary": "one of the Enochian letters established in the Five Books of Mystery"
     },
     {
         "word": "MANCH",
@@ -8086,7 +8086,7 @@
     {
         "word": "MAPM",
         "normalized": "mapm",
-        "definition": "(the Enochian word for the number 9639)",
+        "definition": "(the Enochian word for the digits 9639)",
         "canon_word": true,
         "key_citations": [
             {
@@ -8245,7 +8245,7 @@
     },
     {
         "word": "MED",
-        "normalized": "",
+        "normalized": "med",
         "definition": "the star of five",
         "canon_word": false,
         "key_citations": [],
@@ -8283,7 +8283,7 @@
     {
         "word": "MIAN",
         "normalized": "mian",
-        "definition": "(the Enochian word for the number 3663)",
+        "definition": "(the Enochian word for the digits 3663)",
         "canon_word": true,
         "key_citations": [
             {
@@ -8444,7 +8444,7 @@
         "key_citations": [
             {
                 "location": "9.54",
-                "context": "...and *upon* their heads are marble..."
+                "context": "...and *upon* their hands are marble..."
             },
             {
                 "location": "14.7",
@@ -8908,7 +8908,7 @@
     {
         "word": "NI",
         "normalized": "ni",
-        "definition": "(the Enochian word for the number 28)",
+        "definition": "(the Enochian word for the digits 28)",
         "canon_word": true,
         "key_citations": [
             {
@@ -9168,6 +9168,5898 @@
             {
                 "location": "30.11",
                 "context": "...*to you* it is said, behold..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NONCF",
+        "normalized": "noncf",
+        "definition": "you",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.24",
+                "context": "...provided *you* for the government..."
+            },
+            {
+                "location": "\"30.32",
+                "context": "...furnishing *you* with a power..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NONCI",
+        "normalized": "nonci",
+        "definition": "you",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "12.1",
+                "context": "...*O you* that reign..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NONCP",
+        "normalized": "noncp",
+        "definition": "you",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.34",
+                "context": "...I have prepared for *you*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NONNIS",
+        "normalized": "nonnis",
+        "definition": "you come away",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NOR",
+        "normalized": "nor",
+        "definition": "son",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not used on its own, but can be extrapolated from a compound word of which it's a part"
+    },
+    {
+        "word": "NORM",
+        "normalized": "norm",
+        "definition": "sons",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not used on its own, but can be extrapolated from a compound word of which it's a part"
+    },
+    {
+        "word": "NORMOLAP",
+        "normalized": "normolap",
+        "definition": "sons of men",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.47",
+                "context": "...amongst *the sons of men*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NOROMI",
+        "normalized": "noromi",
+        "definition": "sons",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "14.1",
+                "context": "*O you sons* of fury..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NORQRASAHI",
+        "normalized": "norqrasahi",
+        "definition": "sons of pleasure",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.33",
+                "context": "Arise *you sons of pleasure* and visit the earth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "NORZ",
+        "normalized": "norz",
+        "definition": "six",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.9",
+                "context": "*Six* are the seats of living breath..."
+            }
+        ],
+        "commentary": "not the digit, but the word itself for \"six\""
+    },
+    {
+        "word": "NOSTOAH",
+        "normalized": "nostoah",
+        "definition": "it was in the beginning",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from Liber Loagaeth via the Five Books of Mystery"
+    },
+    {
+        "word": "NOT",
+        "normalized": "not",
+        "definition": "inside",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "NOTHOA",
+        "normalized": "nothoa",
+        "definition": "amidst",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.22",
+                "context": "...*in the midst of* my vestures..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "O",
+        "normalized": "o",
+        "definition": "five",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.5",
+                "context": "...and they were *five* thunders which flew..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "O",
+        "normalized": "o",
+        "definition": "the pentagram",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "O",
+        "normalized": "o",
+        "definition": "come and bear witness",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Five Books; \"Befafes O is to call upon him as on God. Befafes O, is as much to say, Come Befafes and bear witness.\""
+    },
+    {
+        "word": "OADO",
+        "normalized": "oado",
+        "definition": "to weave",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the texts, but it can be easily derived from other words of which it's a part"
+    },
+    {
+        "word": "OADRIAX",
+        "normalized": "oadriax",
+        "definition": "lower heavens",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.118",
+                "context": "...*the lower heavens* beneath you..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OAI",
+        "normalized": "oai",
+        "definition": "amongst",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "per Leitch, the first A in AAI in the first key may be an A or an O or an E. Therefore, there are a few possible alternate spellings of AAI—yay for spelling inconsistencies and difficult-to-read handwriting"
+    },
+    {
+        "word": "OALI",
+        "normalized": "oali",
+        "definition": "to place",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "\"...under whom *I have placed* 9639...\"",
+                "context": ""
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OALO",
+        "normalized": "oalo",
+        "definition": "I am",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OANIO",
+        "normalized": "oanio",
+        "definition": "moment",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.39",
+                "context": "...in the 24th part of *a moment*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OB",
+        "normalized": "ob",
+        "definition": "(the Enochian word for the digits 28)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "12.6",
+                "context": "...and are *28* the lanterns of sorrow..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OBELISON",
+        "normalized": "obelison",
+        "definition": "pleasant deliverer",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "according to the angel BEFAFES in the Five Books, it is \"what the Egyptians called me,\" to which Dee asked for the etymology, and the definition given is what BEFAFES responded with"
+    },
+    {
+        "word": "OBELISONG",
+        "normalized": "obelisong",
+        "definition": "pleasant deliverers",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.44",
+                "context": "...and show yourselves as *pleasant deliverers*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OBLOC",
+        "normalized": "obloc",
+        "definition": "garland",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.13",
+                "context": "...and *a garland* to the righteous."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OBOLEH",
+        "normalized": "oboleh",
+        "definition": "garments",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.36",
+                "context": "...beautified *your garments* with admiration..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OBZA",
+        "normalized": "obza",
+        "definition": "half",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.12",
+                "context": "...for two times and *a half*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OD",
+        "normalized": "od",
+        "definition": "and",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.24",
+                "context": "...*and* trussed you together..."
+            },
+            {
+                "location": "1.71",
+                "context": "...righteousness *and* truth..."
+            },
+            {
+                "location": "\"3.45",
+                "context": "...*and* the corners of your government..."
+            }
+        ],
+        "commentary": "literally, this is the most frequently used word in the Angelic Keys and its sense does not change really at all in any of its uses. Therefore, I have only included a handful of the some 20+ instances of its usage"
+    },
+    {
+        "word": "ODAPILA",
+        "normalized": "odapila",
+        "definition": "and lives",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.39",
+                "context": "...God which is *and liveth*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODBRINT",
+        "normalized": "odbrint",
+        "definition": "and has",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "17.9",
+                "context": "...*and hast* 7336 living lamps..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODCACOCASB",
+        "normalized": "odcacocasb",
+        "definition": "and another while",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.108",
+                "context": "...*and another while* a stranger..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODCHIS",
+        "normalized": "odchis",
+        "definition": "and are",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.24",
+                "context": "...*and are* in government and continuance..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODECRIN",
+        "normalized": "odecrin",
+        "definition": "and the praise (of)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.41",
+                "context": "...a song of honor *and the praise of* your God..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODES",
+        "normalized": "odes",
+        "definition": "and fourth",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.27",
+                "context": "...as the third *and fourth*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODFAORGT",
+        "normalized": "odfaorgt",
+        "definition": "and the dwelling place",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.114",
+                "context": "...the bed of an harlot, *and the dwelling place of* him..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODIDOS",
+        "normalized": "odidos",
+        "definition": "she who awakens the eld of the king",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ODIPURAN",
+        "normalized": "odipuran",
+        "definition": "and shall not see",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.26",
+                "context": "...which are *and shall not see* death..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODLONSHIN",
+        "normalized": "odlonshin",
+        "definition": "and powers",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.28",
+                "context": "...*and their powers* are as the first 456..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODMIAM",
+        "normalized": "odmiam",
+        "definition": "and continuance",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.25",
+                "context": "...whose kingdoms *and continuance*..."
+            },
+            {
+                "location": "7.32",
+                "context": "...seats of mercy *and continuance*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODO",
+        "normalized": "odo",
+        "definition": "to open",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "18.7",
+                "context": "...which *openest* the glory..."
+            },
+            {
+                "location": "30.151",
+                "context": "*Open* the mysteries of your creation..."
+            }
+        ],
+        "commentary": "also occurs during the refrain of Keys 11-18"
+    },
+    {
+        "word": "ODQUASB",
+        "normalized": "odquasb",
+        "definition": "and destroy",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.130",
+                "context": "...*and destroy* the rotten..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODUGEG",
+        "normalized": "odugeg",
+        "definition": "and wax strong",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.23",
+                "context": "...things are *and wax strong*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODVOOAN",
+        "normalized": "odvooan",
+        "definition": "and truth",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.58",
+                "context": "...skirts of justice *and truth*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ODZAMRAN",
+        "normalized": "odzamran",
+        "definition": "and appear",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.43",
+                "context": "...move *and show yourselves*..."
+            },
+            {
+                "location": "30.143",
+                "context": "...move *and appear*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OECRIMI",
+        "normalized": "oecrimi",
+        "definition": "to sing praises",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.4",
+                "context": "...a house of virgins *singing praises* amongst..."
+            },
+            {
+                "location": "7.37",
+                "context": "...appear, *sing praises unto* the creator..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OEMATENODAH",
+        "normalized": "oematenodah",
+        "definition": "at the start of the millennia, the angel of death",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OFAFAFE",
+        "normalized": "ofafafe",
+        "definition": "vials",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.69",
+                "context": "Come away, and not *your vials*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OGES",
+        "normalized": "oges",
+        "definition": "with the fourth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OGHE",
+        "normalized": "oghe",
+        "definition": "the fourth begotten Son of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OGI",
+        "normalized": "ogi",
+        "definition": "with this",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OH",
+        "normalized": "oh",
+        "definition": "woe",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OHA",
+        "normalized": "oha",
+        "definition": "in woe, with woe",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "probably comes from the archidox website's dictionary because it attributes \"woe\" to OH, and if A is \"in\" or \"with\", then OHA meaning what's given here follows pretty easily"
+    },
+    {
+        "word": "OHE",
+        "normalized": "ohe",
+        "definition": "woe of the Daughter of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from some place according to the dictionary from the archidox website—specific origin unclear"
+    },
+    {
+        "word": "OHIO",
+        "normalized": "ohio",
+        "definition": "woe",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.65-70&72",
+                "context": "*Woe, woe*...yea, *woe* be to the earth."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OHORELA",
+        "normalized": "ohorela",
+        "definition": "to legislate",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.39",
+                "context": "...to whom *I made a law* to govern the holy ones..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OI",
+        "normalized": "oi",
+        "definition": "this",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not a word that occurs on its own in the Keys, but it can be easily derived from words of which it's a part"
+    },
+    {
+        "word": "OIAD",
+        "normalized": "oiad",
+        "definition": "of God, of the just, of justice, of divinity",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "14.4",
+                "context": "...the daughters *of the Just*..."
+            },
+            {
+                "location": "14.19",
+                "context": "...behold the voice *of God*"
+            },
+            {
+                "location": "18.9",
+                "context": "...openest the glory *of God*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OIAS",
+        "normalized": "oias",
+        "definition": "was is and shall be",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "not entirely sure where this is from; it doesn't seem to appear in the Keys, but the archidox dictionary presented it in the formatting that suggests that it's a standard word—so I'm not certain what to make of it, but for now I've flagged it as non-canon"
+    },
+    {
+        "word": "OIPTEAAPDOCE",
+        "normalized": "oipteaapdoce",
+        "definition": "He whose name is unchanged from what it was",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Great Table, so word meaning is likely extremely irregular and arbitrary here"
+    },
+    {
+        "word": "OL",
+        "normalized": "ol",
+        "definition": "I",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.1",
+                "context": "*I* reign over you..."
+            }
+        ],
+        "commentary": "is used by God to refer to theirself; so it might not be as simple or straightforward as a \"first-person singular nominative pronoun\" kind of situation"
+    },
+    {
+        "word": "OL",
+        "normalized": "ol",
+        "definition": "(the Enochian word for the digits 24)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.38",
+                "context": "...5678 times *in the 24th part of* a moment..."
+            },
+            {
+                "location": "14.8",
+                "context": "...which sit on seats *24*..."
+            }
+        ],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits"
+    },
+    {
+        "word": "OLANI",
+        "normalized": "olani",
+        "definition": "two times, twice",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.10",
+                "context": "...vials 8 of wrath *for two times* and a half."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OLAP",
+        "normalized": "olap",
+        "definition": "men",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not a word that occurs on its own in the Keys, but it can be easily derived from words of which it's a part"
+    },
+    {
+        "word": "OLCORDZIZ",
+        "normalized": "olcordziz",
+        "definition": "made mankind",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.105",
+                "context": "...it repenteth me *I made man*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OLLOG",
+        "normalized": "ollog",
+        "definition": "men",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "13.10",
+                "context": "...making *men* drunken..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OLLOR",
+        "normalized": "ollor",
+        "definition": "man",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not a word that occurs on its own in the Keys, but it can be easily derived from words of which it's a part"
+    },
+    {
+        "word": "OLN",
+        "normalized": "oln",
+        "definition": "made, made of",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.4",
+                "context": "...third heaven *made of* hyacinth pillars..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OLNA",
+        "normalized": "olna",
+        "definition": "created within",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OLORA",
+        "normalized": "olora",
+        "definition": "of man",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.62",
+                "context": "...as the heart *of man* doth his thoughts."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OLONTAX",
+        "normalized": "olontax",
+        "definition": "man's twin star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OLPIRT",
+        "normalized": "olpirt",
+        "definition": "light, burning, light and burning",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "18.3",
+                "context": "O thou mighty *light and burning* flame of comfort which..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OM",
+        "normalized": "om",
+        "definition": "to understand, to know",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.4",
+                "context": "...can the wings of the winds *understand*..."
+            },
+            {
+                "location": "10.52",
+                "context": "...neither *know* at any time..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OMA",
+        "normalized": "oma",
+        "definition": "of understanding",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not a word that occurs on its own in the Keys, but it can be easily derived from words of which it's a part"
+    },
+    {
+        "word": "OMAOAS",
+        "normalized": "omaoas",
+        "definition": "names",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.91",
+                "context": "...let them forget *their names*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OMAX",
+        "normalized": "omax",
+        "definition": "to know",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "15.12",
+                "context": "...who *knowest* the great name..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OMICAOLZ",
+        "normalized": "omicaolz",
+        "definition": "(be) mighty",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.40",
+                "context": "...*be mighty* amongst us..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OMLO",
+        "normalized": "omlo",
+        "definition": "knowledge of the First",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "not entirely sure where this is from; it doesn't seem to appear in the Keys, but the archidox dictionary presented it in the formatting that suggests that it's a standard word—so I'm not certain what to make of it, but for now I've flagged it as non-canon—even though it is pretty plain how the word is constructed and its meaning follows from its parts"
+    },
+    {
+        "word": "OMP",
+        "normalized": "omp",
+        "definition": "understanding",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not a word that occurs on its own in the Keys, but it can be easily derived from words of which it's a part"
+    },
+    {
+        "word": "OMPTILB",
+        "normalized": "omptilb",
+        "definition": "her understanding",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.101",
+                "context": "...confound *her understanding* with darkness..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ON",
+        "normalized": "on",
+        "definition": "made, built",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ONEDON",
+        "normalized": "onedon",
+        "definition": "completion",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ONIXDAR",
+        "normalized": "onixdar",
+        "definition": "proclaiming",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ONPHE",
+        "normalized": "onphe",
+        "definition": "begotten",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ONR",
+        "normalized": "onr",
+        "definition": "motivation, inspiration—'inertia'",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OOANOAN",
+        "normalized": "ooanoan",
+        "definition": "eyes, in their eyes",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.40",
+                "context": "*In their eyes* are millstones..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OOAONA",
+        "normalized": "ooaona",
+        "definition": "eyes",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "13.5",
+                "context": "...which have 42 *eyes* to stir up wrath..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OOE",
+        "normalized": "ooe",
+        "definition": "archetypal man, makes man, making man",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "found in the Table of 12|found in the perimeter of the Holy Table"
+    },
+    {
+        "word": "OOGE",
+        "normalized": "ooge",
+        "definition": "chamber",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.21",
+                "context": "...for *the chamber of* righteousness..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OP",
+        "normalized": "op",
+        "definition": "(the Enochian word for the digits 22)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.12",
+                "context": "...are *22* nests of lamentation..."
+            }
+        ],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits"
+    },
+    {
+        "word": "OPHES",
+        "normalized": "ophes",
+        "definition": "the 22 by 4",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OPHIDE",
+        "normalized": "ophide",
+        "definition": "coitus, of riding, rides",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OQ",
+        "normalized": "oq",
+        "definition": "but, except",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.37",
+                "context": "...is not *but* in the mind of the all-powerful..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OR",
+        "normalized": "or",
+        "definition": "(the Enochian word for the letter 'F')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "OR",
+        "normalized": "or",
+        "definition": "visit, visit us, appear, appear before us",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORA",
+        "normalized": "ora",
+        "definition": "third, the third",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORNO",
+        "normalized": "orno",
+        "definition": "divine visitation",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORO",
+        "normalized": "oro",
+        "definition": "third man, the third man",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORCANOR",
+        "normalized": "orcanor",
+        "definition": "the mighty manifest",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORDA",
+        "normalized": "orda",
+        "definition": "will indwell",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORDAN",
+        "normalized": "ordan",
+        "definition": "manifest",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORIPAT",
+        "normalized": "oripat",
+        "definition": "life shall not form",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORLO",
+        "normalized": "orlo",
+        "definition": "visit, initiation, visitation",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "apparently found in the Table of 12"
+    },
+    {
+        "word": "ORMATENODAH",
+        "normalized": "ormatenodah",
+        "definition": "at the start of the millennia, the angel of death false",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OROIBAHAOZPI",
+        "normalized": "oroibahaozpi",
+        "definition": "He who cries aloud in the place of desolation",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "I have flagged this as a \"non-canon\" word, even though it appears in the Great Table, for cataloguing purposes"
+    },
+    {
+        "word": "OROCH",
+        "normalized": "oroch",
+        "definition": "under",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "14.15",
+                "context": "...which have *under you* 1636."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OROCHA",
+        "normalized": "orocha",
+        "definition": "beneath",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.119",
+                "context": "...the lower heavens *beneath you*, let them serve..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OROPHAS",
+        "normalized": "orophas",
+        "definition": "give in secret, I will give in secret",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ORRI",
+        "normalized": "orri",
+        "definition": "stone, barren stone",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.26",
+                "context": "...stronger are your feet than *the barren stone*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ORS",
+        "normalized": "ors",
+        "definition": "darkness",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.102",
+                "context": "Confound her understanding with *darkness*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ORSBA",
+        "normalized": "orsba",
+        "definition": "drunken",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "13.11",
+                "context": "...making men *drunken* which are empty..."
+            },
+            {
+                "location": "30.53",
+                "context": "...may always be *drunken* and vexed..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ORSCA",
+        "normalized": "orscatbl",
+        "definition": "buildings",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.96",
+                "context": "*His buildings*, let them become caves..."
+            }
+        ],
+        "commentary": "it's interesting how ORS is part of this word with the passage its used in including \"caves\", which are often quite dark"
+    },
+    {
+        "word": "ORSCOR",
+        "normalized": "orscor",
+        "definition": "dryness",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "15.10",
+                "context": "...weave the earth with *dryness*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ORTH",
+        "normalized": "orth",
+        "definition": "(the Enochian word for the letter 'F')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "OS",
+        "normalized": "os",
+        "definition": "(the Enochian word for the digits 12)",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not found on its own, but is part of compound words in the keys, which makes it somewhat unusual for the digit-style numbers"
+    },
+    {
+        "word": "OSCH",
+        "normalized": "osch",
+        "definition": "are 12, let there be 12",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OSF",
+        "normalized": "osf",
+        "definition": "discord",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Corpus Omnium, which includes the phrase OSF SER IAD, which is \"the discord and sorrow of God\""
+    },
+    {
+        "word": "OSHE",
+        "normalized": "oshe",
+        "definition": "the 12 Lights",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OSLONDOH",
+        "normalized": "oslondoh",
+        "definition": "twelve kingdoms",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.8",
+                "context": "...on whose hands stand *12 kingdoms*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OSSON",
+        "normalized": "osson",
+        "definition": "the 12 reign",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OT",
+        "normalized": "ot",
+        "definition": "and",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "written by Dee as an alternate spelling of \"and\", which gives rise to the idea that \"D\" and \"T\" can be occasionally interchangeable perhaps"
+    },
+    {
+        "word": "OTHIL",
+        "normalized": "othil",
+        "definition": "seats, seats of, to set",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.11",
+                "context": "...six are *the seats of* living breath..."
+            },
+            {
+                "location": "4.1",
+                "context": "*I have set* my feet in the south..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OTHILRIT",
+        "normalized": "othilrit",
+        "definition": "seats of mercy",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.3",
+                "context": "...*the seats of mercy* and continuance..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OUCHO",
+        "normalized": "oucho",
+        "definition": "to confound",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.63",
+                "context": "One season, *let it confound* another..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OVOARS",
+        "normalized": "ovoars",
+        "definition": "center",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "18.10",
+                "context": "...the glory of God *to the center* of the earth."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OVOF",
+        "normalized": "ovof",
+        "definition": "to magnify",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "12.18",
+                "context": "...the Lord *may be magnified* whose name..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OS",
+        "normalized": "os",
+        "definition": "(the Enochian word for the digits 26)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.6",
+                "context": "...made of hyacinth pillars *26* in whom..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OXAMAX",
+        "normalized": "oxamax",
+        "definition": "the 26 comprise the all",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "OXEX",
+        "normalized": "oxex",
+        "definition": "to vomit, to hurl forth",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.26",
+                "context": "...and *vomit out* the heads of scorpions..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OXIAYAL",
+        "normalized": "oxiayal",
+        "definition": "mighty seat, divine throne",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.1",
+                "context": "*The mighty seat* groaned..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OXO",
+        "normalized": "oxo",
+        "definition": "the fifteenth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "OZAZM",
+        "normalized": "ozazm",
+        "definition": "to make, to make me",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.48",
+                "context": "...and *make me* a strong seething..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OZAZMA",
+        "normalized": "ozazma",
+        "definition": "to make, to make us",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.155",
+                "context": "...and *make us* partakers of undefiled knowledge."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OZIEN",
+        "normalized": "ozien",
+        "definition": "hand, mine own hand",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.23",
+                "context": "...except by *mine own hand*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OZOL",
+        "normalized": "ozol",
+        "definition": "hands",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.55",
+                "context": "...and upon *their hands* are marble..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "OZONGON",
+        "normalized": "ozongon",
+        "definition": "manifold winds",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.31",
+                "context": "...mightier are your voices than *the manifold winds*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "P",
+        "normalized": "p",
+        "definition": "(the Enochian word for the digit 8)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.8",
+                "context": "...which have *8* vials of wrath..."
+            }
+        ],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits"
+    },
+    {
+        "word": "PA",
+        "normalized": "pa",
+        "definition": "(the Enochian word for the letter 'B')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "PA",
+        "normalized": "pa",
+        "definition": "keep",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PAAOX",
+        "normalized": "paaox",
+        "definition": "to remain",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "while it does not occur by itself in the Keys, it can be derived from words of which it is a part"
+    },
+    {
+        "word": "PAAOXT",
+        "normalized": "paaoxt",
+        "definition": "to remain",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.133",
+                "context": "No place, *let it remain* in one number."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PACADABAAH",
+        "normalized": "pacadabaah",
+        "definition": "profess the truth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PACHAD",
+        "normalized": "pachad",
+        "definition": "being of the holy trinity",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PADGZE",
+        "normalized": "padgze",
+        "definition": "justice from divine power without defect",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "comes from the Five Books of Mystery, but is not in the Keys"
+    },
+    {
+        "word": "PAEB",
+        "normalized": "paeb",
+        "definition": "oak, an oak",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.8",
+                "context": "...*an oak* whose branches are 22 nests..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PAGE",
+        "normalized": "page",
+        "definition": "to rest",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "while it does not occur by itself in the Keys, it can be derived from words of which it is a part"
+    },
+    {
+        "word": "PAGEIP",
+        "normalized": "page",
+        "definition": "rest not",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.50",
+                "context": "...which *rest not* neither know any long time..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PAH",
+        "normalized": "pah",
+        "definition": "the Ogdoad, eightfold star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PAID",
+        "normalized": "paid",
+        "definition": "always",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.52",
+                "context": "...may be *always* drunken and vexed..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PAL",
+        "normalized": "pal",
+        "definition": "(the Enochian word for the letter 'X')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "PAL",
+        "normalized": "pal",
+        "definition": "dissolution",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PALA",
+        "normalized": "pala",
+        "definition": "two (that were separated), separated",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Five Books, but not in the Keys"
+    },
+    {
+        "word": "PALCE",
+        "normalized": "palce",
+        "definition": "All is in the One",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PALGEH",
+        "normalized": "palgeh",
+        "definition": "thou art separated",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PALMES",
+        "normalized": "palmes",
+        "definition": "dissolution into the Daughter of Daughter of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PALO",
+        "normalized": "palo",
+        "definition": "dissolves into man",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PALME",
+        "normalized": "palme",
+        "definition": "dissolves into the Daughter of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PALSE",
+        "normalized": "palse",
+        "definition": "raging fire",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PAM",
+        "normalized": "pam",
+        "definition": "not",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "while it does not occur by itself in the Keys, it can be derived from words of which it is a part"
+    },
+    {
+        "word": "PAM",
+        "normalized": "pam",
+        "definition": "eight unto nine, eight into nine",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PAMBT",
+        "normalized": "pambt",
+        "definition": "unto me",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "18.26",
+                "context": "Be thou a window of comfort *unto me*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PAMIS",
+        "normalized": "pamis",
+        "definition": "cannot",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "while it does not occur by itself in the Keys, it can be derived from words of which it is a part"
+    },
+    {
+        "word": "PAMPHES",
+        "normalized": "pamphes",
+        "definition": "Babalon astride the Beast",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website; very obviously an insertion of Thelemic doctrine into Enochiana"
+    },
+    {
+        "word": "PAMPHICA",
+        "normalized": "pamphica",
+        "definition": "infernal mother",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website; given the definition of PAMPHES the archidox website dictionary has, I'd wager this is further Thelemic doctrine infused into Enochiana and is in reference to Babalon"
+    },
+    {
+        "word": "PAN",
+        "normalized": "pan",
+        "definition": "fire pouring down",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PANDAS",
+        "normalized": "pandas",
+        "definition": "a thousand angels keep holy",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PANGEPI",
+        "normalized": "pangepi",
+        "definition": "She who is not",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PANOSCH",
+        "normalized": "panosch",
+        "definition": "there are twelve pouring down",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PANPIR",
+        "normalized": "panpir",
+        "definition": "pouring down",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.51",
+                "context": "...*pouring down* the fires of life and increase..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PAOMBD",
+        "normalized": "paombd",
+        "definition": "members, body parts, appendages",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.75",
+                "context": "All *her members*, let them differ..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PAPNOR",
+        "normalized": "papnor",
+        "definition": "remembrance, memory",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.43",
+                "context": "For *to this remembrance* is given power..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PAPHRES",
+        "normalized": "paphres",
+        "definition": "praising the Lord of Hosts in rememberance",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PAR",
+        "normalized": "par",
+        "definition": "them, in them",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.65",
+                "context": "...the God of Righteousness rejoiceth *in them*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PARACH",
+        "normalized": "parach",
+        "definition": "equal",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.81",
+                "context": "...no one creature *equal with* another..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PARACLEDA",
+        "normalized": "paracleda",
+        "definition": "wedding",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.17",
+                "context": "...I have prepared as cups *for a wedding*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PARADIAL",
+        "normalized": "paradial",
+        "definition": "living dwellings",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.13",
+                "context": "... 28 *living dwellings*..."
+            }
+        ],
+        "commentary": "my hunch is that \"living dwellings\", particularly in this passage, is actually referring to the 28 mansions of the moon"
+    },
+    {
+        "word": "PARADIZ",
+        "normalized": "paradiz",
+        "definition": "virgins",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.3",
+                "context": "The east is a house of *virgins*..."
+            }
+        ],
+        "commentary": "probably is not literally \"virgins\" in the normal sense, especially considering the meaning of PARADIAL and sheer similarity of the two words"
+    },
+    {
+        "word": "PARM",
+        "normalized": "parm",
+        "definition": "to run",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.47",
+                "context": "...from their mouths *run* seas of blood."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PARMGI",
+        "normalized": "parmgi",
+        "definition": "let run",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.58",
+                "context": "Her course, *let it run with* the heavens..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PARNIX",
+        "normalized": "parnix",
+        "definition": "the daughters reside in the 4th",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PARSA",
+        "normalized": "parsa",
+        "definition": "with the Son of Son of Light in the fourth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PARSODAN",
+        "normalized": "parsodan",
+        "definition": "the Son of Son of Light (Mercury) in the fourth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PART",
+        "normalized": "part",
+        "definition": "also in them",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PASBS",
+        "normalized": "pasbs",
+        "definition": "daughters",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "14.3",
+                "context": "...*the daughters* of the just..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PASDAES",
+        "normalized": "pasdaes",
+        "definition": "profess the truth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PATRALX",
+        "normalized": "patralx",
+        "definition": "rock",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "PAX",
+        "normalized": "pax",
+        "definition": "keep the one",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PAZ",
+        "normalized": "paz",
+        "definition": "the fourth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "PD",
+        "normalized": "pd",
+        "definition": "(the Enochian word for the digits 33)",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits"
+    },
+    {
+        "word": "PE",
+        "normalized": "pe",
+        "definition": "(the Enochian word for the letter 'B')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "PE",
+        "normalized": "pe",
+        "definition": "the eight Daughters of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PELE",
+        "normalized": "pele",
+        "definition": "he who works wonders",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Five Books, occurs on the PELE ring"
+    },
+    {
+        "word": "PENGON",
+        "normalized": "pengon",
+        "definition": "the voice of the eight Daughters of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PERAL",
+        "normalized": "peral",
+        "definition": "(the Enochian word for the digits 69636)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.34",
+                "context": "...lamps *69636* whose numbers are..."
+            }
+        ],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits. For this number in particular it is worth noting that Dee was originally given PEOAL but later corrected it to PERAL (although it remained uncorrected in the 48 Claves)"
+    },
+    {
+        "word": "PHAMA",
+        "normalized": "phama",
+        "definition": "I will give",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Five Books"
+    },
+    {
+        "word": "PHAMAH",
+        "normalized": "phamah",
+        "definition": "I will give",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "a spelling variation that the archidox website's dictionary provides for PHAMA"
+    },
+    {
+        "word": "PHAR",
+        "normalized": "phar",
+        "definition": "surrender",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PHE",
+        "normalized": "phe",
+        "definition": "the eight Daughters of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PI",
+        "normalized": "pi",
+        "definition": "she",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be derived from compound words of which it is a part"
+    },
+    {
+        "word": "PIAD",
+        "normalized": "piad",
+        "definition": "your God",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.3",
+                "context": "...behold, sayeth *your God*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PIADPH",
+        "normalized": "piadph",
+        "definition": "the depths of (my) jaws",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.12",
+                "context": "...burning flames have framed within *the depths of my jaws*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PIAP",
+        "normalized": "piap",
+        "definition": "balance",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.69",
+                "context": "...amongst you as *the balance of* righteousness and truth."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PIBLIAR",
+        "normalized": "pibliar",
+        "definition": "places of comfort",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.30",
+                "context": "...strong towers and *places of comfort*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PIDIAI",
+        "normalized": "pidiai",
+        "definition": "marble",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.57",
+                "context": "...and upon their hands are *marble* sleeves."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PII",
+        "normalized": "pii",
+        "definition": "she is",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.111",
+                "context": "...*she is* the bed of an harlot..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PILAH",
+        "normalized": "pilah",
+        "definition": "moreover",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.47",
+                "context": "*Moreover*, you lifted up your voices..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PILD",
+        "normalized": "pild",
+        "definition": "continually",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.54",
+                "context": "...upon the earth *continually*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PILZIN",
+        "normalized": "pilzin",
+        "definition": "firmaments of water",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.6",
+                "context": "...mighty in the *firmaments of water"
+            },
+            {
+                "location": "...\"",
+                "context": ""
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PIR",
+        "normalized": "pir",
+        "definition": "holy, holy ones",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.41",
+                "context": "...a law to govern the *holy ones*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PIRGAH",
+        "normalized": "pirgah",
+        "definition": "the first glory, flames",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be derived from compound words of which it is a part"
+    },
+    {
+        "word": "PIRGI",
+        "normalized": "pirgi",
+        "definition": "fires",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be derived from compound words of which it is a part"
+    },
+    {
+        "word": "PIRIPSAX",
+        "normalized": "piripsax",
+        "definition": "heavens",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.59",
+                "context": "...let it run with *the heavens*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PIRIPSOL",
+        "normalized": "piripsol",
+        "definition": "heavens",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.12",
+                "context": "...the brightness of *the heavens*..."
+            },
+            {
+                "location": "30.21",
+                "context": "...the brightness of *the heavens*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PIRIPSON",
+        "normalized": "piripson",
+        "definition": "heaven, third heaven",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.3",
+                "context": "...first, as is the *third heaven*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PLAPLI",
+        "normalized": "plapli",
+        "definition": "partakers, partakers of",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.79",
+                "context": "...*partakers of* the secret wisdom..."
+            },
+            {
+                "location": "30.156",
+                "context": "...make us *partakers of* undefiled knowledge."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PLIGNAPHE",
+        "normalized": "plignaphe",
+        "definition": "the eternal cry",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "while this is technically a \"new word\" derived from Liber Loagaeth, it is corroborated Dee and Kelly"
+    },
+    {
+        "word": "PLOSI",
+        "normalized": "plosi",
+        "definition": "as many",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.47",
+                "context": "...1000 times *as many*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "POAMAL",
+        "normalized": "poamal",
+        "definition": "your palace",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.64",
+                "context": "...in the midst of *your palace*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "POHO",
+        "normalized": "poho",
+        "definition": "eightfold law",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "POILP",
+        "normalized": "poilp",
+        "definition": "to divide",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.45",
+                "context": "...the crowns of the Temple and the coat of Him...*are divided*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "POLA",
+        "normalized": "pola",
+        "definition": "two together, couple",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "occurs in the Five Books, but not in the Keys"
+    },
+    {
+        "word": "POP",
+        "normalized": "pop",
+        "definition": "the ninteenth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "PORTEX",
+        "normalized": "portex",
+        "definition": "separate sun of God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PRAC",
+        "normalized": "prac",
+        "definition": "dwelling in",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PRAF",
+        "normalized": "praf",
+        "definition": "to dwell",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word does not occur on its own in the Keys, but can be derived from compound words of which it is a part"
+    },
+    {
+        "word": "PRAGMA",
+        "normalized": "pragma",
+        "definition": "to dwell (possibly?)",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "comes from the True and Faithful Relations, when Kelly is possessed by spirits and they speak in Angelical to Madimi and say, GIL DEP RGMA KURES HELECH, which is translated to \"We want to live here in our (friends)\", upon which she casts them out; no individual word translations are provided"
+    },
+    {
+        "word": "PRAS",
+        "normalized": "pras",
+        "definition": "unite",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PRDZAR",
+        "normalized": "prdzar",
+        "definition": "to diminish",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.137",
+                "context": "Add and *diminish* until the stars be numbered."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PRES",
+        "normalized": "pres",
+        "definition": "praise",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PRG",
+        "normalized": "prg",
+        "definition": "flame",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be easily extracted from compound words in which it occurs"
+    },
+    {
+        "word": "PRGE",
+        "normalized": "prge",
+        "definition": "fire",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.32",
+                "context": "...with *the fire of* gathering..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PRGEL",
+        "normalized": "prgel",
+        "definition": "fire",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.3",
+                "context": "A mighty guard of *fire*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PRIAZ",
+        "normalized": "priaz",
+        "definition": "those",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.122",
+                "context": "...govern *those* that govern..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PRIAZI",
+        "normalized": "priazi",
+        "definition": "those",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "PS",
+        "normalized": "ps",
+        "definition": "cubed",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "PUGO",
+        "normalized": "pugo",
+        "definition": "as unto",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.78",
+                "context": "...unto us *as unto* partakers of the secret wisdom..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "PUIN",
+        "normalized": "puin",
+        "definition": "sickles, sharp sickles",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "PURG",
+        "normalized": "purg",
+        "definition": "flames",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "Q",
+        "normalized": "q",
+        "definition": "or",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.71",
+                "context": "...no creature upon *or* within her..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QAA",
+        "normalized": "qaa",
+        "definition": "creation, garments",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.21",
+                "context": "...measureth *your garments*..."
+            },
+            {
+                "location": "30.153",
+                "context": "Open the mysteries of *your creation*."
+            }
+        ],
+        "commentary": "used as a metaphor for the threads of created existence"
+    },
+    {
+        "word": "QAAL",
+        "normalized": "qaal",
+        "definition": "creator",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.41",
+                "context": "...in the name of *the Creator*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QAAN",
+        "normalized": "qaan",
+        "definition": "creation",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.81",
+                "context": "...secret wisdom of *your creation*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QAAON",
+        "normalized": "qaaon",
+        "definition": "creation",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.43",
+                "context": "...your God *in your creation*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QAAS",
+        "normalized": "qaas",
+        "definition": "creation",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.46",
+                "context": "...obey *your creation*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QADAH",
+        "normalized": "qadah",
+        "definition": "creator",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.38",
+                "context": "...sing praises unto *the creator*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QANIS",
+        "normalized": "qanis",
+        "definition": "olives",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not explicitly used on its own, but can be derived from a compound word with obvious parts"
+    },
+    {
+        "word": "QCOCASB",
+        "normalized": "qcocasb",
+        "definition": "contents of time",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.41",
+                "context": "...the first, ends, and *contents of time*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QMOSPLEH",
+        "normalized": "qmospleh",
+        "definition": "or the horns",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.16",
+                "context": "...as sharp sickles: *or the horns of* death..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QRASAHI",
+        "normalized": "qrasahi",
+        "definition": "pleasure",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not explicitly used on its own, but can be derived from a compound word with obvious parts"
+    },
+    {
+        "word": "QTA",
+        "normalized": "qta",
+        "definition": "or as",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.18",
+                "context": "...*or as* the flowers..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QTING",
+        "normalized": "qting",
+        "definition": "the rotten",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.131",
+                "context": "...and destroy *the rotten*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QUAR",
+        "normalized": "quar",
+        "definition": "(the Enochian word for the digits 1636)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "14.16",
+                "context": "...which have under you *1636*."
+            }
+        ],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits"
+    },
+    {
+        "word": "QUASB",
+        "normalized": "quasb",
+        "definition": "to destroy",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not explicitly used on its own, but can be derived from a compound word with obvious parts"
+    },
+    {
+        "word": "QUIIN",
+        "normalized": "quiin",
+        "definition": "wherein",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.18",
+                "context": "...*wherein* the creatures of the earth are..."
+            },
+            {
+                "location": "7.7",
+                "context": "...*wherein* the Lord hath opened his mouth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "QURLST",
+        "normalized": "qurlst",
+        "definition": "handmaid",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.62",
+                "context": "...as *a handmaid* let her serve them..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "RA",
+        "normalized": "ra",
+        "definition": "east",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from the Lamen according to the dictionary from the archidox website"
+    },
+    {
+        "word": "RAAS",
+        "normalized": "raas",
+        "definition": "east",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.1",
+                "context": "*The east* is a house of virgins..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "RAASY",
+        "normalized": "raasi",
+        "definition": "east",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.9",
+                "context": "...5 thunders which flew into *the east*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "RACLIR",
+        "normalized": "raclir",
+        "definition": "weeping",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.16",
+                "context": "...lamentation and *weeping* laid up for the earth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "RESTIL",
+        "normalized": "restil",
+        "definition": "to praise (him)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.45",
+                "context": "...*that you may praise him* amongst the sons of men."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "RII",
+        "normalized": "rii",
+        "definition": "the twenty-ninth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "RIOR",
+        "normalized": "rior",
+        "definition": "widow",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.20",
+                "context": "...like unto the harvest of *a widow*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "RIPIR",
+        "normalized": "ripir",
+        "definition": "no place",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.132",
+                "context": "...*No place*, let it remain in one number."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "RIT",
+        "normalized": "mercy",
+        "definition": "mercy",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.34",
+                "context": "O you servants of *mercy*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "RLODNR",
+        "normalized": "rlodnr",
+        "definition": "alchemical furnace, crucible, athanor",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from True and Faithful Relations; question marks placed by words in both the archidox and Leitch's dictionaries"
+    },
+    {
+        "word": "RLU",
+        "normalized": "rlu",
+        "definition": "is moving, completed, ending",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "found in the Table of 12; could be RLV/RLW instead"
+    },
+    {
+        "word": "RLV",
+        "normalized": "rlv",
+        "definition": "not moving, making into non-existence, destroying",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "found in the perimeter of the Holy Table; could be RLV/RLW instead"
+    },
+    {
+        "word": "RNAH",
+        "normalized": "rnah",
+        "definition": "sunrise",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "RO",
+        "normalized": "ro",
+        "definition": "third minister of Sol (a Son of Son of Light (Jupiter) (cf. Rocle on 7x7 Tablet))",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ROR",
+        "normalized": "ror",
+        "definition": "sun",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.12",
+                "context": "...*the sun* is as a sword..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ROXTAN",
+        "normalized": "roxtan",
+        "definition": "(rectified) wine",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "True and Faithful Relations is the source; rectified means that the excess water and other impurities are removed"
+    },
+    {
+        "word": "RSAM",
+        "normalized": "rsam",
+        "definition": "admiration",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "at present, source unclear; shows up in the archidox dictionary, but is not attributed to any other location"
+    },
+    {
+        "word": "S",
+        "normalized": "es",
+        "definition": "fourth",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "SAANIR",
+        "normalized": "saanir",
+        "definition": "parts",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.5",
+                "context": "...mighty in *the parts* of the earth..."
+            },
+            {
+                "location": "30.45",
+                "context": "...let her be governed by *her parts*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SABA",
+        "normalized": "saba",
+        "definition": "whose",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease; also, it is really an alternative spelling of SOBA, which indicates that, yet again, some letters are simply interchangeable for whatever reason"
+    },
+    {
+        "word": "SABAOOAONA",
+        "normalized": "sabaooaona",
+        "definition": "whose eyes",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.18",
+                "context": "...*whose eyes* are the brightness..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SABULAN",
+        "normalized": "sabulan",
+        "definition": "who proclaims",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SACH",
+        "normalized": "sach",
+        "definition": "the establishers, the supporters",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Corpus Omnium, translated in Latin as Confirmantes (those who establish)"
+    },
+    {
+        "word": "SADGLA",
+        "normalized": "sadgla",
+        "definition": "the Daughter of Light is God's glory",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SAGA",
+        "normalized": "saga",
+        "definition": "one",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "this comes from the archidox dictionary, no doubt, but I'm not sure its source; there is an extent to which it follows when breaking down SAGACOR, which is \"in one number\""
+    },
+    {
+        "word": "SAGACOR",
+        "normalized": "sagacor",
+        "definition": "in one number",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.134",
+                "context": "...no place, let it remain *in one number*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SALBROX",
+        "normalized": "salbrox",
+        "definition": "live sulfur, burning sulfur",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.30",
+                "context": "...scorpions and *live sulphur* mingled with poison..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SALD",
+        "normalized": "sald",
+        "definition": "wonder",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.6",
+                "context": "...your voicings of *wonder*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SALMAN",
+        "normalized": "salman",
+        "definition": "house",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.20",
+                "context": "...*the house* of death..."
+            },
+            {
+                "location": "16.3",
+                "context": "...*the house* of justice..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SAMA",
+        "normalized": "sama",
+        "definition": "the fourth possesses",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SAMHAMPORS",
+        "normalized": "samhampors",
+        "definition": "the righteous creatures of the Sun of God are separated from the fourth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SAMVELG",
+        "normalized": "samvelg",
+        "definition": "the righteous",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.14",
+                "context": "...and a garland to *the righteous*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SANGEF",
+        "normalized": "sangef",
+        "definition": "the master magician",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website; originally appears in the entry as \"magickian\", so I'm inclined to take this as an inspired-by-Thelema translation attempt"
+    },
+    {
+        "word": "SAPAH",
+        "normalized": "sapah",
+        "definition": "mighty sounds, thunders",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.1",
+                "context": "*The Mighty Sounds* have entered..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SAPPOH",
+        "normalized": "sappoh",
+        "definition": "the mighty Ogdoad",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SAXX",
+        "normalized": "saax",
+        "definition": "the fourth dissolves",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SDIV",
+        "normalized": "sdiv",
+        "definition": "fourth angle",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.2",
+                "context": "The spirits of *the fourth angle*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SE",
+        "normalized": "se",
+        "definition": "mourning, cry",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "found in the perimeter of the Holy Table, translation per dictionary from archidox website; PLIGNAPHE (the eternal cry) was originally written as PLIGNASE, but later corrected—but it does make me wonder if there isn't some \"rule\" where PHE can sometimes be SE in words and vice versa (similar to how T and C are seemingly interchangeable in CABA and TABA, both of which are \"to govern\")"
+    },
+    {
+        "word": "SEBO",
+        "normalized": "sebo",
+        "definition": "separation",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SEBRA",
+        "normalized": "sebra",
+        "definition": "warning",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SEDLO",
+        "normalized": "sedlo",
+        "definition": "cry gives us the Five, cry gives us the Holy Pentagram",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SEMELABUGEN",
+        "normalized": "semelabugen",
+        "definition": "Semeliel the angel of the Lord is made strong by the Daughter of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SEM",
+        "normalized": "sem",
+        "definition": "in the place",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Five Books; similar to the idea of the word EMNA, \"here\""
+    },
+    {
+        "word": "SEMNA",
+        "normalized": "semna",
+        "definition": "nine cries of God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SER",
+        "normalized": "ser",
+        "definition": "sorrow",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Corpus Omnium, in the phase OSF SER IAD (discord and sorrow of God)"
+    },
+    {
+        "word": "SESQVI",
+        "normalized": "sesqvi",
+        "definition": "the cry of the fourth wherein is the cry of the Daughter of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SIAION",
+        "normalized": "siaion",
+        "definition": "temple",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.41",
+                "context": "...the crowns of *the temple* and the coat..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SIATRIS",
+        "normalized": "siatris",
+        "definition": "scorpions",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.28",
+                "context": "...the heads of *scorpions"
+            },
+            {
+                "location": "and live sulphur...\"",
+                "context": ""
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SIBSI",
+        "normalized": "sibsi",
+        "definition": "covenant",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.145",
+                "context": "...appear before *the covenant of* his mouth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SIH",
+        "normalized": "sih",
+        "definition": "the temple and covenant of God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SMNAD",
+        "normalized": "smnad",
+        "definition": "another",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "SNICOL",
+        "normalized": "snicol",
+        "definition": "the Seven Sheaths",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SOBA",
+        "normalized": "soba",
+        "definition": "whose",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.29",
+                "context": "...*whose* seats I garnished..."
+            },
+            {
+                "location": "1.56",
+                "context": "...*whose* beginning is not..."
+            },
+            {
+                "location": "5.35",
+                "context": "...*whose* numbers are as the first..."
+            },
+            {
+                "location": "7.23",
+                "context": "...*whose* kingdoms are continuance..."
+            },
+            {
+                "location": "10.9",
+                "context": "...*whose* branches are 22 nests..."
+            },
+            {
+                "location": "11.28",
+                "context": "...*whose* number is 31..."
+            },
+            {
+                "location": "12.19",
+                "context": "...*whose* name amongst you is wrath..."
+            },
+            {
+                "location": "17.3",
+                "context": "...*whose* wings are thorns..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOBAIAD",
+        "normalized": "sobaiad",
+        "definition": "whose God",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "17.14",
+                "context": "...*whose God* is wrath and anger..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOBAM",
+        "normalized": "sobam",
+        "definition": "whom",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.9",
+                "context": "...*whom* the burning flames..."
+            },
+            {
+                "location": "4.16",
+                "context": "...*whom* none hath yet numbered..."
+            },
+            {
+                "location": "6.7",
+                "context": "...*whom* the First hath planted..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOBCA",
+        "normalized": "sobca",
+        "definition": "whose",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.13",
+                "context": "...*whose* wings are of wormwood..."
+            },
+            {
+                "location": "9.37",
+                "context": "...cursed are they *whose* iniquities..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOBHA",
+        "normalized": "sobha",
+        "definition": "whose",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "SOBHAATH",
+        "normalized": "sobhaath",
+        "definition": "whose works",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.38",
+                "context": "...*whose works* shall be a song of honor..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOBO",
+        "normalized": "sobo",
+        "definition": "whose",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "SOBOLN",
+        "normalized": "soboln",
+        "definition": "west, in the west",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.22",
+                "context": "...settled their feet *in the west*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOBOLZAR",
+        "normalized": "sobolzar",
+        "definition": "whose courses",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.21",
+                "context": "...*whose courses* visit with comfort..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOBRA",
+        "normalized": "sobra",
+        "definition": "whose",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.10",
+                "context": "...*in whose* hands the sun is as a sword..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOLA",
+        "normalized": "sola",
+        "definition": "whose",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "SOLAMIAN",
+        "normalized": "solamian",
+        "definition": "whose continuance",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.14",
+                "context": "...*whose long continuance* shall be..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOLPETH",
+        "normalized": "solpeth",
+        "definition": "harken, harken unto, listen to",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.32",
+                "context": "Wherefore, *harken unto* my voice."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SONF",
+        "normalized": "sonf",
+        "definition": "to reign",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.2",
+                "context": "I *reign* over you, saith the God of Justice..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SOR",
+        "normalized": "sor",
+        "definition": "action, kingly action",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Corpus Omnium from GRU SOR IAD, \"cause of the actions of God\""
+    },
+    {
+        "word": "SPA",
+        "normalized": "spa",
+        "definition": "the Daughter of Light keeps",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "SURZAS",
+        "normalized": "surzas",
+        "definition": "to swear, to promise",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.148",
+                "context": "...which *he hath sworn* unto us..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "SYMP",
+        "normalized": "symp",
+        "definition": "another",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.66",
+                "context": "One season, let it confound *another*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "T",
+        "normalized": "t",
+        "definition": "it",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "TA",
+        "normalized": "ta",
+        "definition": "as",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.14",
+                "context": "...sun is *as* a sword..."
+            },
+            {
+                "location": "1.17",
+                "context": "...moon *as* a through-thrusting fire..."
+            },
+            {
+                "location": "1.26",
+                "context": "...*as* the palms of my hands..."
+            },
+            {
+                "location": "2.15",
+                "context": "...*as* cups for a wedding..."
+            },
+            {
+                "location": "8.54",
+                "context": "...of such *as* are prepared..."
+            },
+            {
+                "location": "9.31",
+                "context": "...*as* the rich man doth his treasure..."
+            },
+            {
+                "location": "11.26",
+                "context": "...*as* they are whose number is..."
+            },
+            {
+                "location": "30.61",
+                "context": "...*as* a handmaid let her serve them..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TABAAM",
+        "normalized": "tabaam",
+        "definition": "governor",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "15.2",
+                "context": "O thou, *the governor of*..."
+            }
+        ],
+        "commentary": "TABAAM and TABAAN share the same reference and are only alternate spellings because of questionable handwriting; but also, M and N could just be interchangeable because everything else feels like it is in Enochian so why not"
+    },
+    {
+        "word": "TABAAN",
+        "normalized": "tabaan",
+        "definition": "governor",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "15.2",
+                "context": "O thou, *the governor of*..."
+            }
+        ],
+        "commentary": "TABAAM and TABAAN share the same reference and are only alternate spellings because of questionable handwriting; but also, M and N could just be interchangeable because everything else feels like it is in Enochian so why not"
+    },
+    {
+        "word": "TABAORD",
+        "normalized": "tabaord",
+        "definition": "be governed, to be governed",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.44",
+                "context": "...*let her be governed by* her parts..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TABAORI",
+        "normalized": "tabaori",
+        "definition": "to govern",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.121",
+                "context": "...*govern* those that govern..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TABAS",
+        "normalized": "tabas",
+        "definition": "to govern",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "TABGES",
+        "normalized": "tabges",
+        "definition": "caves",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.98",
+                "context": "...let them become *caves* for the beasts..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TAD",
+        "normalized": "tad",
+        "definition": "as the third",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "TAGE",
+        "normalized": "tage",
+        "definition": "as not, as is not",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.36",
+                "context": "...such *as is not* but in the mind..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TAL",
+        "normalized": "tal",
+        "definition": "(the Enochian word for the letter 'M')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "TALHO",
+        "normalized": "talho",
+        "definition": "cups",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.16",
+                "context": "...I have prepared as *cups* for a wedding..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TALO",
+        "normalized": "talo",
+        "definition": "as the first",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.30",
+                "context": "...are *as the first* 456..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TALOLCIS",
+        "normalized": "talolcis",
+        "definition": "as bucklers",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.16",
+                "context": "...shall be *as bucklers* to the stooping dragons..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TAN",
+        "normalized": "tan",
+        "definition": "the seventeenth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "TAPUIN",
+        "normalized": "tapuin",
+        "definition": "as sharp sickles",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.15",
+                "context": "...the rest are *as sharp sickles*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TAQANIS",
+        "normalized": "taqanis",
+        "definition": "as olives",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.6",
+                "context": "...*as olives* in the olive mount..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TASTAX",
+        "normalized": "tastax",
+        "definition": "going before, to precede",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "17.12",
+                "context": "...lamps living *going before* thee."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TATAN",
+        "normalized": "tatan",
+        "definition": "wormwood",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.16",
+                "context": "...whose wings are of *wormwood*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TAVIV",
+        "normalized": "taviv",
+        "definition": "as the second",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.28",
+                "context": "...and continuance *as the second* and third..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TAXS",
+        "normalized": "taxs",
+        "definition": "(the Enochian word for the digits 7336)",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "17.10",
+                "context": "...and hast *7336* lamps living going before thee."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TELOAH",
+        "normalized": "teloah",
+        "definition": "death",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.27",
+                "context": "...shall not see *death* until this house fall..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TELOCH",
+        "normalized": "teloch",
+        "definition": "death, of death",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.17",
+                "context": "....the horns of *death*..."
+            },
+            {
+                "location": "11.21",
+                "context": "...gathered them together in the house of *death*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TELOCVOVIM",
+        "normalized": "telochvovim",
+        "definition": "death dragon, Him that has Fallen",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.115",
+                "context": "...the dwelling place of *him that is fallen*..."
+            }
+        ],
+        "commentary": "alternate names for Lucifer/Satan/Devil (which are and are not the same)—CHORONZOM, GITHGULCAG; \"death dragon\" is a more literal translation (allowing that VONIN can become VOVIM)"
+    },
+    {
+        "word": "TEMPA",
+        "normalized": "tempa",
+        "definition": "the exception of death is life",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "TEX",
+        "normalized": "tex",
+        "definition": "the thirtieth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "THIL",
+        "normalized": "thil",
+        "definition": "seats",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.30",
+                "context": "...whose *seats* I garnished..."
+            },
+            {
+                "location": "14.9",
+                "context": "...upon 24 *seats* vexing all creatures..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "THILD",
+        "normalized": "thild",
+        "definition": "seats",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.31",
+                "context": "...*their own seats* which are garnished..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "THILN",
+        "normalized": "thiln",
+        "definition": "seats",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "TI",
+        "normalized": "ti",
+        "definition": "it is",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.25",
+                "context": "...*it is* as they are whose..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TIA",
+        "normalized": "tia",
+        "definition": "unto, unto us",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.149",
+                "context": "...he hath sworn *unto us* in his justice."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TIANTA",
+        "normalized": "tianta",
+        "definition": "bed",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.112",
+                "context": "...she is *the bed of* an harlot..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TIBIBP",
+        "normalized": "tibibp",
+        "definition": "sorrow",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "12.8",
+                "context": "...the lanterns of *sorrow*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TILB",
+        "normalized": "tilb",
+        "definition": "her",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.28",
+                "context": "...*her* unspeakable variety..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TIOBL",
+        "normalized": "tiobl",
+        "definition": "(within) her",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.49",
+                "context": "...let there be division *in her*..."
+            },
+            {
+                "location": "30.72",
+                "context": "...no creature upon or *within her*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TLIOB",
+        "normalized": "tliob",
+        "definition": "to classify creatures, to separate creatures, to distinguish creatures",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "16.17",
+                "context": "...that understand and *separate* creatures..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOATAR",
+        "normalized": "toatar",
+        "definition": "harken, to listen",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "17.19",
+                "context": "Gid up thy loins and *harken*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOFGLO",
+        "normalized": "tofglo",
+        "definition": "all, all things",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.35",
+                "context": "...to dispose *all things* according to..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOH",
+        "normalized": "toh",
+        "definition": "to triumph",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.55",
+                "context": "...him that liveth *and triumpheth*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOHCOTH",
+        "normalized": "tohcoth",
+        "definition": "nature spirits, fairies",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "mentioned in Loagaeth and the Five BOoks. It likely indicates earth-bound nature spirits, which are not at all the same as GAH, which are pure spirits and angels"
+    },
+    {
+        "word": "TOL",
+        "normalized": "tol",
+        "definition": "all",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease; all this one is a hard maybe because there is a possibility that TOL is part of \"creature\" sense in some ways, but thus far that remains unclear"
+    },
+    {
+        "word": "TOLHAM",
+        "normalized": "tolham",
+        "definition": "all creatures, all life",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "14.11",
+                "context": "...vexing *all creatures* of the earth with age..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOLHAMI",
+        "normalized": "tolhami",
+        "definition": "upon all creatures, upon all life",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.22",
+                "context": "...such as work wonders *on all creatures*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOLTORG",
+        "normalized": "toltorg",
+        "definition": "all earthly creatures",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.19",
+                "context": "...wherein *the creatures of the earth* are..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOLTORGI",
+        "normalized": "toltorgi",
+        "definition": "with creatures",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.23",
+                "context": "...to water the earth *with her creatures*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOLTORN",
+        "normalized": "toltorn",
+        "definition": "creature",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "TON",
+        "normalized": "ton",
+        "definition": "all",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.74",
+                "context": "*All* her members, let them differ..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TONUG",
+        "normalized": "tonug",
+        "definition": "to deface",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.95",
+                "context": "...the work of man and his pomp, *let them be defaced*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOOAT",
+        "normalized": "tooat",
+        "definition": "to furnish",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.31",
+                "context": "...her unspeakable variety, *furnishing* you with..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOR",
+        "normalized": "tor",
+        "definition": "the twenty-third aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "TORB",
+        "normalized": "torb",
+        "definition": "one hundred",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.41",
+                "context": "...roar *with a hundred* mighty earthquakes..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TORGU",
+        "normalized": "torgu",
+        "definition": "arise",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.32",
+                "context": "*Arise*, you sons of pleasure..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TORZU",
+        "normalized": "torzu",
+        "definition": "arise",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.40",
+                "context": "*Arise*, sayeth the First."
+            },
+            {
+                "location": "30.117",
+                "context": "O you heavens, *arise*..."
+            },
+            {
+                "location": "30.141",
+                "context": "*Arise*, move, and appear..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TORZUL",
+        "normalized": "torzul",
+        "definition": "(shall) arise",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.27",
+                "context": "...which sleep and *shall rise*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TORZULP",
+        "normalized": "torzulp",
+        "definition": "to rise",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.40",
+                "context": "...and *rose up* in the beginning..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TOX",
+        "normalized": "tox",
+        "definition": "his, him",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "14.21",
+                "context": "...the promise of *him* which is called..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TPRDEMAH",
+        "normalized": "tprdemah",
+        "definition": "of darkness",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "TRANAN",
+        "normalized": "tranan",
+        "definition": "marrow",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.18",
+                "context": "...and of *the marrow of* salt..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TRIAN",
+        "normalized": "trian",
+        "definition": "shall be",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.39",
+                "context": "...whose works *shall be* a song of honor..."
+            },
+            {
+                "location": "8.15",
+                "context": "...whose long continuance *shall be* as bucklers..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TRINT",
+        "normalized": "trint",
+        "definition": "to sit",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "14.6",
+                "context": "...which *sit* upon 24 seats..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TROF",
+        "normalized": "trof",
+        "definition": "a building",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.34",
+                "context": "...you are become *a building* such as..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TULE",
+        "normalized": "tule",
+        "definition": "it ends with (the goddess) El, completed by the goddess, ending with the goddess",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "TURBS",
+        "normalized": "turbs",
+        "definition": "beauty, in beauty",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.20",
+                "context": "...as the flowers *in their beauty*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "TUSTAX",
+        "normalized": "tustax",
+        "definition": "to go",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not entirely sure where this word is from, but I'm marking it as canon anyhow"
+    },
+    {
+        "word": "TZESTS",
+        "normalized": "tzests",
+        "definition": "being of the four",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "V",
+        "normalized": "v",
+        "definition": "star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VA",
+        "normalized": "va",
+        "definition": "(alternate name of the spelling of 'VAA')",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VAA",
+        "normalized": "vaa",
+        "definition": "(name of the Angel 'VAA')",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "mentioned in True and Faithful Relations; apparently angel of the four moons according to the archidox dictionary"
+    },
+    {
+        "word": "VABZIR",
+        "normalized": "vabzir",
+        "definition": "the Eagle",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.11",
+                "context": "...and *the Eagle* spake and cried..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VADGS",
+        "normalized": "vadgs",
+        "definition": "time",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VAMI",
+        "normalized": "vami",
+        "definition": "the way of the Lord",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VAN",
+        "normalized": "van",
+        "definition": "(the Enochian word for the letters 'U' and 'V')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "VAN",
+        "normalized": "van",
+        "definition": "star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANA",
+        "normalized": "vana",
+        "definition": "starry, stars",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANDEMINAXAT",
+        "normalized": "vandeminaxat",
+        "definition": "constellations",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANDRES",
+        "normalized": "vandres",
+        "definition": "the Scepter of the Daughter of Daughter of Light",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANGEM",
+        "normalized": "vangem",
+        "definition": "the will of heaven",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANGET",
+        "normalized": "vanget",
+        "definition": "not the fourth star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANGLOR",
+        "normalized": "vanglor",
+        "definition": "fruit of heaven",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANS",
+        "normalized": "vans",
+        "definition": "fourth star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANSAMPLE",
+        "normalized": "vansample",
+        "definition": "the fabric of stars",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VANSAX",
+        "normalized": "vansax",
+        "definition": "the circle of stars",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VAOAN",
+        "normalized": "vaoan",
+        "definition": "truth",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.72",
+                "context": "...the balance of righteousness and *truth*."
+            }
+        ],
+        "commentary": "earthly spirits have \"truth\" in the VOOAN spelling, but angelic and divine things have truth in the VAOAN spelling"
+    },
+    {
+        "word": "VAR",
+        "normalized": "var",
+        "definition": "that star, the star in 9",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VARCA",
+        "normalized": "varca",
+        "definition": "spiritual sun",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VAU",
+        "normalized": "vau",
+        "definition": "to work",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "VAULZIRN",
+        "normalized": "vaulzirn",
+        "definition": "work wonders",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.21",
+                "context": "...such as *work wonders* on all creatures."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VAUN",
+        "normalized": "vaun",
+        "definition": "to work",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.49",
+                "context": "...*you might work* my power..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VAX",
+        "normalized": "vax",
+        "definition": "orbit",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VBRAH",
+        "normalized": "vbrah",
+        "definition": "guardian star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UCIM",
+        "normalized": "ucim",
+        "definition": "frown not, to smile",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.61",
+                "context": "Happy is he upon whom they *frown not*."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VD",
+        "normalized": "vd",
+        "definition": "third star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VDRIOS",
+        "normalized": "vdrios",
+        "definition": "the Zodiac",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VE",
+        "normalized": "ve",
+        "definition": "the spark of life",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VEH",
+        "normalized": "veh",
+        "definition": "(the Enochian word for the letters 'C' and 'K' and pseudo-letter 'Ch')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "VELUCORSAPA",
+        "normalized": "velucorsapa",
+        "definition": "enthroned",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "not entirely sure where this word is from, but I'm including it all the same"
+    },
+    {
+        "word": "VEP",
+        "normalized": "vep",
+        "definition": "flame",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.62",
+                "context": "...which shineth as *a flame*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VEROX",
+        "normalized": "verox",
+        "definition": "the Holy Spirit",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UGEAR",
+        "normalized": "ugear",
+        "definition": "strength of men",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.15",
+                "context": "...in whom *the strength of men* rejoiceth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UGEG",
+        "normalized": "ugeg",
+        "definition": "become strong",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.10",
+                "context": "...the Elders are *become strong*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UGEGI",
+        "normalized": "ugegi",
+        "definition": "to wax strong, to become strong",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.48",
+                "context": "...our strength *waxeth strong* in our comforter."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VIIV",
+        "normalized": "viiv",
+        "definition": "second",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.7",
+                "context": "...O you *the second* of the first..."
+            }
+        ],
+        "commentary": "this is the word for \"the second\", not for the numeral 2"
+    },
+    {
+        "word": "VIRQ",
+        "normalized": "virq",
+        "definition": "nests",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.13",
+                "context": "...are 22 *nests of* lamentation..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VIV",
+        "normalized": "viv",
+        "definition": "second",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this is the word for \"the second\", not for the numeral 2; alternate spelling to VIIV, and is found as part of other compound words"
+    },
+    {
+        "word": "VIVDIV",
+        "normalized": "vivdiv",
+        "definition": "second angle",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.12",
+                "context": "...which reign in *the second angle*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VIVIALPRT",
+        "normalized": "vivialprt",
+        "definition": "second flame",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "16.2",
+                "context": "O thou *Second Flame*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UL",
+        "normalized": "ul",
+        "definition": "end",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.58",
+                "context": "...nor *end* cannot be..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ULCININ",
+        "normalized": "ulcinin",
+        "definition": "happy",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.59",
+                "context": "*Happy is he* upon whom they frown not."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ULS",
+        "normalized": "uls",
+        "definition": "ends",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.39",
+                "context": "...first, *ends*, and contents of time..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VLLA",
+        "normalized": "vlla",
+        "definition": "the end of the beginning",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VLOH",
+        "normalized": "vloh",
+        "definition": "the end of sorrow",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UMADEA",
+        "normalized": "umadea",
+        "definition": "strong towers",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.28",
+                "context": "...*strong towers* and places of comfort..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UMBLOSDA",
+        "normalized": "umblosda",
+        "definition": "one who resides in the skies",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UML",
+        "normalized": "uml",
+        "definition": "to add",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.135",
+                "context": "*Add* and diminish until the stars..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UMPLIF",
+        "normalized": "umplif",
+        "definition": "strength",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.47",
+                "context": "...and our strength *waxeth strong*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UN",
+        "normalized": "un",
+        "definition": "(the Enochian word for the letter 'A')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "UNAL",
+        "normalized": "unal",
+        "definition": "these",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.27",
+                "context": "*These* gather up the moss of the earth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UNAEM",
+        "normalized": "unaem",
+        "definition": "nine skirts",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UNALAH",
+        "normalized": "unalah",
+        "definition": "skirts",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.56",
+                "context": "...you are become *the skirts of* justice and truth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UNALCHIS",
+        "normalized": "unalchis",
+        "definition": "these are",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.33",
+                "context": "...*these be* the Thunders..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UNBA",
+        "normalized": "unba",
+        "definition": "is powerful",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UNCHI",
+        "normalized": "unchi",
+        "definition": "to confound",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.100",
+                "context": "*Confound* her understanding..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VNDAT",
+        "normalized": "vndat",
+        "definition": "master magician",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website; originally appears in the entry as \"magickian\", so I'm inclined to take this as an inspired-by-Thelema translation attempt"
+    },
+    {
+        "word": "UNDES",
+        "normalized": "undes",
+        "definition": "leaves the 4th",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VNDANPEL",
+        "normalized": "vndanpel",
+        "definition": "master magician",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website; originally appears in the entry as \"magickian\", so I'm inclined to take this as an inspired-by-Thelema translation attempt"
+    },
+    {
+        "word": "UNDL",
+        "normalized": "undl",
+        "definition": "remainder, the rest",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.13",
+                "context": "...*the rest* are as sharp sickles..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UNIG",
+        "normalized": "unig",
+        "definition": "to require",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.73",
+                "context": "...the time is such as *requireth* comfort."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UNIGLAG",
+        "normalized": "uniglag",
+        "definition": "to descend",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.75",
+                "context": "...move, *descend*, and apply yourselves..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VNPH",
+        "normalized": "vnph",
+        "definition": "anger",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "VNRA",
+        "normalized": "vnra",
+        "definition": "the wrathful sun",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VOHIM",
+        "normalized": "vohim",
+        "definition": "mighty",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.42",
+                "context": "...with a hundred *mighty* earthquakes..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VOM",
+        "normalized": "vom",
+        "definition": "of everyone",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VOMSARG",
+        "normalized": "vomsarg",
+        "definition": "everyone, all",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.36",
+                "context": "...giving unto *every one of you* power..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VON",
+        "normalized": "von",
+        "definition": "image of God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VONIN",
+        "normalized": "vonin",
+        "definition": "dragons",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "VONPH",
+        "normalized": "vonph",
+        "definition": "wrath",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "13.7",
+                "context": "...to stir up *wrath* of sin..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VONPHO",
+        "normalized": "vonpho",
+        "definition": "of wrath",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.9",
+                "context": "...the firmaments *of wrath*..."
+            },
+            {
+                "location": "9.9",
+                "context": "...vials eight *of wrath*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VONPO",
+        "normalized": "vonpo",
+        "definition": "wrath",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "VONPOVNPH",
+        "normalized": "vonpovnph",
+        "definition": "wrath in anger",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "VOOAN",
+        "normalized": "vooan",
+        "definition": "truth, truth pertaining to earthbound or infernal spirits",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.72",
+                "context": "...the balance of righteousness and *truth*."
+            }
+        ],
+        "commentary": "earthly spirits have \"truth\" in the VOOAN spelling, but angelic and divine things have truth in the VAOAN spelling"
+    },
+    {
+        "word": "VOR",
+        "normalized": "vor",
+        "definition": "appearance",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VORS",
+        "normalized": "vors",
+        "definition": "over",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "3.39",
+                "context": "...power successively *over* 456..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VORSG",
+        "normalized": "vorsg",
+        "definition": "over, over you",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.3",
+                "context": "...I reign *over you*, sayeth the God of Justice..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VORX",
+        "normalized": "vorx",
+        "definition": "visits",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VOTOL",
+        "normalized": "votol",
+        "definition": "wherein all",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VOVIM",
+        "normalized": "vovim",
+        "definition": "dragon",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease; TELOCHVOVIM is \"death dragon\", and TELOCH is very obviously \"death\", appearing as such on its own"
+    },
+    {
+        "word": "VOVINA",
+        "normalized": "vovina",
+        "definition": "dragon",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.32",
+                "context": "...until this house fall and *the dragon* sink..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VOX",
+        "normalized": "vox",
+        "definition": "wherein they are (separated)",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "VOXAD",
+        "normalized": "voxad",
+        "definition": "wherein they are in the third",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UPAAH",
+        "normalized": "upaah",
+        "definition": "wings",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.2",
+                "context": "Can *the wings* of the winds understand..."
+            },
+            {
+                "location": "9.14",
+                "context": "...whose *wings* are of wormwood..."
+            },
+            {
+                "location": "17.4",
+                "context": "...whose *wings* are thorns to stir up vexation..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UPAAHI",
+        "normalized": "upaahi",
+        "definition": "wings",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "15.5",
+                "context": "...under whose *wings* are 6739..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "UR",
+        "normalized": "ur",
+        "definition": "(the Enochian word for the letter 'L')",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "URAN",
+        "normalized": "uran",
+        "definition": "elders",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "8.8",
+                "context": "...in whom *the Elders* are become strong..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VRANKRAN",
+        "normalized": "vrankran",
+        "definition": "the Son of Son of Light, unto the elders",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "URBS",
+        "normalized": "urbs",
+        "definition": "to beautify",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.35",
+                "context": "...which *beautified* your garments..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "URCH",
+        "normalized": "urch",
+        "definition": "the confuers",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Corpus Omnium, given the Latin name Confudantes (literally, confusers), which centers around this idea of dissolving back into chaos"
+    },
+    {
+        "word": "VRDRAH",
+        "normalized": "vrdrah",
+        "definition": "dark star",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "URELP",
+        "normalized": "urelp",
+        "definition": "seething, a strong seething",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.49",
+                "context": "...and make me *a strong seething*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "VREPREZ",
+        "normalized": "vreprez",
+        "definition": "with beautiful praises",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UTA",
+        "normalized": "uta",
+        "definition": "the fourteenth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "UTI",
+        "normalized": "uti",
+        "definition": "the twenty-fifth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "VRO",
+        "normalized": "vro",
+        "definition": "this one",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "UX",
+        "normalized": "ux",
+        "definition": "(the Enochian word for the digits '42')",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "13.4",
+                "context": "...which have *42* eyes to stir up..."
+            }
+        ],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits"
+    },
+    {
+        "word": "XA",
+        "normalized": "xa",
+        "definition": "in dissolution",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "Z",
+        "normalized": "z",
+        "definition": "they",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits"
+    },
+    {
+        "word": "ZAA",
+        "normalized": "zaa",
+        "definition": "the twenty-seventh aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "ZACAM",
+        "normalized": "zacam",
+        "definition": "to move",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "6.36",
+                "context": "...I have talked of you and *I move you*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZACAR",
+        "normalized": "zacar",
+        "definition": "move",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.73",
+                "context": "...*move*, 2.42:"
+            },
+            {
+                "location": "...*move*, therefore...\",therefore...\",3.74",
+                "context": "...*move*, descend..."
+            },
+            {
+                "location": "4.42",
+                "context": "...*move*, and show yourselves..."
+            },
+            {
+                "location": "7.35",
+                "context": "...*move*, appear..."
+            },
+            {
+                "location": "12.23",
+                "context": "...*move*, I say..."
+            },
+            {
+                "location": "30.142",
+                "context": "...*move* and appear..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZADZACZADLI",
+        "normalized": "zadzaczadli",
+        "definition": "(the name of Adam in the Book of Soyga)",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": ""
+    },
+    {
+        "word": "ZAMRAN",
+        "normalized": "zamran",
+        "definition": "to appear",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.76",
+                "context": "...move, therefore, and *show yourselves*..."
+            },
+            {
+                "location": "2.45",
+                "context": "...move, therefore, and *show yourselves*..."
+            },
+            {
+                "location": "7.36",
+                "context": "...move, *appear*, sing praises..."
+            },
+            {
+                "location": "8.47",
+                "context": ":"
+            },
+            {
+                "location": "...*appear* to the terror of the earth...\",11.35",
+                "context": "...move, therefore, and *show yourselves*..."
+            },
+            {
+                "location": "12.26",
+                "context": "...move, I say, and *show yourselves*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZAR",
+        "normalized": "zar",
+        "definition": "course",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "not sure the source of this word, included in the archidox dictionary, but cannot find anything else"
+    },
+    {
+        "word": "ZAX",
+        "normalized": "zax",
+        "definition": "the tenth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "ZCHIS",
+        "normalized": "zchis",
+        "definition": "they are",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.25",
+                "context": "...*they are* the brothers..."
+            },
+            {
+                "location": "9.39",
+                "context": "...whose iniquities *they are*..."
+            },
+            {
+                "location": "11.27",
+                "context": "...as *they are* whose number is 31..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZEBOG",
+        "normalized": "zebog",
+        "definition": "the Daughter of Light reigns over",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ZEMBVGES",
+        "normalized": "zembvges",
+        "definition": "the Daughter of Light's nine glories from the fourth",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ZEN",
+        "normalized": "zen",
+        "definition": "the eighteenth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "ZEZ",
+        "normalized": "zez",
+        "definition": "fiery angels",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ZID",
+        "normalized": "zid",
+        "definition": "the eighth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "ZIEN",
+        "normalized": "zien",
+        "definition": "hands",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.28",
+                "context": "...the palms of *my hands*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZILDAR",
+        "normalized": "zildar",
+        "definition": "fly into",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.8",
+                "context": "...Thunders which *flew into* the east..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZILODARP",
+        "normalized": "zilodarp",
+        "definition": "stretch forth, conquest",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "ZIM",
+        "normalized": "zim",
+        "definition": "the thirteenth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "ZIMAH",
+        "normalized": "zimah",
+        "definition": "clothed with God",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ZIMII",
+        "normalized": "zimii",
+        "definition": "to enter",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.2",
+                "context": "The Mighty Sounds *have entered into* the third angle..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZIMZ",
+        "normalized": "zimz",
+        "definition": "vestures, territories",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.23",
+                "context": "...in the midst of *my vestures*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZIP",
+        "normalized": "zip",
+        "definition": "the ninth aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "ZIR",
+        "normalized": "zir",
+        "definition": "I am",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.51",
+                "context": "...*I am* of him..."
+            },
+            {
+                "location": "3.4",
+                "context": "...*I am* a circle"
+            }
+        ],
+        "commentary": "connotations of \"presence\" are implicit in this"
+    },
+    {
+        "word": "ZIRDO",
+        "normalized": "zirdo",
+        "definition": "I am",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "occurs over and over in the refrain of Keys 11 – 18"
+    },
+    {
+        "word": "ZIRENAIAD",
+        "normalized": "zirenaiad",
+        "definition": "I am the Lord (Your) God",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "4.37",
+                "context": "...For, *I am the Lord your God*..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZIRN",
+        "normalized": "zirn",
+        "definition": "wonder, wonders",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "does not occur on its own in the Keys, but can be extracted from a compound word of which it is a part with relative ease"
+    },
+    {
+        "word": "ZIROM",
+        "normalized": "zirom",
+        "definition": "were",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "11.4",
+                "context": "...*they were* five thunders..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZIROP",
+        "normalized": "zirop",
+        "definition": "was",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "10.77",
+                "context": "...is, *was*, and shall be great..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZIXLAY",
+        "normalized": "zixlay",
+        "definition": "to stir up",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "17.7",
+                "context": "...thorns *to stir up* vexation..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZIZOP",
+        "normalized": "zizop",
+        "definition": "vessels",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.20",
+                "context": "...gave them *vessels* to water the earth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZLIDA",
+        "normalized": "zlida",
+        "definition": "to water",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "5.21",
+                "context": "...vessels *to water* the earth..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZNA",
+        "normalized": "zna",
+        "definition": "motion, action",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from the Corpus Omnium in the phase ZNA BAB IAD, \"moving dominion of God\""
+    },
+    {
+        "word": "ZNRZA",
+        "normalized": "znrza",
+        "definition": "to swear",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.49",
+                "context": "...you lifted up your voices *and swore* obedience."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZOL",
+        "normalized": "zol",
+        "definition": "hands",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.11",
+                "context": "...in whose *hands* the sun is as a sword..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZOM",
+        "normalized": "zom",
+        "definition": "the third aethyr",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key"
+    },
+    {
+        "word": "ZOMD",
+        "normalized": "zomd",
+        "definition": "in the midst",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "not entirely sure where this is from; listed in the archidox dictionary and other sources, but not in Leitch's text; it is included and considered canon in spite of not being in Angelical Language Vol. II"
+    },
+    {
+        "word": "ZOMDUX",
+        "normalized": "zomdux",
+        "definition": "admist, encompassed by",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.63",
+                "context": "...shineth as a flame *in the midst of* your palace."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZONAC",
+        "normalized": "zonac",
+        "definition": "appareled, appareled with",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "7.18",
+                "context": "...and *they are appareled with* ornaments..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZONG",
+        "normalized": "zong",
+        "definition": "winds",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "2.3",
+                "context": "Can the wings of *the winds* understand..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZONRENSG",
+        "normalized": "zonrensg",
+        "definition": "to deliver",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "1.43",
+                "context": "...*delivered you* a rod..."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZORGE",
+        "normalized": "zorge",
+        "definition": "be friendly unto me",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "occurs in the refrain of keys 11 – 18"
+    },
+    {
+        "word": "ZUMVI",
+        "normalized": "zumvi",
+        "definition": "seas",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "9.48",
+                "context": "...from their mouths run *seas of* blood."
+            }
+        ],
+        "commentary": ""
+    },
+    {
+        "word": "ZURAAH",
+        "normalized": "zuraah",
+        "definition": "prayer",
+        "canon_word": true,
+        "key_citations": [],
+        "commentary": "from Five Books of Mystery, from the phrase LAUA ZURAAH, which signifies \"Pray Unto God\". Given the L, that probably does with the First in some capacity, which means that ZURAAH could simply be \"pray unto\" or similar"
+    },
+    {
+        "word": "ZURESK",
+        "normalized": "zuresk",
+        "definition": "fervently unto the 4th heaven, rushing",
+        "canon_word": false,
+        "key_citations": [],
+        "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
+    },
+    {
+        "word": "ZYLNA",
+        "normalized": "zylna",
+        "definition": "within itself",
+        "canon_word": true,
+        "key_citations": [
+            {
+                "location": "30.56",
+                "context": "...may be always drunken and vexed *in itself*."
             }
         ],
         "commentary": ""
