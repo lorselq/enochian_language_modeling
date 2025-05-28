@@ -116,19 +116,19 @@ class RootExtractionCrew:
         for row in cursor.execute(query, (min_freq,)):
             yield row[0], row[1]
 
-    def is_ngram_in_variants(self, ngram, normalized):
+    def is_ngram_in_variants(self, ngram, canonical):
         cursor = self.ngram_db.cursor()
         cursor.execute(
-            "SELECT 1 FROM ngrams WHERE ngram = ? AND normalized = ? LIMIT 1",
-            (ngram, normalized),
+            "SELECT 1 FROM ngrams WHERE ngram = ? AND canonical = ? LIMIT 1",
+            (ngram, canonical),
         )
         return cursor.fetchone() is not None
 
-    def get_matching_variant(self, ngram, normalized):
+    def get_matching_variant(self, ngram, canonical):
         cursor = self.ngram_db.cursor()
         cursor.execute(
-            "SELECT variant FROM ngrams WHERE ngram = ? AND normalized = ? LIMIT 1",
-            (ngram, normalized),
+            "SELECT variant FROM ngrams WHERE ngram = ? AND canonical = ? LIMIT 1",
+            (ngram, canonical),
         )
         row = cursor.fetchone()
         return row[0] if row else None

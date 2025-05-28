@@ -55,7 +55,7 @@ def cluster_definitions(entries, sentence_model, min_cluster_size=2, distance_th
     clustering = AgglomerativeClustering(
         n_clusters=None,
         distance_threshold=1 - distance_threshold,  # Cosine similarity to distance
-        affinity='cosine',
+        metric='cosine',
         linkage='average'
     )
     labels = clustering.fit_predict(embeddings)
