@@ -7,7 +7,7 @@ def get_config_paths():
         "substitution_map": root / "src" / "enochian_translation_team" / "data" / "substitution_map.json",
         "sequence_compressions": root / "src" / "enochian_translation_team" / "data" / "sequence_compressions.json",
         "model_output": root / "src" / "enochian_translation_team" / "tools" / "models" / "enochian_fasttext.model",
-        "ngram_index": root / "src" / "enochian_translation_team" / "data" / "ngram_index.json",
+        "ngram_index": root / "src" / "enochian_translation_team" / "data" / "ngram_index.sqlite3",
         "root_word_insights": root / "src" / "enochian_translation_team" / "data" / "root_word_insights.json",
         "processed_ngrams": root / "src" / "enochian_translation_team" / "data" / "processed_ngrams.json",
         "new_definitions": root / "src" / "enochian_translation_team" / "data" / "new_root_definitions.txt"

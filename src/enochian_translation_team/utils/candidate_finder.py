@@ -1,19 +1,28 @@
-import json
+import sqlite3
 from gensim.models import FastText
 
 class MorphemeCandidateFinder:
-    def __init__(self, ngram_path, fasttext_model_path, dictionary_entries):
-        self.ngram_index = self._load_ngram_index(ngram_path)
+    def __init__(self, ngram_db_path, fasttext_model_path, dictionary_entries):
+        self.conn = sqlite3.connect(ngram_db_path)
+        self.cursor = self.conn.cursor()
         self.fasttext_model = FastText.load(str(fasttext_model_path))
-        self.dictionary = {entry["normalized"].lower(): entry for entry in dictionary_entries}
+
+        self.dictionary = {
+            entry["normalized"].lower(): entry
+            for entry in dictionary_entries
+            if entry.get("normalized")
+        }
         self.known_words = set(self.dictionary.keys())
 
-    def _load_ngram_index(self, path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
     def get_exact_matches(self, ngram):
-        return self.ngram_index.get(ngram.lower(), [])
+        """Query SQLite for variant/canonical pairs containing this n-gram."""
+        query = """
+            SELECT DISTINCT canonical
+            FROM ngrams
+            WHERE ngram = ?
+        """
+        self.cursor.execute(query, (ngram.lower(),))
+        return [row[0].lower() for row in self.cursor.fetchall()]
 
     def get_fuzzy_matches(self, ngram, top_n=10, similarity_threshold=0.4):
         results = []
@@ -34,12 +43,16 @@ class MorphemeCandidateFinder:
         if not include_context:
             return all_matches
 
+        # Build enriched candidate objects
         return [
             {
                 "word": self.dictionary[word]["word"],
                 "normalized": word,
                 "definition": self.dictionary[word].get("definition", ""),
-                "citations": self.dictionary[word].get("key_citations", [])
+                "citations": self.dictionary[word].get("key_citations", []),
             }
-            for word in all_matches
+            for word in all_matches if word in self.dictionary
         ]
+
+    def close(self):
+        self.conn.close()

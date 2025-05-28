@@ -1,7 +1,9 @@
+import numpy as np
 from tqdm import tqdm
 from itertools import product, combinations
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
+from sklearn.cluster import AgglomerativeClustering
 
 
 def normalize_form(word):
@@ -39,6 +41,31 @@ def compute_cluster_cohesion(definitions, sentence_model):
     upper_triangle_scores = cosine_scores.triu(diagonal=1).flatten()
     relevant_scores = upper_triangle_scores[upper_triangle_scores != 0]
     return round(float(relevant_scores.mean()), 3) if len(relevant_scores) else 0.0
+
+
+def cluster_definitions(entries, sentence_model, min_cluster_size=2, distance_threshold=0.35):
+    definitions = [e["definition"] for e in entries if e.get("definition")]
+    if len(definitions) < min_cluster_size:
+        return [entries]  # One cluster only
+
+    # Step 1: Get embeddings
+    embeddings = sentence_model.encode(definitions)
+
+    # Step 2: Cluster
+    clustering = AgglomerativeClustering(
+        n_clusters=None,
+        distance_threshold=1 - distance_threshold,  # Cosine similarity to distance
+        affinity='cosine',
+        linkage='average'
+    )
+    labels = clustering.fit_predict(embeddings)
+
+    # Step 3: Group entries by label
+    clustered = {}
+    for idx, label in enumerate(labels):
+        clustered.setdefault(label, []).append(entries[idx])
+
+    return list(clustered.values())
 
 
 def find_semantically_similar_words(

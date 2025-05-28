@@ -1,5 +1,6 @@
 import json
 import os
+from tqdm import trange
 from gensim.models import FastText
 from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.variant_utils import (
@@ -36,10 +37,18 @@ def prepare_training_data(entries, subst_map, compression_rules):
     return all_variants
 
 
-def train_fasttext_model(sentences):
-    model = FastText(vector_size=50, window=3, min_count=1, workers=2, sg=1)
+def train_fasttext_model(sentences, total_epochs=100):
+    model = FastText(vector_size=75, window=3, min_count=1, workers=8, sg=1) # my laptop is running from a AMD Ryzen 7 8845HS w/ Radeon 780M Graphics, 3801 Mhz, 8 Core(s), 16 Logical Processor(s); adjust accordingly per your machine
+
     model.build_vocab(sentences)
-    model.train(sentences, total_examples=len(sentences), epochs=100)
+
+    for epoch in trange(total_epochs, desc="Training FastText"):
+        model.train(
+            sentences,
+            total_examples=len(sentences),
+            epochs=1
+        )
+
     return model
 
 
@@ -74,7 +83,7 @@ def main():
     save_model(model, paths["model_output"])
 
     print(
-        "[✓] Done. Use inspect_model.py to examine your weird beautiful word-children."
+        "[✓] FastText model created!"
     )
 
 

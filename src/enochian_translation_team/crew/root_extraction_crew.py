@@ -1,5 +1,6 @@
 import re
 import json
+import sqlite3
 from itertools import groupby
 from tqdm import tqdm
 from collections import Counter, defaultdict
@@ -11,6 +12,7 @@ from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.semantic_search import (
     find_semantically_similar_words,
     compute_cluster_cohesion,
+    cluster_definitions,
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.build_ngram_index import (
@@ -35,12 +37,12 @@ class RootExtractionCrew:
 
         # Load everything
         self.entries = self.load_entries()
+        self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.subst_map = self.load_subst_map()
-        self.ngrams = load_ngrams(self.ngram_path)
         self.fasttext = FastText.load(str(self.model_path))
         self.sent_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.candidate_finder = MorphemeCandidateFinder(
-            ngram_path=self.ngram_path,
+            ngram_db_path=paths["ngram_index"],
             fasttext_model_path=self.model_path,
             dictionary_entries=self.entries,
         )
@@ -74,7 +76,9 @@ class RootExtractionCrew:
             return [
                 e
                 for e in json.load(f)
-                if e.get("normalized") and e.get("definition") and e.get("canon_word")
+                if e.get("normalized")
+                and e.get("definition")
+                and e.get("canon_word") is True
             ]
 
     def load_subst_map(self):
@@ -100,16 +104,35 @@ class RootExtractionCrew:
                     ngrams.add(ngram)
         return ngrams
 
-    def get_ngram_frequencies(self, min_n=1, max_n=4):
-        counter = Counter()
-        for entry in self.entries:
-            word = entry["normalized"].lower()
-            for n in range(min_n, max_n + 1):
-                for i in range(len(word) - n + 1):
-                    ngram = word[i : i + n]
-                    counter[ngram] += 1
-        return counter
-    
+    def stream_ngrams_from_sqlite(self, min_freq=2):
+        cursor = self.ngram_db.cursor()
+        query = """
+            SELECT ngram, COUNT(*) as frequency
+            FROM ngrams
+            GROUP BY ngram
+            HAVING frequency >= ?
+            ORDER BY frequency DESC
+        """
+        for row in cursor.execute(query, (min_freq,)):
+            yield row[0], row[1]
+
+    def is_ngram_in_variants(self, ngram, normalized):
+        cursor = self.ngram_db.cursor()
+        cursor.execute(
+            "SELECT 1 FROM ngrams WHERE ngram = ? AND normalized = ? LIMIT 1",
+            (ngram, normalized),
+        )
+        return cursor.fetchone() is not None
+
+    def get_matching_variant(self, ngram, normalized):
+        cursor = self.ngram_db.cursor()
+        cursor.execute(
+            "SELECT variant FROM ngrams WHERE ngram = ? AND normalized = ? LIMIT 1",
+            (ngram, normalized),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+
     def dedupe_by_normalized(self, entries):
         seen = set()
         unique = []
@@ -129,10 +152,13 @@ class RootExtractionCrew:
             return "index"
         return "unknown"
 
-    def evaluate_ngram(self, ngram, cluster, stream_callback=None):
+    def evaluate_ngram(self, ngram, cluster, stream_callback=None, cluster_id=None):
+        cluster_note = f"[Cluster {cluster_id}]" if cluster_id is not None else ""
         definitions = [
             c["definition"]
-            for c in tqdm(cluster, desc=f"Evaluating cluster for {ngram.upper()}")
+            for c in tqdm(
+                cluster, desc=f"{cluster_note} Evaluating cluster for {ngram.upper()}"
+            )
             if c["definition"]
         ]
         cohesion_score = compute_cluster_cohesion(definitions, self.sent_model)
@@ -271,173 +297,177 @@ class RootExtractionCrew:
     def run_with_streaming(self, max_words=None, stream_callback=None):
         output = []
         seen_words = 0
-        ngram_counts = self.get_ngram_frequencies()
         print(
             f"[Debug] You've set the maximum words to \033[38;5;178m{max_words}\033[0m."
         )
 
-        for entry in self.entries:
-            word = entry["normalized"]
-            ngrams = self.extract_ngrams(word)
-
-            if all(n in self.processed_ngrams for n in ngrams):
+        for ngram, count in self.stream_ngrams_from_sqlite(min_freq=2):
+            if ngram in self.processed_ngrams:
                 continue
 
-            processed_a_word = False
+            print(
+                f"[✓] Processing root candidate: '{ngram}' (appears in {count} forms)"
+            )
 
-            for ngram in self.ngrams:
-                if ngram in self.processed_ngrams:
-                    continue
-                if ngram_counts[ngram] <= 1:
-                    print(f"[Skipped] '{ngram}' only appears in 1 word. Ignoring it.")
-                    continue
-                self.processed_ngrams.add(ngram)
+            semantic_candidates = find_semantically_similar_words(
+                ft_model=self.fasttext,
+                sent_model=self.sent_model,
+                entries=self.entries,
+                target_word=ngram,
+                subst_map=self.subst_map,
+                topn=20,
+            )
 
-                semantic_candidates = find_semantically_similar_words(
-                    ft_model=self.fasttext,
-                    sent_model=self.sent_model,
-                    entries=self.entries,
-                    target_word=ngram,
-                    subst_map=self.subst_map,
-                    topn=20,
+            index_candidates = self.candidate_finder.get_candidates(
+                ngram=ngram,
+                top_n=20,
+                similarity_threshold=0.35,
+                include_context=True,
+            )
+
+            sem_norms = {c["normalized"] for c in semantic_candidates}
+            index_norms = {c["normalized"] for c in index_candidates}
+            overlap = sem_norms & index_norms
+
+            if len(overlap) < 2:
+                print(f"[Skipped] '{ngram}' did not meet overlap threshold.")
+                continue
+
+            merged_cluster = []
+            merged_words = []
+            seen = set()
+
+            # Start with semantic candidates — already sorted by priority/score
+            for c in semantic_candidates:
+                norm = c["normalized"]
+                if norm not in seen:
+                    merged_words.append(norm)
+                    seen.add(norm)
+
+            # Add index-only extras at the end
+            for c in index_candidates:
+                norm = c["normalized"]
+                if norm not in seen:
+                    merged_words.append(norm)
+                    seen.add(norm)
+
+            for word in merged_words:
+                sem_entry = next(
+                    (c for c in semantic_candidates if c["normalized"] == word),
+                    None,
+                )
+                index_entry = next(
+                    (c for c in index_candidates if c["normalized"] == word), None
                 )
 
-                index_candidates = self.candidate_finder.get_candidates(
-                    ngram=ngram,
-                    top_n=20,
-                    similarity_threshold=0.35,
-                    include_context=True,
-                )
-
-                sem_norms = {c["normalized"] for c in semantic_candidates}
-                index_norms = {c["normalized"] for c in index_candidates}
-                overlap = sem_norms & index_norms
-
-                if len(overlap) < 2:
+                if not sem_entry and index_entry:
+                    continue
+                
+                if not self.is_ngram_in_variants(ngram, word):
                     continue
 
-                merged_cluster = []
-                merged_words = []
-                seen = set()
+                entry_word = sem_entry.get("word") if sem_entry else word
+                variant_used = self.get_matching_variant(ngram, word)
 
-                # Start with semantic candidates — already sorted by priority/score
-                for c in semantic_candidates:
-                    norm = c["normalized"]
-                    if norm not in seen:
-                        merged_words.append(norm)
-                        seen.add(norm)
-
-                # Add index-only extras at the end
-                for c in index_candidates:
-                    norm = c["normalized"]
-                    if norm not in seen:
-                        merged_words.append(norm)
-                        seen.add(norm)
-
-                for word in merged_words:
-                    sem_entry = next(
-                        (c for c in semantic_candidates if c["normalized"] == word),
-                        None,
-                    )
-                    index_entry = next(
-                        (c for c in index_candidates if c["normalized"] == word), None
-                    )
-                    if not sem_entry and index_entry:
-                        continue
-                    
-                    merged_cluster.append(
-                        {
-                            "word": (
-                                sem_entry.get("word").upper()
-                                if sem_entry
-                                else (
-                                    index_entry.get("word", word).upper()
-                                    if index_entry
-                                    else word
+                merged_cluster.append(
+                    {
+                        "word": (
+                            f"{entry_word.upper()} (via: {variant_used})"
+                            if variant_used and variant_used != word
+                            else entry_word.upper()
+                        ),
+                        "normalized": word,
+                        "definition": (
+                            sem_entry.get("definition")
+                            if sem_entry
+                            else (
+                                index_entry.get(
+                                    "definition", "ERROR: no definition provided"
                                 )
-                            ),
-                            "normalized": word,
-                            "definition": (
-                                sem_entry.get("definition")
-                                if sem_entry
-                                else (
-                                    index_entry.get(
-                                        "definition", "ERROR: no definition provided"
-                                    )
-                                    if index_entry
-                                    else "ERROR: no definition provided"
+                                if index_entry
+                                else "ERROR: no definition provided"
+                            )
+                        ),
+                        "fasttext": (
+                            float(sem_entry.get("fasttext", 0.0)) if sem_entry else 0.0
+                        ),
+                        "semantic": (
+                            float(sem_entry.get("semantic", 0.0)) if sem_entry else 0.0
+                        ),
+                        "score": (
+                            float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
+                        ),
+                        # "tier": (
+                        #     sem_entry.get("tier", "Untiered")
+                        #     if sem_entry
+                        #     else "Untiered"
+                        # ),
+                        "priority": (sem_entry.get("priority", 0) if sem_entry else 0),
+                        "levenshtein": (
+                            sem_entry.get("levenshtein", 99) if sem_entry else 99
+                        ),
+                        "source": self._get_source_label(sem_entry, index_entry),
+                        "citations": list(
+                            {
+                                c.get("context", "").strip()
+                                for c in (
+                                    sem_entry.get("citations", []) if sem_entry else []
                                 )
-                            ),
-                            "fasttext": (
-                                float(sem_entry.get("fasttext", 0.0))
-                                if sem_entry
-                                else 0.0
-                            ),
-                            "semantic": (
-                                float(sem_entry.get("semantic", 0.0))
-                                if sem_entry
-                                else 0.0
-                            ),
-                            "score": (
-                                float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
-                            ),
-                            # "tier": (
-                            #     sem_entry.get("tier", "Untiered")
-                            #     if sem_entry
-                            #     else "Untiered"
-                            # ),
-                            "priority": (
-                                sem_entry.get("priority", 0) if sem_entry else 0
-                            ),
-                            "levenshtein": (
-                                sem_entry.get("levenshtein", 99) if sem_entry else 99
-                            ),
-                            "source": self._get_source_label(sem_entry, index_entry),
-                            "citations": list(
-                                {
-                                    c.get("context", "").strip()
-                                    for c in (
-                                        sem_entry.get("citations", [])
-                                        if sem_entry
-                                        else []
-                                    )
-                                    + (
-                                        index_entry.get("citations", [])
-                                        if index_entry
-                                        else []
-                                    )
-                                    if c.get("context")
-                                }
-                            ),
-                        }
-                    )
+                                + (
+                                    index_entry.get("citations", [])
+                                    if index_entry
+                                    else []
+                                )
+                                if c.get("context")
+                            }
+                        ),
+                    }
+                )
 
-                evaluated = self.evaluate_ngram(ngram, merged_cluster)
+            evaluated = self.evaluate_ngram(ngram, merged_cluster)
+            clusters = cluster_definitions(merged_cluster, self.sent_model)
+
+            for i, cluster in enumerate(clusters):
+                if len(cluster) < 2:
+                    continue
+
+                print(
+                    f"[→] Evaluating cluster {i + 1}/{len(clusters)} for '{ngram}'..."
+                )
+
+                evaluated = self.evaluate_ngram(
+                    ngram, cluster, stream_callback=stream_callback
+                )
                 evaluated["overlap_count"] = len(overlap)
+                evaluated["cluster_id"] = i
+                evaluated["cluster_size"] = len(cluster)
 
                 output.append(evaluated)
 
                 self.save_results(output)
+                self.processed_ngrams.add(ngram)
                 self.save_processed_ngrams()
+
                 if "Archivist" in evaluated:
-                    save_log([("Archivist", evaluated["Archivist"])], label=ngram)
+                    save_log(
+                        [("Archivist", evaluated["Archivist"])],
+                        label=f"{ngram}_cluster{i}",
+                    )
                 if "Glossator" in evaluated:
                     with open(self.new_definitions_path, "a", encoding="utf-8") as f:
                         f.write(f"{evaluated['Glossator'].strip()}\n")
 
-
-                processed_a_word = True
-
-                # Stream out each agent’s statement
                 if stream_callback:
                     for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
                         if role in evaluated:
                             stream_callback(role, evaluated[role])
 
-            if processed_a_word:
                 seen_words += 1
                 if max_words and seen_words >= max_words:
                     break
+
+        if self.ngram_db:
+            self.ngram_db.close()
 
     def save_results(self, new_data):
         # Load existing results if they exist
