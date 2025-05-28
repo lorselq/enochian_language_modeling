@@ -1,5 +1,3 @@
-# query_model_tool.py
-
 import os
 from typing import Optional, Callable
 from openai import OpenAI
