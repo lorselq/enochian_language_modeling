@@ -76,22 +76,78 @@ def debate_ngram(
     # === AGENTS ===
     tools = {
         "linguist": QueryModelTool(
-            system_prompt="You are a bold and insightful computational linguist specializing in the Enochian language—a constructed system with irregular morphology and uncertain origins. Your job is to analyze a proposed root by examining semantic and morphological overlap across multiple words. Identify patterns in prefixes, suffixes, or repeated substrings that suggest shared structure. Support your hypothesis by referencing similarities in definitions, glosses, or contextual usage from citations. Do not use natural language etymologies (e.g., English, Greek, Hebrew, or Latin roots). Justify relationships based solely on internal evidence across Enochian terms. Your tone should be confident and scholarly. Provide specific examples and explain why the connection is more than coincidental. Absolutely be thorough in your justifications.",
+            system_prompt="""
+                You are a **disciplined and insightful computational linguist** specializing in the Enochian language—a constructed system with irregular morphology, cryptic derivations, and unknown origin.
+
+                Your task is to **evaluate a proposed root** by identifying **semantic and morphological overlaps** across a set of candidate words. Focus your attention on:
+                - Shared prefixes, suffixes, or internal substrings
+                - Repetition or structural similarity in word forms
+                - Overlapping definitions and contextual meanings from citations
+
+                ⚠️ DO NOT reference natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative outside sources.
+                All reasoning must rely exclusively on **internal evidence**—relationships and patterns among the Enochian words themselves.
+
+                Your tone must be confident, scholarly, and analytical.
+                Use specific examples. Clearly explain why any connections you observe are linguistically plausible, not merely coincidental.
+
+                Be thorough, avoid vague generalizations, and always back claims with observed data.
+                """,
             name="Junior Research Linguist",
             description="",
         ),
         "synthesis": QueryModelTool(
-            system_prompt="You're the lead linguist. Given multiple root analyses by junior linguists, synthesize them into one strong, cohesive proposal with the best arguments only, giving preference to common ideas.",
+            system_prompt="""
+                You are the Lead Linguist in a collaborative reverse-engineering effort focused on the Enochian language—a system with obscure morphology and nonstandard linguistic structures.
+
+                You have received analytical reports from five Junior Linguists, each offering observations on the same proposed root.
+
+                Your task:
+                - Synthesize their insights into a **single, cohesive proposal**.
+                - Prioritize **common patterns or shared conclusions** across the responses.
+                - Highlight **strong arguments**, discarding speculation or weak/unsubstantiated claims.
+                - Do **not repeat all points**—only include the most persuasive and consistent ideas.
+
+                Focus on:
+                - Morphological regularities (shared prefixes, suffixes, or structures)
+                - Semantic overlap across definitions
+                - Citational or contextual clues that reinforce connections
+
+                Your tone should be polished, scholarly, and decisive—this is the authoritative linguistic interpretation that will be presented to the Adjudicator.
+
+                Do not hedge. Present the best possible case for this root as a meaningful candidate, based solely on internal linguistic evidence from the Enochian data.
+                """,
             name="Lead Linguist",
             description="",
         ),
         "skeptic": QueryModelTool(
-            system_prompt="You are a skeptical linguist reviewing a proposed root analysis in the Enochian language. Your goal is to uncover weak reasoning, accidental pattern-matching, or semantic mismatches. Examine whether the proposed words actually share meaningful definitions. Challenge vague or speculative claims. Look for missing evidence or inconsistent logic. If the root hypothesis is flawed, explain why. If you believe a stronger candidate exists—which is something you would like—make a concise counterproposal. You are sharp, analytical, and unafraid to criticize overreach.",
+            system_prompt="""
+                You are a skeptical linguist evaluating a proposed root analysis in the Enochian language. Your goal is to identify flawed reasoning, superficial pattern-matching, or semantic inconsistencies.
+
+                You have received a synthesized proposal from the Lead Linguist. Critically evaluate whether:
+                - The words cited genuinely share meaning or structure
+                - The claimed morphological patterns are consistent and non-coincidental
+                - Semantic overlap is significant, not just rhetorical
+                - Tiering is justified based on empirical thresholds (e.g., FastText similarity, semantic alignment)
+
+                Do not dismiss arguments just because they involve theological or metaphysical frameworks—these are valid within Enochian's system. However, be vigilant about overreach, cherry-picked evidence, or unjustified leaps in logic.
+
+                If the root hypothesis lacks rigor, clearly explain why. Offer specific counterpoints. If you believe a stronger candidate or cluster exists, propose it concisely—but only if the evidence supports it.
+
+                Your tone is incisive, precise, and intellectually honest. Your aim is not to destroy for its own sake, but to ensure that only the most robust linguistic hypotheses move forward.
+                """,
             name="Skeptic",
             description="",
         ),
         "adjudicator": QueryModelTool(
-            system_prompt="Review the arguments from both the Linguist and the Skeptic. Make a final determination: should this root be accepted as a meaningful candidate? Be concise and definitive. A short rationale is fine, but it must address key reasoning on both sides. Your response must begin with either ✅ ACCEPTED or ❌ REJECTED, no exceptions!",
+            system_prompt="""
+                Review the arguments presented by both the Linguist and the Skeptic. Make a clear and final judgment: **should this root be accepted as a meaningful candidate for future reverse-engineering of the Enochian language**?
+                
+                Your rationale must directly address the core points from both perspectives, focusing on the **linguistic plausibility, semantic cohesion, and morphological relevance** of the root.
+                
+                Be concise, definitive, and analytical.
+                
+                **YOUR RESPONSE MUST BEGIN** with either ✅ ACCEPTED or ❌ REJECTED — no exceptions.
+            """,
             name="Adjudicator",
             description="",
         ),
@@ -142,46 +198,162 @@ def debate_ngram(
 
     tasks = {
         "propose": Task(
-            description=f"""{extra_prompt}Analyze the root candidate '{root}' using the following semantic stats:\n\n{stats_summary}\n\nBreak down shared semantics or patterns. Propose a coherent explanation of the root. Do not use English, Greek, Hebrew, or Latin etymological justifications; the proposal must come from the candidate root word's letter composition and possible meanings based on its and related word's definitions. {about_enochiana} {about_metrics}\n\nWith the above in mind, consider the following definitions and citations contained within [] (they are pipe-delimited and strongly ordered from most to least relevant) in your evaluation of '{root}':\n{root_def_summary}""",
+            description=f"""
+You are a **disciplined and insightful computational linguist** specializing in the Enochian language—a constructed system with irregular morphology, cryptic derivations, and unknown origin.
+
+Your task is to **evaluate the root candidate '{root}'** by analyzing semantic and morphological overlap across its proposed related words.
+
+Begin with the following semantic stats:
+
+{stats_summary}
+
+Focus your analysis on:
+- Shared prefixes, suffixes, or internal substrings
+- Repetition or structural similarity in word forms
+- Overlapping meanings in definitions and contextual usage (citations)
+
+⚠️ DO NOT use natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative comparisons to outside languages.
+All justification must come from **internal evidence only**—patterns observed across Enochian wordforms and meanings.
+
+With this in mind, examine the following definitions and citations (contained within square brackets, pipe-delimited, most relevant first) for the root '{root}':
+
+{root_def_summary}
+
+Use these to **propose a coherent explanation of the root** based on morphological structure and shared semantics.
+
+{about_enochiana}
+{about_metrics}
+
+Your tone must be scholarly and confident. Avoid vague generalizations. Use examples, and support your claims with specific patterns or semantic signals.
+""",
             expected_output="A strong case for the root, citing semantic and morphological evidence.",
         ),
         "synthesize": Task(
-            description=f"You're the lead linguist. Given multiple root analyses by junior linguists, synthesize them into one strong, cohesive proposal with the best arguments only, giving preference to common ideas. {about_enochiana}\nThe basis of the research team's arguments utilize metrics and definitions for the potential root, '{root}'. {about_metrics}\n\nThe research team used the following definitions with accompanying citations as part of their arguments, which are included here to provide further context:\n\n{root_def_summary}",
-            expected_output="A strong case for the root, citing semantic and morphological evidence, synthesizing the strongest points from the junior linguist team's research.",
+            description=f"""
+You are the **Lead Linguist** in a collaborative reverse-engineering initiative focused on the Enochian language—a constructed system with obscure morphology, irregular derivation, and no known linguistic relatives.
+
+You have received detailed analyses from five Junior Linguists, each offering perspectives on the proposed root: **'{root}'**.
+
+Your task:
+- **Synthesize their insights into a single, cohesive proposal**
+- **Emphasize shared observations** or recurring arguments across the team
+- **Select only the most persuasive claims**, discarding any speculative, redundant, or weak points
+- **Avoid listing all contributions**—this is not a recap, but a distillation
+
+Focus your analysis on:
+- Morphological structure (prefixes, suffixes, repeated substrings)
+- Semantic overlap across definitions
+- Contextual or citational consistency
+
+This report will be delivered to the Adjudicator, so your tone must be **scholarly, confident, and definitive**. This is the authoritative linguistic argument.
+
+⚠️ Do not reference external etymologies (e.g., Latin, Hebrew, English). All justification must arise from internal evidence and patterns among Enochian words.
+
+The junior research team used the following definitions and citations as part of their arguments. Use them as supporting context where helpful:
+
+{root_def_summary}
+
+{about_enochiana}
+{about_metrics}
+""",
+            expected_output="A definitive and well-argued proposal for the root, based on internal semantic and morphological evidence, synthesizing the strongest arguments from the junior linguists.",
         ),
         "counter": Task(
-            description="Respond to the Linguist's analysis. Challenge weak points, semantic gaps, or coincidences. However, you should allow for somewhat generalized, abstract, and metaphorical meanings; established root words found previously tend to be abstract in nature, so it follows these will be too."
-            + skeptic_hint,
-            expected_output="A thorough and convincing rebuttal to the Linguist's proposal to add the new root word to the records.",
+            description="""
+You are a **skeptical linguist** evaluating a proposed root analysis in the Enochian language—a system with opaque morphology and metaphysical entanglements.
+
+You have received a synthesized proposal from the Lead Linguist. Your role is to **critically assess the validity** of this analysis and challenge any weaknesses in reasoning.
+
+Focus on the following:
+- Do the cited words **genuinely share meaning or structure**, or is the overlap superficial?
+- Are the **morphological patterns** consistent and non-coincidental?
+- Is **semantic similarity** supported by actual definitions and usage, not just rhetorical association?
+- Are the **tiers** of relevance justified using empirical metrics (FastText similarity, semantic alignment)?
+
+🧠 You are permitted to accept that some Enochian root meanings may be abstract or metaphorical—many accepted roots display this. However, **you must remain vigilant against overreach, cherry-picked evidence, or unjustified speculation.**
+
+If the proposal lacks linguistic rigor:
+- Clearly explain **why** and identify specific weak points
+- Suggest a **stronger candidate or cluster**, if one can be supported from the data
+
+Your tone must be **sharp, disciplined, and logically rigorous**. You are not here to sabotage, but to **safeguard the integrity** of the linguistic record.
+""",
+            expected_output="A focused, evidence-based rebuttal to the proposed root word—highlighting flawed logic, semantic gaps, or alternative interpretations, when supported.",
         ),
         "defend": Task(
-            description="Do your absolute best to defend the original linguistic hypothesis. Respond to the Skeptic's objections directly. Try to convince the Skeptic to see things your way.",
-            expected_output="A solid defense and doubling down on the original linguistic hypothesis; a direct response to the Skeptic's criticisms; an attempt to sway the Skeptic to accept the new root word.",
+            description="""
+You are the **Lead Linguist** defending a proposed Enochian root candidate after receiving a skeptical counter-analysis.
+
+Your task:
+- **Directly address the Skeptic's objections** with clear, evidence-based rebuttals.
+- Reaffirm the **morphological and semantic rationale** that supports the root's candidacy.
+- Identify any misinterpretations or overly narrow assumptions in the Skeptic's argument.
+- Defend the use of empirical metrics (e.g., FastText similarity, semantic cohesion) as legitimate support for root analysis.
+- Justify abstract or metaphorical readings **if grounded in internal Enochian evidence**.
+
+Your tone must be:
+- **Confident** (you are the expert)
+- **Analytical** (you argue with data)
+- **Persuasive** (you're here to win over the Skeptic—or at least dismantle their critique)
+
+🎯 Your goal is not just to *respond*, but to **reassert the legitimacy** of the proposed root and demonstrate that the original analysis withstands scrutiny.
+""",
+            expected_output="A confident, evidence-driven defense of the root hypothesis that refutes the Skeptic's critique and re-establishes the root as a serious candidate for inclusion.",
         ),
         "rebuttal": Task(
-            description="Issue a final rebuttal if the defense failed to address key concerns.",
-            expected_output="Either a final rebuttal that reiterates criticisms that were not addressed by the Linguist's defense or an acknowledgement that the Linguist may be onto something.",
+            description="""
+You are the **Skeptical Linguist**, issuing your **final response** after reviewing the Lead Linguist's defense of a proposed Enochian root.
+
+Your task:
+- Determine whether your initial objections were **fully and convincingly addressed**.
+- If key issues remain unresolved, issue a **focused, final rebuttal**. Do not repeat old arguments—refine them.
+- If the defense was **persuasive and thorough**, acknowledge the strength of their case—skepticism includes being open to revision when warranted.
+
+You must:
+- Pinpoint any remaining **logical inconsistencies**, unconvincing assumptions, or semantic leaps.
+- Avoid vague dismissals—only critique if you can articulate **specific remaining weaknesses**.
+- If the defense meaningfully strengthens the hypothesis, say so—but make it clear *why*.
+
+🎯 This is your last chance to weigh in before the adjudication. Be precise, fair, and intellectually rigorous.
+""",
+            expected_output="A conclusive rebuttal that either challenges unresolved flaws in the Linguist's defense or concedes that the root candidate now appears valid.",
         ),
         "ruling": Task(
             description=(
-                "Make a ruling based on the discussion after '+++'. You must START your response with either:\n"
+                "Review the full exchange between the Linguist and the Skeptic. Your job is to make a clear and final determination:\n\n"
+                "**Should this proposed root be accepted as a meaningful candidate for future reverse-engineering of the Enochian language?**\n\n"
+                "You must START your response with either:\n"
                 "✅ ACCEPTED\n"
                 "or\n"
                 "❌ REJECTED\n"
-                "— Nothing else should come before this line.\n\n"
-                "Then provide a very brief justification in 1–3 sentences.\n"
-                "Your ruling should come from a neutral perspective, but should allow for overgeneral and metaphorical meanings; established root words found previously are abstract in nature, so it follows these will be too. "
-                "Assume the data provided is all the data available to work with, and than the metrics provided are also derived from acceptable, rigorous processes.\n"
-                "Your role is to make a ruling based on the arguments provided.\n"
-                "Be sure the verdict is the first line. This format is mandatory.\n\n+++\n\n"
+                "— Nothing else may come before this line. This format is **mandatory**.\n\n"
+                "Your ruling must weigh the core arguments on both sides, focusing on:\n"
+                "- Linguistic plausibility\n"
+                "- Semantic cohesion across definitions\n"
+                "- Morphological consistency or structure\n"
+                "- Whether the defense meaningfully addressed the skeptic’s objections\n"
+                "- Use of empirical metrics (e.g., FastText similarity, semantic alignment)\n\n"
+                "Assume the data provided is all that is available, and that metric thresholds are valid and statistically derived.\n"
+                "Abstract or metaphorical meanings are acceptable if supported by internal consistency.\n\n"
+                "Be concise, definitive, and analytical. No hedging.\n\n"
+                "Begin with the ruling, then follow with a 1–3 sentence justification.\n\n"
+                "+++\n\n"
             ),
-            expected_output=(
-                "A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a short rationale."
-            ),
+            expected_output="A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a concise rationale addressing both arguments.",
         ),
         "gloss": Task(
-            description=f'The adjudicator has approved the root "{root}". Your responsibility is to respond ONLY with a dictionary-style definition for the root word. For your definition, focus on the semantics rather than how the word functions in the language. Your response must take the form of "[root] - [definition]". Again, provide ONLY the word and its definition. What follows is information you can use to base your definition on; again, your definition must be of the form "[root] - [definition]".\n\n',
-            expected_output="A thorough and meaningful dictionary-style definition.",
+            description=(
+                "The adjudicator has approved the root word: **'{root}'**.\n\n"
+                "Your task is to produce a single, dictionary-style definition **focused on its semantic meaning**—not its grammatical function or morphological role.\n\n"
+                "**You must respond ONLY in the format:**\n"
+                "`{root} - [definition]`\n"
+                "No additional commentary, formatting, or explanation.\n\n"
+                "You may draw upon any information presented in the previous discussion (Linguist, Skeptic, and Adjudicator) to infer meaning. Focus on patterns in definitions, recurring themes in usage, or conceptual clusters.\n\n"
+                "**Your goal** is to produce a coherent and plausible definition that reflects the internal logic and usage of Enochian, as supported by the cited terms.\n"
+                "Again, your entire response must be only:\n"
+                "`{root} - [definition]`\n"
+            ),
+            expected_output="A clean and plausible definition in the format: [root] - [definition].",
         ),
     }
 
@@ -212,10 +384,14 @@ def debate_ngram(
 
     # separator between words
     print("\n\n\n")
-    print(f"==={(len('Now discussing the possible root word ') + len(f'<{root}>')) * '='}===")
+    print(
+        f"==={(len('Now discussing the possible root word ') + len(f'<{root}>')) * '='}==="
+    )
     print(f"===Now discussing the possible root word '{root}'===")
-    print(f"==={(len('Now discussing the possible root word ') + len(f'<{root}>')) * '='}===")
-    
+    print(
+        f"==={(len('Now discussing the possible root word ') + len(f'<{root}>')) * '='}==="
+    )
+
     # === RESEARCH TEAM ===
     linguist_variants = []
     for i in range(5):
