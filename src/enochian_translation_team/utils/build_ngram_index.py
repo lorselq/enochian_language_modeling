@@ -1,3 +1,5 @@
+from tqdm import tqdm
+import sqlite3
 import json
 from collections import defaultdict
 from enochian_translation_team.utils.config import get_config_paths
@@ -15,29 +17,37 @@ def load_json(path):
 
 def build_ngram_index(entries, min_n=1, max_n=6):
     paths = get_config_paths()
-    index = defaultdict(set)
-    for entry in entries:
+    subst_map = load_json(paths["substitution_map"])
+    compression_rules = load_json(paths["sequence_compressions"])
+
+    index = defaultdict(list)
+    seen = defaultdict(set)  # Used to deduplicate variant+canonical combos
+
+    for entry in tqdm(entries, "Building out ngrams..."):
         if not entry.get("canon_word") or not entry.get("definition"):
             continue
+
         canon = entry["normalized"].lower()
-        norm = normalize_word(canon, subst_map=load_json(paths["substitution_map"]))
-        norm = apply_sequence_compressions(
-            norm, compression_rules=load_json(paths["sequence_compressions"])
-        )
-        variants = generate_variants(
-            norm, subst_map=load_json(paths["substitution_map"])
-        )
+        norm = normalize_word(canon, subst_map=subst_map)
+        norm = apply_sequence_compressions(norm, compression_rules=compression_rules)
+        variants = generate_variants(norm, subst_map=subst_map)
+
         for variant in variants:
             for n in range(min_n, max_n + 1):
                 for i in range(len(variant) - n + 1):
                     ngram = variant[i : i + n]
-                    index[ngram].add({"variant": variant, "canonical": canon})
-    return {k: sorted(v) for k, v in index.items()}
+                    key = f"{variant}|{canon}"
+                    if key not in seen[ngram]:
+                        index[ngram].append({"variant": variant, "canonical": canon})
+                        seen[ngram].add(key)
+    return index
 
 
-def save_index(index, path):
+def save_index_jsonl(index, path):
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(index, f, indent=2)
+        for ngram, entries in index.items():
+            obj = {"ngram": ngram, "entries": entries}
+            f.write(json.dumps(obj) + "\n")
 
 
 def load_words(path):
@@ -46,17 +56,46 @@ def load_words(path):
 
 
 def load_ngrams(path):
+    index = {}
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        for line in f:
+            obj = json.loads(line)
+            index[obj["ngram"]] = obj["entries"]
+    return index
 
 
 def build_and_save_ngram_index():
     paths = get_config_paths()
+    conn = sqlite3.connect(paths["ngram_index"])
+    cursor = conn.cursor()
+    cursor.execute("DROP TABLE IF EXISTS ngrams")
+
+    cursor.execute(
+        """
+        CREATE TABLE ngrams (
+            ngram TEXT,
+            variant TEXT,
+            canonical TEXT
+        )
+    """
+    )
+
     print("[+] Loading dictionary...")
     entries = load_words(paths["dictionary"])
     index = build_ngram_index(entries)
-    save_index(index, paths["ngram_index"])
-    print(f"[✓] N-gram index saved to {paths['ngram_index']}")
+    for ngram, entries in tqdm(
+        index.items(), "[+] Inserting ngram data into SQLite..."
+    ):
+        for e in entries:
+            cursor.execute(
+                "INSERT INTO ngrams (ngram, variant, canonical) VALUES (?, ?, ?)",
+                (ngram, e["variant"], e["canonical"]),
+            )
+    print("[+] Creating index on 'ngram'...")
+    cursor.execute("CREATE INDEX idx_ngram ON ngrams (ngram)")
+    conn.commit()
+    conn.close()
+    print(f"[✓] SQLite N-gram database created at {paths['ngram_index']}")
 
 
 def main():
