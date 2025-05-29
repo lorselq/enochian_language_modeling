@@ -65,7 +65,7 @@ def debate_ngram(
     root_def_summary = " | ".join(selected_defs) + (
         "..." if len(joined_defs) > len(selected_defs) else ""
     )
-    
+
     is_canon = bool(root_entry and root_entry.get("definition"))
 
     if root_entry and root_entry.get("definition"):
@@ -348,17 +348,20 @@ You must:
         ),
         "gloss": Task(
             description=(
-                "The adjudicator has approved the root word: **'{root}'**.\n\n"
-                "Your task is to produce a single, dictionary-style definition **focused on its semantic meaning**—not its grammatical function or morphological role.\n\n"
-                "**You must respond ONLY in the format:**\n"
-                "`{root} - [definition]`\n"
-                "No additional commentary, formatting, or explanation.\n\n"
-                "You may draw upon any information presented in the previous discussion (Linguist, Skeptic, and Adjudicator) to infer meaning. Focus on patterns in definitions, recurring themes in usage, or conceptual clusters.\n\n"
-                "**Your goal** is to produce a coherent and plausible definition that reflects the internal logic and usage of Enochian, as supported by the cited terms.\n"
-                "Again, your entire response must be only:\n"
-                "`{root} - [definition]`\n"
+                f'The adjudicator has approved the root "{root}". Your responsibility is to respond with a precise and practical dictionary-style entry.\n\n'
+                "Your definition must:\n"
+                "- Describe the **core semantic meaning** of the root\n"
+                "- Indicate how it functions **morphologically** (e.g., prefix, infix, suffix)\n"
+                "- Explain its **role** in compound or derived words (e.g., what kind of meaning it adds and how it functions)\n"
+                "- Provide **guidance** on how this root could help decode other, currently unknown words\n\n"
+                "Format your output as:\n"
+                f"{root} - [Definition including both meaning and morphological/functional guidance.]\n\n"
+                "Focus entirely on internal linguistic evidence and patterns observed across related Enochian words. DO NOT reference English, Greek, Latin, or Hebrew etymologies.\n"
+                "Below is a summary of the debate and root data. Use it to guide your construction of the definition:\n\n"
             ),
-            expected_output="A clean and plausible definition in the format: [root] - [definition].",
+            expected_output=(
+                f"{root} - A linguistically precise and practically useful definition that reflects both the semantic meaning and usage potential of the root in compound forms."
+            ),
         ),
     }
 
