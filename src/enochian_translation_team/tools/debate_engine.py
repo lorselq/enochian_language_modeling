@@ -65,6 +65,8 @@ def debate_ngram(
     root_def_summary = " | ".join(selected_defs) + (
         "..." if len(joined_defs) > len(selected_defs) else ""
     )
+    
+    is_canon = bool(root_entry and root_entry.get("definition"))
 
     if root_entry and root_entry.get("definition"):
         extra_prompt = f"⚠️ Reminder: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. Consider this as a potential anchor.\n"
@@ -223,6 +225,7 @@ Use these to **propose a coherent explanation of the root** based on morphologic
 
 {about_enochiana}
 {about_metrics}
+{extra_prompt}
 
 Your tone must be scholarly and confident. Avoid vague generalizations. Use examples, and support your claims with specific patterns or semantic signals.
 """,
@@ -255,11 +258,12 @@ The junior research team used the following definitions and citations as part of
 
 {about_enochiana}
 {about_metrics}
+{extra_prompt}
 """,
             expected_output="A definitive and well-argued proposal for the root, based on internal semantic and morphological evidence, synthesizing the strongest arguments from the junior linguists.",
         ),
         "counter": Task(
-            description="""
+            description=f"""
 You are a **skeptical linguist** evaluating a proposed root analysis in the Enochian language—a system with opaque morphology and metaphysical entanglements.
 
 You have received a synthesized proposal from the Lead Linguist. Your role is to **critically assess the validity** of this analysis and challenge any weaknesses in reasoning.
@@ -276,6 +280,7 @@ If the proposal lacks linguistic rigor:
 - Clearly explain **why** and identify specific weak points
 - Suggest a **stronger candidate or cluster**, if one can be supported from the data
 
+{skeptic_hint}
 Your tone must be **sharp, disciplined, and logically rigorous**. You are not here to sabotage, but to **safeguard the integrity** of the linguistic record.
 """,
             expected_output="A focused, evidence-based rebuttal to the proposed root word—highlighting flawed logic, semantic gaps, or alternative interpretations, when supported.",
@@ -504,21 +509,30 @@ You must:
         f"{RESET}\n",
     )
 
-    adjudicator_ruling = tools["adjudicator"]._run(
-        prompt="\n".join(
-            [
-                tasks["ruling"].description,
-                f"Linguist proposed: {linguist_proposal}",
-                f"Skeptic replied: {skeptic_response}",
-                f"Linguist defended by arguing for: {linguist_defense}",
-                f"Skeptic made their final argument against: {skeptic_rebuttal}"
-                f"Your goal: {tasks['ruling'].expected_output.lower()}",
-            ]
-        ),
-        stream_callback=adjudicator_cb,
-        print_chunks=True,
-        role_name="👩‍⚖️\tAdjudicator",
-    )
+    if is_canon:
+        adjudicator_ruling = (
+            f"✅ ACCEPTED\n"
+            f"The proposed root '{root.upper()}' is already a canon entry defined as '{root_entry.get('definition') if root_entry else ''}'. "
+            "This existing definition provides sufficient internal linguistic evidence for approval.\n"
+            "The following debate is preserved for insight and extended justification:"
+        )
+        print(adjudicator_ruling)
+    else:
+        adjudicator_ruling = tools["adjudicator"]._run(
+            prompt="\n".join(
+                [
+                    tasks["ruling"].description,
+                    f"Linguist proposed: {linguist_proposal}",
+                    f"Skeptic replied: {skeptic_response}",
+                    f"Linguist defended by arguing for: {linguist_defense}",
+                    f"Skeptic made their final argument against: {skeptic_rebuttal}"
+                    f"Your goal: {tasks['ruling'].expected_output.lower()}",
+                ]
+            ),
+            stream_callback=adjudicator_cb,
+            print_chunks=True,
+            role_name="👩‍⚖️\tAdjudicator",
+        )
 
     # === GLOSSATOR ===
     gloss = f"<there is no (new) definition for '{root.upper()}'>"

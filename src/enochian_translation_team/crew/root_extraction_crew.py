@@ -424,7 +424,6 @@ class RootExtractionCrew:
                     }
                 )
 
-            evaluated = self.evaluate_ngram(ngram, merged_cluster)
             clusters = cluster_definitions(merged_cluster, self.sent_model)
 
             for i, cluster in enumerate(clusters):
