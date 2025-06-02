@@ -3,7 +3,9 @@ from tqdm import tqdm
 from itertools import product, combinations
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
-from sklearn.cluster import AgglomerativeClustering, KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 
 
 def normalize_form(word):
@@ -43,30 +45,35 @@ def compute_cluster_cohesion(definitions, sentence_model):
     return round(float(relevant_scores.mean()), 3) if len(relevant_scores) else 0.0
 
 
-def cluster_definitions(definitions, model, min_clusters=2, max_clusters=10):
+def cluster_definitions(
+    definitions, model, min_clusters=2, max_clusters=10, fallback_score=0.35
+):
     if len(definitions) < min_clusters:
         return [definitions]
+    elif len(definitions) < 3:
+        print(f"[⚠️] Only {len(definitions)} definitions — clustering might be useless.")
 
-    # Encode definitions
+    # Extract text and compute embeddings
     texts = [d["definition"] for d in definitions if d.get("definition")]
-    embeddings = model.encode(texts, convert_to_tensor=True)
-
     if len(texts) < min_clusters:
-        return [definitions]  # Not enough for clustering
+        return [definitions]
 
-    # Find optimal number of clusters based on silhouette score
-    from sklearn.metrics import silhouette_score
+    embeddings = model.encode(texts, convert_to_tensor=True).cpu().numpy()
+
+    # --- PCA smoothing ---
+    # Reduce dimensionality but retain ~95% variance (or max 50 components)
+    pca = PCA(n_components=0.95)
+    embeddings_pca = pca.fit_transform(embeddings)
 
     best_score = -1
-    best_n_clusters = min_clusters
+    best_n_clusters = None
     best_labels = None
 
     for n_clusters in range(min_clusters, min(max_clusters, len(texts)) + 1):
-        kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
-        labels = kmeans.fit_predict(embeddings.cpu().numpy())
-
         try:
-            score = silhouette_score(embeddings.cpu().numpy(), labels)
+            kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
+            labels = kmeans.fit_predict(embeddings_pca)
+            score = silhouette_score(embeddings_pca, labels)
             if score > best_score:
                 best_score = score
                 best_n_clusters = n_clusters
@@ -74,10 +81,14 @@ def cluster_definitions(definitions, model, min_clusters=2, max_clusters=10):
         except Exception:
             continue
 
-    if best_labels is None:
-        return [definitions]  # fallback if clustering fails
+    if best_labels is None or best_score < fallback_score:
+        print(f"[⚠️ Warning] Fallback triggered for {len(definitions)} items (score: {round(best_score, 5)})")
+        return [definitions]
 
-    # Group by labels
+    if best_n_clusters is None or best_labels is None:
+        raise RuntimeError("Clustering failed: no valid cluster assignment found.")
+
+    # Group items by cluster label
     clustered = [[] for _ in range(best_n_clusters)]
     for item, label in zip(definitions, best_labels):
         clustered[label].append(item)
@@ -87,7 +98,7 @@ def cluster_definitions(definitions, model, min_clusters=2, max_clusters=10):
 
 def find_semantically_similar_words(
     ft_model,
-    sent_model,
+    sentence_model,
     entries,
     target_word,
     subst_map,
@@ -127,7 +138,7 @@ def find_semantically_similar_words(
             )
 
         def_score = definition_similarity(
-            target_entry.get("definition", ""), entry.get("definition", ""), sent_model
+            target_entry.get("definition", ""), entry.get("definition", ""), sentence_model
         )
 
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
@@ -184,7 +195,7 @@ def find_semantically_similar_words(
     # Calculate cluster similarity for scoring
     if len(results) > 1:
         definitions = [r["definition"] for r in results]
-        embeddings = sent_model.encode(definitions, convert_to_tensor=True)
+        embeddings = sentence_model.encode(definitions, convert_to_tensor=True)
         cosine_scores = util.cos_sim(embeddings, embeddings)
 
         for i, entry in tqdm(enumerate(results), "Calculating cluster similarity..."):
@@ -209,7 +220,7 @@ def find_semantically_similar_words(
     if len(results) < 2:
         return [results[:topn]]
 
-    clusters = cluster_definitions(results, sent_model)
+    clusters = cluster_definitions(results, sentence_model)
 
     print(f"[Debug] Created {len(clusters)} semantic clusters for '{target_word}'.")
 
