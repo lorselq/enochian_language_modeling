@@ -74,9 +74,7 @@ class RootExtractionCrew:
             if c.get("context")
         ]
         usage_snippet = (
-            f" Usage: \"{usage_examples[0] if usage_examples[0] else ''}\""
-            + f"{',' + '"' + usage_examples[1] + '"' if usage_examples[1] else ''}"
-            + f"{',' + '"' + usage_examples[2] + '"' if usage_examples[2] else ''}"
+            f" Usage: `{usage_examples[0] if usage_examples[0] else ''}`{',' + '`' + usage_examples[1] + '`' if usage_examples[1] else ''}{',' + '`' + usage_examples[2] + '`' if usage_examples[2] else ''}"
             if usage_examples
             else ""
         )
