@@ -22,11 +22,9 @@ def apply_sequence_compressions(word, compression_rules):
 
 
 def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
-    from itertools import combinations, product
-
     word = word.lower()
     variants = set()
-    variants.add((word, 0, [])) if return_subst_meta else variants.add(word)
+    variants.add((word, 0, ())) if return_subst_meta else variants.add(word)
 
     sub_dict = {
         k: [
@@ -60,9 +58,8 @@ def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
                         letter_names.append(sub.upper())
                 variant = "".join(temp)
                 if return_subst_meta:
-                    variants.add((variant, n_subs, letter_names))
+                    variants.add((variant, n_subs, tuple(letter_names)))
                 else:
                     variants.add(variant)
 
     return list(variants)
-

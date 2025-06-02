@@ -3,7 +3,7 @@ from tqdm import tqdm
 from itertools import product, combinations
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
-from sklearn.cluster import AgglomerativeClustering
+from sklearn.cluster import AgglomerativeClustering, KMeans
 
 
 def normalize_form(word):
@@ -43,31 +43,46 @@ def compute_cluster_cohesion(definitions, sentence_model):
     return round(float(relevant_scores.mean()), 3) if len(relevant_scores) else 0.0
 
 
-def cluster_definitions(
-    entries, sentence_model, min_cluster_size=2, distance_threshold=0.35
-):
-    definitions = [e["definition"] for e in entries if e.get("definition")]
-    if len(definitions) < min_cluster_size:
-        return [entries]  # One cluster only
+def cluster_definitions(definitions, model, min_clusters=2, max_clusters=10):
+    if len(definitions) < min_clusters:
+        return [definitions]
 
-    # Step 1: Get embeddings
-    embeddings = sentence_model.encode(definitions)
+    # Encode definitions
+    texts = [d["definition"] for d in definitions if d.get("definition")]
+    embeddings = model.encode(texts, convert_to_tensor=True)
 
-    # Step 2: Cluster
-    clustering = AgglomerativeClustering(
-        n_clusters=None,
-        distance_threshold=1 - distance_threshold,  # Cosine similarity to distance
-        metric="cosine",
-        linkage="average",
-    )
-    labels = clustering.fit_predict(embeddings)
+    if len(texts) < min_clusters:
+        return [definitions]  # Not enough for clustering
 
-    # Step 3: Group entries by label
-    clustered = {}
-    for idx, label in enumerate(labels):
-        clustered.setdefault(label, []).append(entries[idx])
+    # Find optimal number of clusters based on silhouette score
+    from sklearn.metrics import silhouette_score
 
-    return list(clustered.values())
+    best_score = -1
+    best_n_clusters = min_clusters
+    best_labels = None
+
+    for n_clusters in range(min_clusters, min(max_clusters, len(texts)) + 1):
+        kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
+        labels = kmeans.fit_predict(embeddings.cpu().numpy())
+
+        try:
+            score = silhouette_score(embeddings.cpu().numpy(), labels)
+            if score > best_score:
+                best_score = score
+                best_n_clusters = n_clusters
+                best_labels = labels
+        except Exception:
+            continue
+
+    if best_labels is None:
+        return [definitions]  # fallback if clustering fails
+
+    # Group by labels
+    clustered = [[] for _ in range(best_n_clusters)]
+    for item, label in zip(definitions, best_labels):
+        clustered[label].append(item)
+
+    return clustered
 
 
 def find_semantically_similar_words(
@@ -100,7 +115,6 @@ def find_semantically_similar_words(
         ):
             continue
 
-        # FastText similarity (max across variants)
         ft_score = 0.0
         if cand_norm in ft_model.wv:
             ft_score = max(
@@ -112,7 +126,6 @@ def find_semantically_similar_words(
                 default=0.0,
             )
 
-        # Semantic similarity
         def_score = definition_similarity(
             target_entry.get("definition", ""), entry.get("definition", ""), sent_model
         )
@@ -127,11 +140,11 @@ def find_semantically_similar_words(
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(
             normalized_query
         ):
-            priority = 2  # Top tier: starts or ends with the root
+            priority = 2
         elif normalized_query in cand_norm:
-            priority = 1  # Middle tier: contains root
+            priority = 1
         else:
-            priority = 0  # Lowest: no apparent connection
+            priority = 0
 
         if priority == 2 and final_score > 0.85:
             tier = "Very strong connection"
@@ -145,7 +158,6 @@ def find_semantically_similar_words(
         if final_score < min_similarity:
             continue
 
-        # Filter out garbage entries that define letters or numbers, which is frankly just noise at this point
         definition_text = entry.get("definition", "").lower()
         if (
             "enochian letter" in definition_text
@@ -169,9 +181,9 @@ def find_semantically_similar_words(
             }
         )
 
-    # Semantic cluster coherence
-    definitions = [r["definition"] for r in results]
-    if len(definitions) > 1:
+    # Calculate cluster similarity for scoring
+    if len(results) > 1:
+        definitions = [r["definition"] for r in results]
         embeddings = sent_model.encode(definitions, convert_to_tensor=True)
         cosine_scores = util.cos_sim(embeddings, embeddings)
 
@@ -193,4 +205,12 @@ def find_semantically_similar_words(
     )
 
     print(f"[Debug] Cluster size for '{target_word}': {len(results)}")
-    return results[:topn]
+
+    if len(results) < 2:
+        return [results[:topn]]
+
+    clusters = cluster_definitions(results, sent_model)
+
+    print(f"[Debug] Created {len(clusters)} semantic clusters for '{target_word}'.")
+
+    return clusters

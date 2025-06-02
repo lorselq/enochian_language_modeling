@@ -15,10 +15,7 @@ from enochian_translation_team.utils.semantic_search import (
     cluster_definitions,
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
-from enochian_translation_team.utils.build_ngram_index import (
-    build_and_save_ngram_index,
-    load_ngrams,
-)
+from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index
 
 
 class RootExtractionCrew:
@@ -294,14 +291,19 @@ class RootExtractionCrew:
 
         return result
 
-    def run_with_streaming(self, max_words=None, stream_callback=None):
+    def run_with_streaming(self, max_words=None, stream_callback=None, single_ngram=None):
+        if single_ngram:
+            ngram_generator = [(single_ngram, 1)]  # Use a fake count
+        else:
+            ngram_generator = self.stream_ngrams_from_sqlite(min_freq=2)
+
         output = []
         seen_words = 0
         print(
             f"[Debug] You've set the maximum words to \033[38;5;178m{max_words}\033[0m."
         )
 
-        for ngram, count in self.stream_ngrams_from_sqlite(min_freq=2):
+        for ngram, count in ngram_generator:
             if ngram in self.processed_ngrams:
                 continue
 

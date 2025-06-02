@@ -28,9 +28,14 @@ def prepare_training_data(entries, subst_map, compression_rules):
         norm = normalize_word(base, subst_map)
         norm = apply_sequence_compressions(norm, compression_rules)
 
-        variants_with_meta = generate_variants(
+        raw_variants = generate_variants(
             norm, subst_map=subst_map, max_subs=3, return_subst_meta=True
         )
+
+        variants_with_meta = [
+            {"variant": v, "num_subs": n, "letter_substitutions": l}
+            for v, n, l in raw_variants
+        ]
 
         # Sort variants: prefer non-letter substitutions and fewer changes
         preferred_variants = sorted(
