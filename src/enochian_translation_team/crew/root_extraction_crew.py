@@ -34,7 +34,7 @@ class RootExtractionCrew:
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.subst_map = self.load_subst_map()
         self.fasttext = FastText.load(str(self.model_path))
-        self.sent_model = SentenceTransformer("all-MiniLM-L6-v2")
+        self.sentence_model = SentenceTransformer("BAAI/bge-base-en-v1.5")
         self.candidate_finder = MorphemeCandidateFinder(
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=self.model_path,
@@ -65,15 +65,38 @@ class RootExtractionCrew:
         with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
             json.dump(sorted(list(combined)), f, indent=2)
 
+    def _enrich_definition(self, def_entry):
+        word = def_entry.get("word", "").strip()
+        base_def = def_entry.get("definition", "").strip()
+        usage_examples = [
+            c.get("context", "").strip()
+            for c in def_entry.get("key_citations", [])
+            if c.get("context")
+        ]
+        usage_snippet = (
+            f" Usage: \"{usage_examples[0] if usage_examples[0] else ''}\""
+            + f"{',' + '"' + usage_examples[1] + '"' if usage_examples[1] else ''}"
+            + f"{',' + '"' + usage_examples[2] + '"' if usage_examples[2] else ''}"
+            if usage_examples
+            else ""
+        )
+        return f"The Enochian {word} means \"{base_def}\".{usage_snippet}"
+
     def load_entries(self):
         with open(self.dictionary_path, "r", encoding="utf-8") as f:
-            return [
-                e
-                for e in json.load(f)
-                if e.get("normalized")
+            raw_entries = json.load(f)
+
+        entries = []
+        for e in raw_entries:
+            if (
+                e.get("normalized")
                 and e.get("definition")
                 and e.get("canon_word") is True
-            ]
+            ):
+                enriched_definition = self._enrich_definition(e)
+                e["enriched_definition"] = enriched_definition
+                entries.append(e)
+        return entries
 
     def load_subst_map(self):
         with open(self.subst_map_path, "r", encoding="utf-8") as f:
@@ -147,15 +170,17 @@ class RootExtractionCrew:
         return "unknown"
 
     def evaluate_ngram(self, ngram, cluster, stream_callback=None, cluster_id=None):
+        print(f"[Debug] Evaluating cluster with length of {len(cluster)} for {ngram}...")
+
         cluster_note = f"[Cluster {cluster_id}]" if cluster_id is not None else ""
         definitions = [
-            c["definition"]
+            c["enhanced_definition"]
             for c in tqdm(
                 cluster, desc=f"{cluster_note} Evaluating cluster for {ngram.upper()}"
             )
-            if c["definition"]
+            if c["enhanced_definition"]
         ]
-        cohesion_score = compute_cluster_cohesion(definitions, self.sent_model)
+        cohesion_score = compute_cluster_cohesion(definitions, self.sentence_model)
         semantic_hits = sum(1 for c in cluster if c["source"] in ("semantic", "both"))
         semantic_coverage = round(semantic_hits / len(cluster), 3) if cluster else 0.0
 
@@ -202,7 +227,7 @@ class RootExtractionCrew:
             if (
                 entry.get("normalized", "")
                 == ngram_lower
-                #    or entry.get("word", "").lower() == ngram_lower    # temporarily suspended from action
+                # or entry.get("word", "").lower() == ngram_lower    # temporarily suspended from action
             ):
                 root_entry = c.copy()  # <- This preserves all fields
                 anchor_entry = {
@@ -303,7 +328,6 @@ class RootExtractionCrew:
         output = []
         seen_words = 0
 
-
         for ngram, count in ngram_generator:
             if ngram in self.processed_ngrams:
                 continue
@@ -314,7 +338,7 @@ class RootExtractionCrew:
 
             semantic_candidate_groups = find_semantically_similar_words(
                 ft_model=self.fasttext,
-                sent_model=self.sent_model,
+                sentence_model=self.sentence_model,
                 entries=self.entries,
                 target_word=ngram,
                 subst_map=self.subst_map,
@@ -334,10 +358,6 @@ class RootExtractionCrew:
                 index_norms = {c["normalized"] for c in index_candidates}
                 overlap = sem_norms & index_norms
 
-                if len(overlap) < 2:
-                    print(f"[Skipped] '{ngram}' did not meet overlap threshold.")
-                    continue
-
                 merged_cluster = []
                 merged_words = []
                 seen = set()
@@ -356,9 +376,19 @@ class RootExtractionCrew:
                         merged_words.append(norm)
                         seen.add(norm)
 
+                if not merged_words or len(overlap) < 2:
+                    print(
+                        f"[Skipped] Cluster for '{ngram}' did not meet overlap threshold."
+                    )
+                    continue
+
                 for word in merged_words:
                     sem_entry = next(
-                        (c for c in semantic_candidates if dict(c)["normalized"] == word),
+                        (
+                            c
+                            for c in semantic_candidates
+                            if dict(c)["normalized"] == word
+                        ),
                         None,
                     )
                     index_entry = next(
@@ -387,17 +417,32 @@ class RootExtractionCrew:
                                 if sem_entry
                                 else (
                                     index_entry.get(
-                                        "definition", "ERROR: no definition provided"
+                                        "definition", "ERROR: no definition provided!"
                                     )
                                     if index_entry
                                     else "ERROR: no definition provided"
                                 )
                             ),
+                            "enhanced_definition": (
+                                sem_entry.get("enhanced_definition")
+                                if sem_entry
+                                else (
+                                    index_entry.get(
+                                        "enhanced_definition", "ERROR: no semantic entry definition provided!"
+                                    )
+                                    if index_entry
+                                    else "ERROR: no definition provided in semantic or indexed entries!"
+                                )
+                            ),
                             "fasttext": (
-                                float(sem_entry.get("fasttext", 0.0)) if sem_entry else 0.0
+                                float(sem_entry.get("fasttext", 0.0))
+                                if sem_entry
+                                else 0.0
                             ),
                             "semantic": (
-                                float(sem_entry.get("semantic", 0.0)) if sem_entry else 0.0
+                                float(sem_entry.get("semantic", 0.0))
+                                if sem_entry
+                                else 0.0
                             ),
                             "score": (
                                 float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
@@ -407,7 +452,9 @@ class RootExtractionCrew:
                                 if sem_entry
                                 else "Untiered"
                             ),
-                            "priority": (sem_entry.get("priority", 0) if sem_entry else 0),
+                            "priority": (
+                                sem_entry.get("priority", 0) if sem_entry else 0
+                            ),
                             "levenshtein": (
                                 sem_entry.get("levenshtein", 99) if sem_entry else 99
                             ),
@@ -416,7 +463,9 @@ class RootExtractionCrew:
                                 {
                                     c.get("context", "").strip()
                                     for c in (
-                                        sem_entry.get("citations", []) if sem_entry else []
+                                        sem_entry.get("citations", [])
+                                        if sem_entry
+                                        else []
                                     )
                                     + (
                                         index_entry.get("citations", [])
@@ -429,10 +478,18 @@ class RootExtractionCrew:
                         }
                     )
 
-                clusters = cluster_definitions(merged_cluster, self.sent_model)
+                clusters = cluster_definitions(merged_cluster, self.sentence_model)
+
+                valid_clusters = [c for c in clusters if len(c) >= 2]
+                if not valid_clusters:
+                    print(f"[⚠️] All clusters for '{ngram}' were too small to evaluate.")
+                    continue
 
                 for i, cluster in enumerate(clusters):
                     if len(cluster) < 2:
+                        print(
+                            f"[⚠️] Cluster {i + 1}/{len(clusters)} skipped (only {len(cluster)} item)."
+                        )
                         continue
 
                     print(
@@ -458,7 +515,9 @@ class RootExtractionCrew:
                             label=f"{ngram}_cluster{i}",
                         )
                     if "Glossator" in evaluated:
-                        with open(self.new_definitions_path, "a", encoding="utf-8") as f:
+                        with open(
+                            self.new_definitions_path, "a", encoding="utf-8"
+                        ) as f:
                             f.write(f"{evaluated['Glossator'].strip()}\n")
 
                     if stream_callback:

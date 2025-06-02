@@ -50,7 +50,7 @@ def main():
 
     if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip()
-        print(f"🔍 Evaluating single ngram: '{ngram}'\n")
+        print(f"🔍 Evaluating single ngram: \033[38;5;178m{ngram.upper()}\033[0m\n")
         crew.run_with_streaming(single_ngram=ngram, stream_callback=stream_callback)
 
     else:
