@@ -291,7 +291,9 @@ class RootExtractionCrew:
 
         return result
 
-    def run_with_streaming(self, max_words=None, stream_callback=None, single_ngram=None):
+    def run_with_streaming(
+        self, max_words=None, stream_callback=None, single_ngram=None
+    ):
         if single_ngram:
             ngram_generator = [(single_ngram, 1)]  # Use a fake count
         else:
@@ -355,7 +357,7 @@ class RootExtractionCrew:
 
             for word in merged_words:
                 sem_entry = next(
-                    (c for c in semantic_candidates if c["normalized"] == word),
+                    (c for c in semantic_candidates if dict(c)["normalized"] == word),
                     None,
                 )
                 index_entry = next(
