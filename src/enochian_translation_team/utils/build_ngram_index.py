@@ -41,10 +41,7 @@ def build_ngram_index(entries, min_n=1, max_n=6):
         norm = apply_sequence_compressions(norm, compression_rules=compression_rules)
         variants = generate_variants(norm, subst_map=subst_map, return_subst_meta=True)
 
-        for variant, meta in variants:
-            used_letter_names = meta.get("letter_names", [])
-            subst_count = meta.get("subst_count", 0)
-
+        for variant, num_subs, letter_names in variants:
             for n in range(min_n, max_n + 1):
                 for i in range(len(variant) - n + 1):
                     ngram = variant[i : i + n]
@@ -54,11 +51,9 @@ def build_ngram_index(entries, min_n=1, max_n=6):
                             {
                                 "variant": variant,
                                 "canonical": canon,
-                                "subst_count": subst_count,
+                                "num_subs": num_subs,
                                 "letter_names": (
-                                    ",".join(used_letter_names)
-                                    if used_letter_names
-                                    else None
+                                    ",".join(letter_names) if letter_names else None
                                 ),
                             }
                         )

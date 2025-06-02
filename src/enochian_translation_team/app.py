@@ -44,14 +44,13 @@ def stream_callback(role, message):
 def main():
     mode = None
     while mode not in ("1", "2"):
-        mode = input(
-            "Do you want to eval a specific ngram (1) or evaluate a number of ngrams (2)? "
-        )
+        mode = input("Do you want to eval a specific ngram (1) or evaluate a number of ngrams (2)? ")
+
+    crew = RootExtractionCrew()
 
     if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip()
         print(f"🔍 Evaluating single ngram: '{ngram}'\n")
-        crew = RootExtractionCrew()
         crew.run_with_streaming(single_ngram=ngram, stream_callback=stream_callback)
 
     else:
@@ -63,12 +62,12 @@ def main():
                 )
                 max_words = int(max_words_input)
             except ValueError:
-                print("Invalid number. Please use digits.")
-        crew = RootExtractionCrew()
+                print("Invalid number. Please use a digit.")
         print("🪄 Initializing semantic tribunal...\n")
         crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
 
     print("\n\n🎉 The research team has completed their assigned task(s)!")
+
 
 
 if __name__ == "__main__":
