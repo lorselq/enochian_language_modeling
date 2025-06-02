@@ -27,27 +27,31 @@ def prepare_training_data(entries, subst_map, compression_rules):
         base = entry["normalized"].lower()
         norm = normalize_word(base, subst_map)
         norm = apply_sequence_compressions(norm, compression_rules)
-        variants = generate_variants(norm, subst_map, max_subs=3)
-        ngram_lists = [
-            [variant[i : i + 3] for i in range(len(variant) - 2)]
-            for variant in variants
-            if len(variant) >= 3
-        ]
-        all_variants.extend(ngram_lists)
+
+        variants_with_meta = generate_variants(
+            norm, subst_map=subst_map, max_subs=3, return_subst_meta=True
+        )
+
+        # Sort variants: prefer non-letter substitutions and fewer changes
+        preferred_variants = sorted(
+            variants_with_meta, key=lambda x: (x["letter_substitutions"], x["num_subs"])
+        )
+
+        for item in preferred_variants:
+            variant = item["variant"]
+            if len(variant) >= 3:
+                ngrams = [variant[i : i + 3] for i in range(len(variant) - 2)]
+                all_variants.append(ngrams)
+
     return all_variants
 
 
 def train_fasttext_model(sentences, total_epochs=100):
-    model = FastText(vector_size=75, window=3, min_count=1, workers=8, sg=1) # my laptop is running from a AMD Ryzen 7 8845HS w/ Radeon 780M Graphics, 3801 Mhz, 8 Core(s), 16 Logical Processor(s); adjust accordingly per your machine
-
+    model = FastText(vector_size=75, window=3, min_count=1, workers=12, sg=1)
     model.build_vocab(sentences)
 
     for epoch in trange(total_epochs, desc="Training FastText"):
-        model.train(
-            sentences,
-            total_examples=len(sentences),
-            epochs=1
-        )
+        model.train(sentences, total_examples=len(sentences), epochs=1)
 
     return model
 
@@ -82,9 +86,7 @@ def main():
     print(f"[+] Saving model to {paths['model_output']}...")
     save_model(model, paths["model_output"])
 
-    print(
-        "[✓] FastText model created!"
-    )
+    print("[✓] FastText model created!")
 
 
 if __name__ == "__main__":

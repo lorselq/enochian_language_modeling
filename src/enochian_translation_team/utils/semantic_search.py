@@ -43,7 +43,9 @@ def compute_cluster_cohesion(definitions, sentence_model):
     return round(float(relevant_scores.mean()), 3) if len(relevant_scores) else 0.0
 
 
-def cluster_definitions(entries, sentence_model, min_cluster_size=2, distance_threshold=0.35):
+def cluster_definitions(
+    entries, sentence_model, min_cluster_size=2, distance_threshold=0.35
+):
     definitions = [e["definition"] for e in entries if e.get("definition")]
     if len(definitions) < min_cluster_size:
         return [entries]  # One cluster only
@@ -55,8 +57,8 @@ def cluster_definitions(entries, sentence_model, min_cluster_size=2, distance_th
     clustering = AgglomerativeClustering(
         n_clusters=None,
         distance_threshold=1 - distance_threshold,  # Cosine similarity to distance
-        metric='cosine',
-        linkage='average'
+        metric="cosine",
+        linkage="average",
     )
     labels = clustering.fit_predict(embeddings)
 
@@ -145,7 +147,11 @@ def find_semantically_similar_words(
 
         # Filter out garbage entries that define letters or numbers, which is frankly just noise at this point
         definition_text = entry.get("definition", "").lower()
-        if "enochian letter" in definition_text or "enochian word" in definition_text:
+        if (
+            "enochian letter" in definition_text
+            or "enochian word" in definition_text
+            or "aethyr" in definition_text
+        ):
             continue
 
         results.append(

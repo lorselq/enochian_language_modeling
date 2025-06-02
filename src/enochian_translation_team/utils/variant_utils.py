@@ -21,31 +21,48 @@ def apply_sequence_compressions(word, compression_rules):
     return word
 
 
-def generate_variants(word, subst_map, max_subs=2):
+def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
+    from itertools import combinations, product
+
     word = word.lower()
     variants = set()
-    variants.add(word)
+    variants.add((word, 0, [])) if return_subst_meta else variants.add(word)
 
-    # Build simple substitution lookup
     sub_dict = {
         k: [
-            alt["value"]
+            (alt["value"], alt.get("type", "unknown"))
             for alt in v["alternates"]
             if alt["direction"] in ["to", "both"]
         ]
         for k, v in subst_map.items()
     }
 
-    for positions in combinations(range(len(word)), max_subs):
-        replacement_options = []
-        for i in positions:
-            char = word[i]
-            replacement_options.append(sub_dict.get(char, [char]))
+    # Generate positions for possible substitutions
+    for n_subs in range(1, max_subs + 1):
+        for positions in combinations(range(len(word)), n_subs):
+            replacement_sets = []
+            valid = True
+            for i in positions:
+                char = word[i]
+                if char not in sub_dict:
+                    valid = False
+                    break
+                replacement_sets.append(sub_dict[char])
+            if not valid:
+                continue
 
-        for replacements in product(*replacement_options):
-            temp = list(word)
-            for idx, sub in zip(positions, replacements):
-                temp[idx] = sub
-            variant = "".join(temp)
-            variants.add(variant)
+            for replacements in product(*replacement_sets):
+                temp = list(word)
+                letter_names = []
+                for idx, (sub, sub_type) in zip(positions, replacements):
+                    temp[idx] = sub
+                    if sub_type == "letter_name":
+                        letter_names.append(sub.upper())
+                variant = "".join(temp)
+                if return_subst_meta:
+                    variants.add((variant, n_subs, letter_names))
+                else:
+                    variants.add(variant)
+
     return list(variants)
+

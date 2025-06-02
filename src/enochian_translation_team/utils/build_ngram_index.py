@@ -15,6 +15,15 @@ def load_json(path):
         return json.load(f)
 
 
+def load_ngrams(path):
+    index = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            obj = json.loads(line)
+            index[obj["ngram"]] = obj["entries"]
+    return index
+
+
 def build_ngram_index(entries, min_n=1, max_n=6):
     paths = get_config_paths()
     subst_map = load_json(paths["substitution_map"])
@@ -30,37 +39,30 @@ def build_ngram_index(entries, min_n=1, max_n=6):
         canon = entry["normalized"].lower()
         norm = normalize_word(canon, subst_map=subst_map)
         norm = apply_sequence_compressions(norm, compression_rules=compression_rules)
-        variants = generate_variants(norm, subst_map=subst_map)
+        variants = generate_variants(norm, subst_map=subst_map, return_subst_meta=True)
 
-        for variant in variants:
+        for variant, meta in variants:
+            used_letter_names = meta.get("letter_names", [])
+            subst_count = meta.get("subst_count", 0)
+
             for n in range(min_n, max_n + 1):
                 for i in range(len(variant) - n + 1):
                     ngram = variant[i : i + n]
                     key = f"{variant}|{canon}"
                     if key not in seen[ngram]:
-                        index[ngram].append({"variant": variant, "canonical": canon})
+                        index[ngram].append(
+                            {
+                                "variant": variant,
+                                "canonical": canon,
+                                "subst_count": subst_count,
+                                "letter_names": (
+                                    ",".join(used_letter_names)
+                                    if used_letter_names
+                                    else None
+                                ),
+                            }
+                        )
                         seen[ngram].add(key)
-    return index
-
-
-def save_index_jsonl(index, path):
-    with open(path, "w", encoding="utf-8") as f:
-        for ngram, entries in index.items():
-            obj = {"ngram": ngram, "entries": entries}
-            f.write(json.dumps(obj) + "\n")
-
-
-def load_words(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def load_ngrams(path):
-    index = {}
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            obj = json.loads(line)
-            index[obj["ngram"]] = obj["entries"]
     return index
 
 
@@ -75,21 +77,29 @@ def build_and_save_ngram_index():
         CREATE TABLE ngrams (
             ngram TEXT,
             variant TEXT,
-            canonical TEXT
+            canonical TEXT,
+            subst_count INTEGER,
+            letter_names TEXT
         )
     """
     )
 
     print("[+] Loading dictionary...")
-    entries = load_words(paths["dictionary"])
+    entries = load_json(paths["dictionary"])
     index = build_ngram_index(entries)
     for ngram, entries in tqdm(
         index.items(), "[+] Inserting ngram data into SQLite..."
     ):
         for e in entries:
             cursor.execute(
-                "INSERT INTO ngrams (ngram, variant, canonical) VALUES (?, ?, ?)",
-                (ngram, e["variant"], e["canonical"]),
+                "INSERT INTO ngrams (ngram, variant, canonical, subst_count, letter_names) VALUES (?, ?, ?, ?, ?)",
+                (
+                    ngram,
+                    e["variant"],
+                    e["canonical"],
+                    e.get("subst_count", 0),
+                    e.get("letter_names"),
+                ),
             )
     print("[+] Creating index on 'ngram'...")
     cursor.execute("CREATE INDEX idx_ngram ON ngrams (ngram)")

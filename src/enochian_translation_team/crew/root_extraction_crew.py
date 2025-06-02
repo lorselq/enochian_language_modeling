@@ -362,7 +362,7 @@ class RootExtractionCrew:
 
                 if not sem_entry and index_entry:
                     continue
-                
+
                 if not self.is_ngram_in_variants(ngram, word):
                     continue
 
@@ -397,11 +397,11 @@ class RootExtractionCrew:
                         "score": (
                             float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
                         ),
-                        # "tier": (
-                        #     sem_entry.get("tier", "Untiered")
-                        #     if sem_entry
-                        #     else "Untiered"
-                        # ),
+                        "tier": (
+                            sem_entry.get("tier", "Untiered")
+                            if sem_entry
+                            else "Untiered"
+                        ),
                         "priority": (sem_entry.get("priority", 0) if sem_entry else 0),
                         "levenshtein": (
                             sem_entry.get("levenshtein", 99) if sem_entry else 99

@@ -8,7 +8,7 @@ def save_log(log_entries, label: Optional[str] = None):
     name = f"{label.upper()}_" if label else ""
     log_dir = Path("logs")
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{name}{timestamp}_log.md"
+    log_path = log_dir / f"{name}{timestamp}_log.txt"
 
     header_re = re.compile(r"^\*\*(.+?):\*\*", re.MULTILINE)
 
