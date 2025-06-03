@@ -96,7 +96,7 @@ def build_and_save_ngram_index():
                     e.get("letter_names"),
                 ),
             )
-    print("[+] Creating index on 'ngram'...")
+    print("[+] Creating index on the sqlite table 'ngram'...")
     cursor.execute("CREATE INDEX idx_ngram ON ngrams (ngram)")
     conn.commit()
     conn.close()

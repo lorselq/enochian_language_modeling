@@ -35,7 +35,6 @@ def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
         for k, v in subst_map.items()
     }
 
-    # Generate positions for possible substitutions
     for n_subs in range(1, max_subs + 1):
         for positions in combinations(range(len(word)), n_subs):
             replacement_sets = []
@@ -50,6 +49,12 @@ def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
                 continue
 
             for replacements in product(*replacement_sets):
+                letter_name_count = sum(
+                    1 for (_, type) in replacements if type == "letter_name"
+                )
+                if letter_name_count > 1:
+                    continue  # skip variants with more than one letter_name substitution
+
                 temp = list(word)
                 letter_names = []
                 for idx, (sub, sub_type) in zip(positions, replacements):
