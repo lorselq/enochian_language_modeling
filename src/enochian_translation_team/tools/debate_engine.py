@@ -360,7 +360,7 @@ You must:
                 "Below is a summary of the debate and root data. Use it to guide your construction of the definition:\n\n"
             ),
             expected_output=(
-                f"{root} - A linguistically precise and practically useful definition that reflects both the semantic meaning and usage potential of the root in compound forms."
+                f"{root.upper()} - A linguistically precise and practically useful definition that reflects both the semantic meaning and usage potential of the root in compound forms."
             ),
         ),
     }
