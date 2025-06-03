@@ -55,7 +55,7 @@
     "canonical": "h",
     "alternates": [
       { "value": "na", "confidence": "low", "direction": "to" },
-      { "value": "nahath", "confidence": "high", "direction": "to" }
+      { "value": "nahath", "confidence": "low", "direction": "to" }
     ]
   },
   "i": {
