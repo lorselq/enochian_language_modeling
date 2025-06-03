@@ -81,16 +81,7 @@ class RootExtractionCrew:
 
     def load_subst_map(self):
         with open(self.subst_map_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        subst_map = {}
-        for k, v in raw.items():
-            subs = [
-                alt["value"]
-                for alt in v["alternates"]
-                if alt["direction"] in ["to", "both"]
-            ]
-            subst_map[k] = subs if subs else [k]
-        return subst_map
+            return json.load(f)
 
     def extract_ngrams(self, word, min_n=1, max_n=4):
         ngrams = set()
@@ -296,8 +287,9 @@ class RootExtractionCrew:
 
         return result
 
-
-    def run_with_streaming(self, max_words=None, stream_callback=None, single_ngram=None):
+    def run_with_streaming(
+        self, max_words=None, stream_callback=None, single_ngram=None
+    ):
         build_and_save_ngram_index()
         if single_ngram:
             ngram_generator = [(single_ngram, 418)]  # Use a fake count
@@ -359,7 +351,9 @@ class RootExtractionCrew:
                 merged_cluster = []
 
                 for word in {c["normalized"] for c in cluster + index_candidates}:
-                    sem_entry = next((c for c in cluster if c["normalized"] == word), None)
+                    sem_entry = next(
+                        (c for c in cluster if c["normalized"] == word), None
+                    )
                     index_entry = next(
                         (c for c in index_candidates if c["normalized"] == word), None
                     )
@@ -384,17 +378,24 @@ class RootExtractionCrew:
                             "definition": (
                                 sem_entry.get("definition")
                                 if sem_entry
-                                else index_entry.get(
-                                    "definition", "[Error] no definition provided semantic entry"
+                                else (
+                                    index_entry.get(
+                                        "definition",
+                                        "[Error] no definition provided semantic entry",
+                                    )
+                                    if index_entry
+                                    else "[Error] no definition provided for semantic entry or index entry"
                                 )
-                                if index_entry
-                                else "[Error] no definition provided for semantic entry or index entry"
                             ),
                             "fasttext": (
-                                float(sem_entry.get("fasttext", 0.0)) if sem_entry else 0.0
+                                float(sem_entry.get("fasttext", 0.0))
+                                if sem_entry
+                                else 0.0
                             ),
                             "semantic": (
-                                float(sem_entry.get("semantic", 0.0)) if sem_entry else 0.0
+                                float(sem_entry.get("semantic", 0.0))
+                                if sem_entry
+                                else 0.0
                             ),
                             "score": (
                                 float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
@@ -404,7 +405,9 @@ class RootExtractionCrew:
                                 if sem_entry
                                 else "Untiered"
                             ),
-                            "priority": sem_entry.get("priority", 0) if sem_entry else 0,
+                            "priority": (
+                                sem_entry.get("priority", 0) if sem_entry else 0
+                            ),
                             "levenshtein": (
                                 sem_entry.get("levenshtein", 99) if sem_entry else 99
                             ),
@@ -413,7 +416,9 @@ class RootExtractionCrew:
                                 {
                                     c.get("context", "").strip()
                                     for c in (
-                                        sem_entry.get("citations", []) if sem_entry else []
+                                        sem_entry.get("citations", [])
+                                        if sem_entry
+                                        else []
                                     )
                                     + (
                                         index_entry.get("citations", [])

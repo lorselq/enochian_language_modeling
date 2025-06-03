@@ -22,49 +22,67 @@ def apply_sequence_compressions(word, compression_rules):
 
 
 def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
+    if isinstance(subst_map, list):
+        print("[Debug] Subst map came in as list. Converting to dict...")
+        subst_map = {entry["key"]: entry for entry in subst_map}
     word = word.lower()
     variants = set()
     variants.add((word, 0, ())) if return_subst_meta else variants.add(word)
 
     sub_dict = {
         k: [
-            (alt["value"], alt.get("type", "unknown"))
+            (alt["value"], alt.get("type", "unknown"), alt.get("confidence", "low"))
             for alt in v["alternates"]
             if alt["direction"] in ["to", "both"]
         ]
         for k, v in subst_map.items()
     }
 
-    for n_subs in range(1, max_subs + 1):
-        for positions in combinations(range(len(word)), n_subs):
-            replacement_sets = []
-            for i in positions:
-                char = word[i]
-                if char not in sub_dict:
-                    break
-                replacement_sets.append(sub_dict[char])
-            else:
-                for replacements in product(*replacement_sets):
-                    letter_name_count = sum(
-                        1 for _, t in replacements if t == "letter_name"
-                    )
-                    letter_name_extra = sum(
-                        len(s) - 1 for s, t in replacements if t == "letter_name"
-                    )
+    def apply_subs(word, max_subs):
+        results = set()
+        queue = [(list(word), 0, 0, [])]  # (char_list, idx, subs_used, letter_names)
 
-                    if letter_name_count > 1 or letter_name_extra > 3:
-                        continue
+        while queue:
+            chars, idx, subs_used, letter_names = queue.pop()
 
-                    temp = list(word)
-                    letter_names = []
-                    for idx, (sub, sub_type) in zip(positions, replacements):
-                        temp[idx] = sub
-                        if sub_type == "letter_name":
-                            letter_names.append(sub.upper())
-                    variant = "".join(temp)
-                    if return_subst_meta:
-                        variants.add((variant, n_subs, tuple(letter_names)))
+            if subs_used > max_subs:
+                continue
+
+            if idx >= len(chars):
+                variant = "".join(chars)
+                if return_subst_meta:
+                    results.add((variant, subs_used, tuple(letter_names)))
+                else:
+                    results.add(variant)
+                continue
+
+            char = chars[idx]
+            if char in sub_dict:
+                for sub, sub_type, conf in sub_dict[char]:
+                    is_letter_sub = sub_type == "letter_name" or conf == "low"
+                    if is_letter_sub:
+                        if letter_names:
+                            continue  # already used a letter_name, skip
+                        if subs_used + 1 > max_subs:
+                            continue
+                        new_chars = chars[:idx] + [sub] + chars[idx + 1 :]
+                        queue.append(
+                            (
+                                new_chars,
+                                idx + 1,
+                                subs_used + 1,
+                                letter_names + [sub.upper()],
+                            )
+                        )
                     else:
-                        variants.add(variant)
+                        if subs_used + 1 > max_subs:
+                            continue
+                        new_chars = chars[:idx] + [sub] + chars[idx + 1 :]
+                        queue.append((new_chars, idx + 1, subs_used + 1, letter_names))
 
-    return list(variants)
+            # Always include the path with no substitution
+            queue.append((chars, idx + 1, subs_used, letter_names))
+
+        return results
+
+    return list(apply_subs(word, max_subs))
