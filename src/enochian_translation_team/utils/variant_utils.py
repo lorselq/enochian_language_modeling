@@ -22,9 +22,6 @@ def apply_sequence_compressions(word, compression_rules):
 
 
 def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
-    if isinstance(subst_map, list):
-        print("[Debug] Subst map came in as list. Converting to dict...")
-        subst_map = {entry["key"]: entry for entry in subst_map}
     word = word.lower()
     variants = set()
     variants.add((word, 0, ())) if return_subst_meta else variants.add(word)
