@@ -192,7 +192,7 @@ def find_semantically_similar_words(
         embeddings = sentence_model.encode(definitions, convert_to_tensor=True)
         cosine_scores = util.cos_sim(embeddings, embeddings)
 
-        for i, entry in tqdm(enumerate(results), "Calculating cluster similarity"):
+        for i, entry in tqdm(enumerate(results), "Calculating similarity across definitions for possible words"):
             sims = [cosine_scores[i][j].item() for j in range(len(results)) if j != i]
             entry["cluster_similarity"] = sum(sims) / len(sims) if sims else 0.0
     else:
