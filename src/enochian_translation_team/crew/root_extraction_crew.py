@@ -12,6 +12,7 @@ from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.semantic_search import (
     find_semantically_similar_words,
     compute_cluster_cohesion,
+    cluster_definitions,
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index
@@ -295,37 +296,40 @@ class RootExtractionCrew:
 
         return result
 
-    def run_with_streaming(
-        self, max_words=None, stream_callback=None, single_ngram=None
-    ):
+
+    def run_with_streaming(self, max_words=None, stream_callback=None, single_ngram=None):
         build_and_save_ngram_index()
         if single_ngram:
             ngram_generator = [(single_ngram, 418)]  # Use a fake count
             max_words = 999
             if single_ngram in self.processed_ngrams:
-                print(f"[Warning] The ngram {single_ngram.upper()} has already been processed, so our work is already done.")
+                print(
+                    f"[Warning] The ngram {single_ngram.upper()} has already been processed, so our work is already done."
+                )
         else:
             ngram_generator = self.stream_ngrams_from_sqlite(min_freq=2)
+
         output = []
         seen_words = 0
-        
+
         print("🪄 Initializing semantic tribunal...\n")
         for ngram, count in ngram_generator:
             if ngram in self.processed_ngrams:
-                print(f"[Skipping] Root candidate '{ngram}' has already been processed; moving on...")
+                print(
+                    f"[Skipping] Root candidate '{ngram}' has already been processed; moving on..."
+                )
                 continue
 
             print(
-                f"[✓] Processing root candidate: '{ngram}' (appears in {count} forms)"
+                f"[✓] Processing root candidate: '{ngram.upper()}' (appears in {count} forms)"
             )
 
-            semantic_candidate_groups = find_semantically_similar_words(
+            semantic_candidates = find_semantically_similar_words(
                 ft_model=self.fasttext,
                 sentence_model=self.sentence_model,
                 entries=self.entries,
                 target_word=ngram,
                 subst_map=self.subst_map,
-                topn=20,
             )
 
             index_candidates = self.candidate_finder.get_candidates(
@@ -335,45 +339,27 @@ class RootExtractionCrew:
                 include_context=True,
             )
 
-            for semantic_candidates in semantic_candidate_groups:
+            if not semantic_candidates or len(semantic_candidates) < 2:
+                print(f"[⚠️] Too few semantic candidates for '{ngram}'. Skipping.")
+                continue
 
-                sem_norms = {c["normalized"] for c in semantic_candidates}
+            clusters = cluster_definitions(semantic_candidates, self.sentence_model)
+
+            for cluster_id, cluster in enumerate(clusters):
+                sem_norms = {c["normalized"] for c in cluster}
                 index_norms = {c["normalized"] for c in index_candidates}
                 overlap = sem_norms & index_norms
 
-                merged_cluster = []
-                merged_words = []
-                seen = set()
-
-                # Start with semantic candidates — already sorted by priority/score
-                for c in semantic_candidates:
-                    norm = c["normalized"]
-                    if norm not in seen:
-                        merged_words.append(norm)
-                        seen.add(norm)
-
-                # Add index-only extras at the end
-                for c in index_candidates:
-                    norm = c["normalized"]
-                    if norm not in seen:
-                        merged_words.append(norm)
-                        seen.add(norm)
-
-                if not merged_words or len(overlap) < 2:
+                if not overlap or len(overlap) < 2:
                     print(
-                        f"[Skipped] Cluster for '{ngram}' did not meet overlap threshold."
+                        f"[Skipped] Potential cluster for '{ngram}' did not meet overlap threshold."
                     )
                     continue
 
-                for word in merged_words:
-                    sem_entry = next(
-                        (
-                            c
-                            for c in semantic_candidates
-                            if dict(c)["normalized"] == word
-                        ),
-                        None,
-                    )
+                merged_cluster = []
+
+                for word in {c["normalized"] for c in cluster + index_candidates}:
+                    sem_entry = next((c for c in cluster if c["normalized"] == word), None)
                     index_entry = next(
                         (c for c in index_candidates if c["normalized"] == word), None
                     )
@@ -398,23 +384,17 @@ class RootExtractionCrew:
                             "definition": (
                                 sem_entry.get("definition")
                                 if sem_entry
-                                else (
-                                    index_entry.get(
-                                        "definition", "ERROR: no definition provided!"
-                                    )
-                                    if index_entry
-                                    else "ERROR: no definition provided"
+                                else index_entry.get(
+                                    "definition", "[Error] no definition provided semantic entry"
                                 )
+                                if index_entry
+                                else "[Error] no definition provided for semantic entry or index entry"
                             ),
                             "fasttext": (
-                                float(sem_entry.get("fasttext", 0.0))
-                                if sem_entry
-                                else 0.0
+                                float(sem_entry.get("fasttext", 0.0)) if sem_entry else 0.0
                             ),
                             "semantic": (
-                                float(sem_entry.get("semantic", 0.0))
-                                if sem_entry
-                                else 0.0
+                                float(sem_entry.get("semantic", 0.0)) if sem_entry else 0.0
                             ),
                             "score": (
                                 float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
@@ -424,9 +404,7 @@ class RootExtractionCrew:
                                 if sem_entry
                                 else "Untiered"
                             ),
-                            "priority": (
-                                sem_entry.get("priority", 0) if sem_entry else 0
-                            ),
+                            "priority": sem_entry.get("priority", 0) if sem_entry else 0,
                             "levenshtein": (
                                 sem_entry.get("levenshtein", 99) if sem_entry else 99
                             ),
@@ -435,9 +413,7 @@ class RootExtractionCrew:
                                 {
                                     c.get("context", "").strip()
                                     for c in (
-                                        sem_entry.get("citations", [])
-                                        if sem_entry
-                                        else []
+                                        sem_entry.get("citations", []) if sem_entry else []
                                     )
                                     + (
                                         index_entry.get("citations", [])
@@ -450,53 +426,46 @@ class RootExtractionCrew:
                         }
                     )
 
-                clusters = merged_cluster
-
-                valid_clusters = [c for c in clusters if len(c) >= 2]
-                if not valid_clusters:
-                    print(f"[⚠️] All clusters for '{ngram}' were too small to evaluate.")
+                if len(merged_cluster) < 2:
+                    print(f"[⚠️] Merged cluster too small for '{ngram}'. Skipping.")
                     continue
 
-                for i, cluster in enumerate(valid_clusters):
-                    if len(cluster) < 2:
-                        print(
-                            f"[⚠️] Cluster {i + 1}/{len(valid_clusters)} skipped (only {len(cluster)} item)."
-                        )
-                        continue
+                print(
+                    f"[→] Evaluating cluster {cluster_id + 1}/{len(clusters)} for '{ngram.upper()}'..."
+                )
 
-                    print(
-                        f"[→] Evaluating cluster {i + 1}/{len(valid_clusters)} for '{ngram.upper()}'..."
+                evaluated = self.evaluate_ngram(
+                    ngram,
+                    merged_cluster,
+                    stream_callback=stream_callback,
+                    cluster_id=cluster_id,
+                )
+                evaluated["overlap_count"] = len(overlap)
+                evaluated["cluster_size"] = len(merged_cluster)
+
+                output.append(evaluated)
+
+                self.save_results(output)
+                self.processed_ngrams.add(ngram)
+                self.save_processed_ngrams()
+
+                if "Archivist" in evaluated:
+                    save_log(
+                        [("Archivist", evaluated["Archivist"])],
+                        label=f"{ngram}_cluster{cluster_id}",
                     )
 
-                    evaluated = self.evaluate_ngram(
-                        ngram, cluster, stream_callback=stream_callback
-                    )
-                    evaluated["overlap_count"] = len(overlap)
-                    evaluated["cluster_id"] = i
-                    evaluated["cluster_size"] = len(cluster)
-
-                    output.append(evaluated)
-
-                    self.save_results(output)
-                    self.processed_ngrams.add(ngram)
-                    self.save_processed_ngrams()
-
-                    if "Archivist" in evaluated:
-                        save_log(
-                            [("Archivist", evaluated["Archivist"])],
-                            label=f"{ngram}_cluster{i}",
+                if "Glossator" in evaluated:
+                    with open(self.new_definitions_path, "a", encoding="utf-8") as f:
+                        source_words = ", ".join(c["word"] for c in merged_cluster)
+                        f.write(
+                            f"{evaluated['Glossator'].strip()} NOTE: this was inferred from the following words: {source_words}.\n\n"
                         )
-                    if "Glossator" in evaluated:
-                        with open(
-                            self.new_definitions_path, "a", encoding="utf-8"
-                        ) as f:
-                            source_words = ", ".join(c["word"] for c in cluster)
-                            f.write(f"{evaluated['Glossator'].strip()} NOTE: this was inferred from the following words: {source_words}.\n\n")
 
-                    if stream_callback:
-                        for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
-                            if role in evaluated:
-                                stream_callback(role, evaluated[role])
+                if stream_callback:
+                    for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
+                        if role in evaluated:
+                            stream_callback(role, evaluated[role])
 
             seen_words += 1
             if max_words and seen_words >= max_words:

@@ -93,10 +93,9 @@ def find_semantically_similar_words(
     entries,
     target_word,
     subst_map,
-    topn=10,
-    fasttext_weight=0.40,
-    definition_weight=0.60,
-    min_similarity=0.0,
+    fasttext_weight=0.50,
+    definition_weight=0.50,
+    min_similarity=0.05,
 ):
     normalized_query = normalize_form(target_word)
     variants = generate_variants(normalized_query, subst_map)
@@ -129,8 +128,8 @@ def find_semantically_similar_words(
             )
 
         def_score = definition_similarity(
-            target_entry.get("enhanced_definition", ""),
-            entry.get("enhanced_definition", ""),
+            build_enhanced_definition(target_entry),
+            build_enhanced_definition(entry),
             sentence_model,
         )
 
@@ -139,7 +138,7 @@ def find_semantically_similar_words(
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(
             normalized_query
         ):
-            final_score += 0.15
+            final_score += 0.30
 
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(
             normalized_query
@@ -211,13 +210,10 @@ def find_semantically_similar_words(
         reverse=True,
     )
 
-    print(f"[Debug] Cluster size for '{target_word}': {len(results)}")
+    return results
 
-    if len(results) < 2:
-        return [results[:topn]]
+    # clusters = cluster_definitions(results, sentence_model)
 
-    clusters = cluster_definitions(results, sentence_model)
+    # print(f"[Debug] Created {len(clusters)} semantic clusters for '{target_word}'.")
 
-    print(f"[Debug] Created {len(clusters)} semantic clusters for '{target_word}'.")
-
-    return clusters
+    # return clusters
