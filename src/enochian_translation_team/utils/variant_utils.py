@@ -58,19 +58,21 @@ def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
                 for sub, sub_type, conf in sub_dict[char]:
                     is_letter_sub = sub_type == "letter_name" or conf == "low"
                     if is_letter_sub:
-                        if letter_names:
-                            continue  # already used a letter_name, skip
-                        if subs_used + 1 > max_subs:
-                            continue
-                        new_chars = chars[:idx] + [sub] + chars[idx + 1 :]
-                        queue.append(
-                            (
-                                new_chars,
-                                idx + 1,
-                                subs_used + 1,
-                                letter_names + [sub.upper()],
-                            )
-                        )
+                        continue
+                        # the below is to experiment with at a later date 6/3/2025
+                        # if letter_names:
+                        #     continue  # already used a letter_name, skip
+                        # if subs_used + 1 > max_subs:
+                        #     continue
+                        # new_chars = chars[:idx] + [sub] + chars[idx + 1 :]
+                        # queue.append(
+                        #     (
+                        #         new_chars,
+                        #         idx + 1,
+                        #         subs_used + 1,
+                        #         letter_names + [sub.upper()],
+                        #     )
+                        # )
                     else:
                         if subs_used + 1 > max_subs:
                             continue
