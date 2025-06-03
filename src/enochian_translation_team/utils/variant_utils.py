@@ -38,33 +38,33 @@ def generate_variants(word, subst_map, max_subs=3, return_subst_meta=False):
     for n_subs in range(1, max_subs + 1):
         for positions in combinations(range(len(word)), n_subs):
             replacement_sets = []
-            valid = True
             for i in positions:
                 char = word[i]
                 if char not in sub_dict:
-                    valid = False
                     break
                 replacement_sets.append(sub_dict[char])
-            if not valid:
-                continue
+            else:
+                for replacements in product(*replacement_sets):
+                    letter_name_count = sum(
+                        1 for _, t in replacements if t == "letter_name"
+                    )
+                    letter_name_extra = sum(
+                        len(s) - 1 for s, t in replacements if t == "letter_name"
+                    )
 
-            for replacements in product(*replacement_sets):
-                letter_name_count = sum(
-                    1 for (_, type) in replacements if type == "letter_name"
-                )
-                if letter_name_count > 1:
-                    continue  # skip variants with more than one letter_name substitution
+                    if letter_name_count > 1 or letter_name_extra > 3:
+                        continue
 
-                temp = list(word)
-                letter_names = []
-                for idx, (sub, sub_type) in zip(positions, replacements):
-                    temp[idx] = sub
-                    if sub_type == "letter_name":
-                        letter_names.append(sub.upper())
-                variant = "".join(temp)
-                if return_subst_meta:
-                    variants.add((variant, n_subs, tuple(letter_names)))
-                else:
-                    variants.add(variant)
+                    temp = list(word)
+                    letter_names = []
+                    for idx, (sub, sub_type) in zip(positions, replacements):
+                        temp[idx] = sub
+                        if sub_type == "letter_name":
+                            letter_names.append(sub.upper())
+                    variant = "".join(temp)
+                    if return_subst_meta:
+                        variants.add((variant, n_subs, tuple(letter_names)))
+                    else:
+                        variants.add(variant)
 
     return list(variants)

@@ -5,25 +5,11 @@ from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics.pairwise import cosine_distances
+from enochian_translation_team.utils.variant_utils import generate_variants
 
 
 def normalize_form(word):
     return word.lower()
-
-
-def generate_variants(word, subst_map, max_subs=2):
-    word = word.lower()
-    variants = set()
-    variants.add(word)
-    for positions in combinations(range(len(word)), max_subs):
-        for replacements in product(
-            *[subst_map.get(word[i], [word[i]]) for i in positions]
-        ):
-            temp = list(word)
-            for idx, sub in zip(positions, replacements):
-                temp[idx] = sub
-            variants.add("".join(temp))
-    return list(variants)
 
 
 def definition_similarity(def1, def2, sentence_model):
@@ -108,7 +94,7 @@ def find_semantically_similar_words(
         return []
 
     results = []
-    for entry in tqdm(entries, desc="Processing dictionary entries..."):
+    for entry in tqdm(entries, desc="Processing dictionary entries"):
         cand_norm = normalize_form(entry["normalized"])
         if (
             cand_norm == normalized_query
@@ -193,7 +179,7 @@ def find_semantically_similar_words(
         embeddings = sentence_model.encode(definitions, convert_to_tensor=True)
         cosine_scores = util.cos_sim(embeddings, embeddings)
 
-        for i, entry in tqdm(enumerate(results), "Calculating cluster similarity..."):
+        for i, entry in tqdm(enumerate(results), "Calculating cluster similarity"):
             sims = [cosine_scores[i][j].item() for j in range(len(results)) if j != i]
             entry["cluster_similarity"] = sum(sims) / len(sims) if sims else 0.0
     else:
