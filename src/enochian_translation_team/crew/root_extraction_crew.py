@@ -267,7 +267,7 @@ class RootExtractionCrew:
 
         # Let the agents have their nerd war
         debate_result = debate_ngram(
-            root=ngram.upper(),
+            root=ngram,
             candidates=trimmed_cluster,
             stats_summary=stats_summary,
             stream_callback=stream_callback,
