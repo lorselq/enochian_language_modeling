@@ -3,9 +3,8 @@ from tqdm import tqdm
 from itertools import product, combinations
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
-from sklearn.metrics import silhouette_score
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics.pairwise import cosine_distances
 
 
 def normalize_form(word):
@@ -45,55 +44,43 @@ def compute_cluster_cohesion(definitions, sentence_model):
     return round(float(relevant_scores.mean()), 3) if len(relevant_scores) else 0.0
 
 
-def cluster_definitions(
-    definitions, model, min_clusters=2, max_clusters=10, fallback_score=0.35
-):
-    if len(definitions) < min_clusters:
-        return [definitions]
-    elif len(definitions) < 3:
-        print(f"[⚠️] Only {len(definitions)} definitions — clustering might be useless.")
+def build_enhanced_definition(def_entry):
+    base_def = def_entry.get("definition", "").strip()
 
-    # Extract text and compute embeddings
-    texts = [d["definition"] for d in definitions if d.get("definition")]
-    if len(texts) < min_clusters:
+    usage_examples = [
+        c.get("context", "").strip()
+        for c in def_entry.get("key_citations", [])
+        if c.get("context")
+    ]
+
+    if usage_examples:
+        formatted_usages = ", ".join(f"`{ex}`" for ex in usage_examples)
+        usage_snippet = f" Usage: {formatted_usages}"
+    else:
+        usage_snippet = ""
+
+    return f'{base_def.lower()}.{usage_snippet.lower()}'
+
+
+def cluster_definitions(definitions, model, threshold=0.35):
+    texts = [build_enhanced_definition(d) for d in definitions if d.get("definition")]
+    if len(texts) < 2:
         return [definitions]
 
     embeddings = model.encode(texts, convert_to_tensor=True).cpu().numpy()
+    distance_matrix = cosine_distances(embeddings)
 
-    # --- PCA smoothing ---
-    # Reduce dimensionality but retain ~95% variance (or max 50 components)
-    pca = PCA(n_components=0.95)
-    embeddings_pca = pca.fit_transform(embeddings)
+    clustering = AgglomerativeClustering(
+        metric="precomputed",  # distance matrix is already calculated
+        linkage="average",       # average-link tends to work best semantically
+        distance_threshold=threshold,
+        n_clusters=None          # Let the threshold determine cut
+    ).fit(distance_matrix)
 
-    best_score = -1
-    best_n_clusters = None
-    best_labels = None
-
-    for n_clusters in range(min_clusters, min(max_clusters, len(texts)) + 1):
-        try:
-            kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
-            labels = kmeans.fit_predict(embeddings_pca)
-            score = silhouette_score(embeddings_pca, labels)
-            if score > best_score:
-                best_score = score
-                best_n_clusters = n_clusters
-                best_labels = labels
-        except Exception:
-            continue
-
-    if best_labels is None or best_score < fallback_score:
-        print(f"[⚠️ Warning] Fallback triggered for {len(definitions)} items (score: {round(best_score, 5)})")
-        return [definitions]
-
-    if best_n_clusters is None or best_labels is None:
-        raise RuntimeError("Clustering failed: no valid cluster assignment found.")
-
-    # Group items by cluster label
-    clustered = [[] for _ in range(best_n_clusters)]
-    for item, label in zip(definitions, best_labels):
-        clustered[label].append(item)
-
-    return clustered
+    clusters = [[] for _ in range(max(clustering.labels_) + 1)]
+    for item, label in zip(definitions, clustering.labels_):
+        clusters[label].append(item)
+    return clusters
 
 
 def find_semantically_similar_words(
@@ -138,7 +125,7 @@ def find_semantically_similar_words(
             )
 
         def_score = definition_similarity(
-            target_entry.get("definition", ""), entry.get("definition", ""), sentence_model
+            target_entry.get("enhanced_definition", ""), entry.get("enhanced_definition", ""), sentence_model
         )
 
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
@@ -169,7 +156,7 @@ def find_semantically_similar_words(
         if final_score < min_similarity:
             continue
 
-        definition_text = entry.get("definition", "").lower()
+        definition_text = entry.get("definition", "").lower() # this is purposefully not "enhanced_definition"
         if (
             "enochian letter" in definition_text
             or "enochian word" in definition_text
@@ -182,6 +169,7 @@ def find_semantically_similar_words(
                 "word": entry["word"],
                 "normalized": entry["normalized"],
                 "definition": entry.get("definition", ""),
+                "enhanced_definition": entry.get("enhanced_definition", ""),
                 "fasttext": round(ft_score, 3),
                 "semantic": round(def_score, 3),
                 "score": round(final_score, 3),
@@ -194,7 +182,7 @@ def find_semantically_similar_words(
 
     # Calculate cluster similarity for scoring
     if len(results) > 1:
-        definitions = [r["definition"] for r in results]
+        definitions = [r["enhanced_definition"] for r in results]
         embeddings = sentence_model.encode(definitions, convert_to_tensor=True)
         cosine_scores = util.cos_sim(embeddings, embeddings)
 

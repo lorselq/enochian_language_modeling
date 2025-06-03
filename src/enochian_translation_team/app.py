@@ -49,7 +49,7 @@ def main():
     crew = RootExtractionCrew()
 
     if mode == "1":
-        ngram = input("Which ngram do you want to evaluate? ").strip()
+        ngram = input("Which ngram do you want to evaluate? ").strip().lower()
         print(f"🔍 Evaluating single ngram: \033[38;5;178m{ngram.upper()}\033[0m\n")
         crew.run_with_streaming(single_ngram=ngram, stream_callback=stream_callback)
 
@@ -63,7 +63,7 @@ def main():
                 max_words = int(max_words_input)
             except ValueError:
                 print("Invalid number. Please use a digit.")
-        print("🪄 Initializing semantic tribunal...\n")
+        print(f"🔍 Evaluating \033[38;5;178m{max_words}\033[0m\n ngrams...")
         crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
 
     print("\n\n🎉 The research team has completed their assigned task(s)!")

@@ -34,7 +34,7 @@ class RootExtractionCrew:
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.subst_map = self.load_subst_map()
         self.fasttext = FastText.load(str(self.model_path))
-        self.sentence_model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+        self.sentence_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
         self.candidate_finder = MorphemeCandidateFinder(
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=self.model_path,
@@ -65,21 +65,6 @@ class RootExtractionCrew:
         with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
             json.dump(sorted(list(combined)), f, indent=2)
 
-    def _enrich_definition(self, def_entry):
-        word = def_entry.get("word", "").strip()
-        base_def = def_entry.get("definition", "").strip()
-        usage_examples = [
-            c.get("context", "").strip()
-            for c in def_entry.get("key_citations", [])
-            if c.get("context")
-        ]
-        usage_snippet = (
-            f" Usage: `{usage_examples[0] if usage_examples[0] else ''}`{',' + '`' + usage_examples[1] + '`' if usage_examples[1] else ''}{',' + '`' + usage_examples[2] + '`' if usage_examples[2] else ''}"
-            if usage_examples
-            else ""
-        )
-        return f"The Enochian {word} means \"{base_def}\".{usage_snippet}"
-
     def load_entries(self):
         with open(self.dictionary_path, "r", encoding="utf-8") as f:
             raw_entries = json.load(f)
@@ -91,8 +76,6 @@ class RootExtractionCrew:
                 and e.get("definition")
                 and e.get("canon_word") is True
             ):
-                enriched_definition = self._enrich_definition(e)
-                e["enriched_definition"] = enriched_definition
                 entries.append(e)
         return entries
 
@@ -168,15 +151,17 @@ class RootExtractionCrew:
         return "unknown"
 
     def evaluate_ngram(self, ngram, cluster, stream_callback=None, cluster_id=None):
-        print(f"[Debug] Evaluating cluster with length of {len(cluster)} for {ngram}...")
+        print(
+            f"[Debug] Evaluating cluster with length of {len(cluster)} for {ngram}..."
+        )
 
         cluster_note = f"[Cluster {cluster_id}]" if cluster_id is not None else ""
         definitions = [
-            c["enhanced_definition"]
+            c["definition"]
             for c in tqdm(
                 cluster, desc=f"{cluster_note} Evaluating cluster for {ngram.upper()}"
             )
-            if c["enhanced_definition"]
+            if c["definition"]
         ]
         cohesion_score = compute_cluster_cohesion(definitions, self.sentence_model)
         semantic_hits = sum(1 for c in cluster if c["source"] in ("semantic", "both"))
@@ -318,16 +303,17 @@ class RootExtractionCrew:
         if single_ngram:
             ngram_generator = [(single_ngram, 418)]  # Use a fake count
             max_words = 999
+            if single_ngram in self.processed_ngrams:
+                print(f"[Warning] The ngram {single_ngram.upper()} has already been processed, so our work is already done.")
         else:
             ngram_generator = self.stream_ngrams_from_sqlite(min_freq=2)
-            print(
-                f"[Debug] You've set the maximum words to \033[38;5;178m{max_words}\033[0m."
-            )
         output = []
         seen_words = 0
-
+        
+        print("🪄 Initializing semantic tribunal...\n")
         for ngram, count in ngram_generator:
             if ngram in self.processed_ngrams:
+                print(f"[Skipping] Root candidate '{ngram}' has already been processed; moving on...")
                 continue
 
             print(
@@ -421,17 +407,6 @@ class RootExtractionCrew:
                                     else "ERROR: no definition provided"
                                 )
                             ),
-                            "enhanced_definition": (
-                                sem_entry.get("enhanced_definition")
-                                if sem_entry
-                                else (
-                                    index_entry.get(
-                                        "enhanced_definition", "ERROR: no semantic entry definition provided!"
-                                    )
-                                    if index_entry
-                                    else "ERROR: no definition provided in semantic or indexed entries!"
-                                )
-                            ),
                             "fasttext": (
                                 float(sem_entry.get("fasttext", 0.0))
                                 if sem_entry
@@ -476,22 +451,22 @@ class RootExtractionCrew:
                         }
                     )
 
-                clusters = cluster_definitions(merged_cluster, self.sentence_model)
+                clusters = merged_cluster
 
                 valid_clusters = [c for c in clusters if len(c) >= 2]
                 if not valid_clusters:
                     print(f"[⚠️] All clusters for '{ngram}' were too small to evaluate.")
                     continue
 
-                for i, cluster in enumerate(clusters):
+                for i, cluster in enumerate(valid_clusters):
                     if len(cluster) < 2:
                         print(
-                            f"[⚠️] Cluster {i + 1}/{len(clusters)} skipped (only {len(cluster)} item)."
+                            f"[⚠️] Cluster {i + 1}/{len(valid_clusters)} skipped (only {len(cluster)} item)."
                         )
                         continue
 
                     print(
-                        f"[→] Evaluating cluster {i + 1}/{len(clusters)} for '{ngram}'..."
+                        f"[→] Evaluating cluster {i + 1}/{len(valid_clusters)} for '{ngram.upper()}'..."
                     )
 
                     evaluated = self.evaluate_ngram(
