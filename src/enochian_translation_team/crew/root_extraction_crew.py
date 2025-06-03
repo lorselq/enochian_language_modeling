@@ -457,7 +457,7 @@ class RootExtractionCrew:
                 if "Archivist" in evaluated:
                     save_log(
                         [("Archivist", evaluated["Archivist"])],
-                        label=f"{ngram}_cluster{cluster_id}",
+                        label=f"{ngram}_cluster{cluster_id + 1}of{len(clusters)}",
                     )
 
                 if "Glossator" in evaluated:
