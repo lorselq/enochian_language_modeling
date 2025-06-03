@@ -35,11 +35,13 @@ def prepare_training_data(entries, subst_map, compression_rules):
         variants_with_meta = [
             {"variant": v, "num_subs": n, "letter_substitutions": l}
             for v, n, l in raw_variants
+            if len(l) <= 1  # Explicitly enforce <= 1 letter-name sub
         ]
 
-        # Sort variants: prefer non-letter substitutions and fewer changes
+        # Sort by: fewer letter-name substitutions, then fewer total subs
         preferred_variants = sorted(
-            variants_with_meta, key=lambda x: (x["letter_substitutions"], x["num_subs"])
+            variants_with_meta,
+            key=lambda x: (len(x["letter_substitutions"]), x["num_subs"]),
         )
 
         for item in preferred_variants:

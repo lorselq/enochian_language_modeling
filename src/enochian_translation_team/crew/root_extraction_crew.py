@@ -12,7 +12,6 @@ from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.semantic_search import (
     find_semantically_similar_words,
     compute_cluster_cohesion,
-    cluster_definitions,
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index
@@ -491,7 +490,8 @@ class RootExtractionCrew:
                         with open(
                             self.new_definitions_path, "a", encoding="utf-8"
                         ) as f:
-                            f.write(f"{evaluated['Glossator'].strip()}\n")
+                            source_words = ", ".join(c["word"] for c in cluster)
+                            f.write(f"{evaluated['Glossator'].strip()} NOTE: this was inferred from the following words: {source_words}.\n\n")
 
                     if stream_callback:
                         for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
