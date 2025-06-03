@@ -1,6 +1,5 @@
 import numpy as np
 from tqdm import tqdm
-from itertools import product, combinations
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
 from sklearn.cluster import AgglomerativeClustering
@@ -83,8 +82,22 @@ def find_semantically_similar_words(
     definition_weight=0.50,
     min_similarity=0.05,
 ):
+    # 🔒 Hard fix for malformed subst_map
+    if isinstance(subst_map, list):
+        try:
+            subst_map = {
+                entry["key"]: entry
+                for entry in subst_map
+                if isinstance(entry, dict) and "key" in entry and "alternates" in entry
+            }
+        except Exception as e:
+            raise ValueError(
+                f"Malformed substitution map passed to semantic search: {subst_map[:2]}"
+            ) from e
+    
     normalized_query = normalize_form(target_word)
-    variants = generate_variants(normalized_query, subst_map)
+    variants_raw = generate_variants(normalized_query, subst_map, return_subst_meta=True)
+    variants = [v[0] for v in variants_raw]
 
     target_entry = next(
         (e for e in entries if normalize_form(e["normalized"]) == normalized_query),
