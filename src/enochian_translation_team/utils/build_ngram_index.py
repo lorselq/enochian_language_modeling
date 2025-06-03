@@ -30,7 +30,7 @@ def build_ngram_index(entries, min_n=1, max_n=6):
     compression_rules = load_json(paths["sequence_compressions"])
 
     index = defaultdict(list)
-    seen = defaultdict(set)  # Used to deduplicate variant+canonical combos
+    seen = set()
 
     for entry in tqdm(entries, "Building out ngrams..."):
         if not entry.get("canon_word") or not entry.get("definition"):
@@ -42,22 +42,24 @@ def build_ngram_index(entries, min_n=1, max_n=6):
         variants = generate_variants(norm, subst_map=subst_map, return_subst_meta=True)
 
         for variant, num_subs, letter_names in variants:
+            variant_key = f"{variant}|{canon}"
+            if variant_key in seen:
+                continue
+            seen.add(variant_key)
+
             for n in range(min_n, max_n + 1):
                 for i in range(len(variant) - n + 1):
                     ngram = variant[i : i + n]
-                    key = f"{variant}|{canon}"
-                    if key not in seen[ngram]:
-                        index[ngram].append(
-                            {
-                                "variant": variant,
-                                "canonical": canon,
-                                "num_subs": num_subs,
-                                "letter_names": (
-                                    ",".join(letter_names) if letter_names else None
-                                ),
-                            }
-                        )
-                        seen[ngram].add(key)
+                    index[ngram].append(
+                        {
+                            "variant": variant,
+                            "canonical": canon,
+                            "num_subs": num_subs,
+                            "letter_names": (
+                                ",".join(letter_names) if letter_names else None
+                            ),
+                        }
+                    )
     return index
 
 

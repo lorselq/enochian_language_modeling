@@ -59,26 +59,30 @@ def build_enhanced_definition(def_entry):
     else:
         usage_snippet = ""
 
-    return f'{base_def.lower()}.{usage_snippet.lower()}'
+    return f"{base_def.lower()}.{usage_snippet.lower()}"
 
 
 def cluster_definitions(definitions, model, threshold=0.35):
-    texts = [build_enhanced_definition(d) for d in definitions if d.get("definition")]
-    if len(texts) < 2:
+    pairs = [
+        (build_enhanced_definition(d), d) for d in definitions if d.get("definition")
+    ]
+    if len(pairs) < 2:
         return [definitions]
+
+    texts, original_entries = zip(*pairs)
 
     embeddings = model.encode(texts, convert_to_tensor=True).cpu().numpy()
     distance_matrix = cosine_distances(embeddings)
 
     clustering = AgglomerativeClustering(
-        metric="precomputed",  # distance matrix is already calculated
-        linkage="average",       # average-link tends to work best semantically
+        metric="precomputed",
+        linkage="average",
         distance_threshold=threshold,
-        n_clusters=None          # Let the threshold determine cut
+        n_clusters=None,
     ).fit(distance_matrix)
 
     clusters = [[] for _ in range(max(clustering.labels_) + 1)]
-    for item, label in zip(definitions, clustering.labels_):
+    for item, label in zip(original_entries, clustering.labels_):
         clusters[label].append(item)
     return clusters
 
@@ -125,7 +129,9 @@ def find_semantically_similar_words(
             )
 
         def_score = definition_similarity(
-            target_entry.get("enhanced_definition", ""), entry.get("enhanced_definition", ""), sentence_model
+            target_entry.get("enhanced_definition", ""),
+            entry.get("enhanced_definition", ""),
+            sentence_model,
         )
 
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
@@ -156,7 +162,9 @@ def find_semantically_similar_words(
         if final_score < min_similarity:
             continue
 
-        definition_text = entry.get("definition", "").lower() # this is purposefully not "enhanced_definition"
+        definition_text = entry.get(
+            "definition", ""
+        ).lower()  # this is purposefully not "enhanced_definition"
         if (
             "enochian letter" in definition_text
             or "enochian word" in definition_text
