@@ -44,6 +44,8 @@ def debate_ngram(
     root_entry: Optional[dict] = None,
 ):
     joined_defs = []
+    candidate_list = '"' + ", ".join(c["word"].upper() for c in candidates) + '"'
+
     for c in candidates:
         word = c.get("word", "")
         definition = c.get("definition", "")
@@ -215,6 +217,7 @@ Focus your analysis on:
 - Overlapping meanings in definitions and contextual usage (citations)
 
 ⚠️ DO NOT use natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative comparisons to outside languages.
+⚠️ DO NOT use any Enochian words, real or imagined, as part of your justification other than those given here: {candidate_list}
 All justification must come from **internal evidence only**—patterns observed across Enochian wordforms and meanings.
 
 With this in mind, examine the following definitions and citations (contained within square brackets, pipe-delimited, most relevant first) for the root '{root}':
@@ -279,6 +282,8 @@ Focus on the following:
 If the proposal lacks linguistic rigor:
 - Clearly explain **why** and identify specific weak points
 - Suggest a **stronger candidate or cluster**, if one can be supported from the data
+
+If there are any Enochian words used to justify the root's possible meaning, they must come from this list: {candidate_list}. If the Lead Linguist uses any Enochian words other than the ones in that list, call them out as hallucinations right away.
 
 {skeptic_hint}
 Your tone must be **sharp, disciplined, and logically rigorous**. You are not here to sabotage, but to **safeguard the integrity** of the linguistic record.
@@ -378,10 +383,6 @@ You must:
     adjudicator_cb = (
         (lambda r, m: stream_callback("Adjudicator", m)) if stream_callback else None
     )
-    # archivist_cb = (
-    #     (lambda r, m: stream_callback("Archivist", m)) if stream_callback else None
-    # )
-
     glossator_cb = (
         (lambda r, m: stream_callback("Glossator", m)) if stream_callback else None
     )
@@ -566,25 +567,6 @@ You must:
             print_chunks=True,
             role_name="🧐\tGlossator",
         )
-
-    # === ARCHIVIST ===
-    # NOTE: ARCHIVIST SHELVED FOR NOW
-    # if stream_callback:
-    #     stream_callback("Archivist", "**Archivist:**")
-
-    # print(
-    #     f"\n\n>>>📜\tArchivist's turn to record...\n{GRAY}Record>>\n",
-    #     record.description,
-    #     "\n",
-    # )
-
-    # archivist_summary = archivist_tool._run(
-    #     prompt=record.description
-    #     + f"\n\nLinguist: {linguist_proposal}\n\nSkeptic: {skeptic_response}\n\nLinguist: {linguist_defense}\n\nSkeptic: {skeptic_rebuttal}\n\nAdjudicator: {adjudicator_ruling}",
-    #     stream_callback=None,
-    #     print_chunks=True,
-    #     role_name="📜\tArchivist",
-    # )
 
     tldr_tool = QueryModelTool(
         system_prompt="You are a helpful summarizer. You don't repeat anything anyone says and you use your own words."
