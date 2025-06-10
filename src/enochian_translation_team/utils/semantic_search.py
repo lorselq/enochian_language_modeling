@@ -47,7 +47,7 @@ def build_enhanced_definition(def_entry):
     return f"{base_def.lower()}.{usage_snippet.lower()}"
 
 
-def cluster_definitions(definitions, model, threshold=0.35):
+def cluster_definitions(definitions, model, threshold=0.33):
     pairs = [
         (build_enhanced_definition(d), d) for d in definitions if d.get("definition")
     ]
@@ -61,7 +61,7 @@ def cluster_definitions(definitions, model, threshold=0.35):
 
     clustering = AgglomerativeClustering(
         metric="precomputed",
-        linkage="average",
+        linkage="single",
         distance_threshold=threshold,
         n_clusters=None,
     ).fit(distance_matrix)
@@ -82,7 +82,7 @@ def find_semantically_similar_words(
     definition_weight=0.50,
     min_similarity=0.05,
 ):
-    # 🔒 Hard fix for malformed subst_map
+    # Hard fix for malformed subst_map
     if isinstance(subst_map, list):
         try:
             subst_map = {
@@ -94,9 +94,11 @@ def find_semantically_similar_words(
             raise ValueError(
                 f"Malformed substitution map passed to semantic search: {subst_map[:2]}"
             ) from e
-    
+
     normalized_query = normalize_form(target_word)
-    variants_raw = generate_variants(normalized_query, subst_map, return_subst_meta=True)
+    variants_raw = generate_variants(
+        normalized_query, subst_map, return_subst_meta=True
+    )
     variants = [v[0] for v in variants_raw]
 
     target_entry = next(
@@ -192,7 +194,10 @@ def find_semantically_similar_words(
         embeddings = sentence_model.encode(definitions, convert_to_tensor=True)
         cosine_scores = util.cos_sim(embeddings, embeddings)
 
-        for i, entry in tqdm(enumerate(results), "Calculating similarity across definitions for possible words"):
+        for i, entry in tqdm(
+            enumerate(results),
+            "Calculating similarity across definitions for possible words",
+        ):
             sims = [cosine_scores[i][j].item() for j in range(len(results)) if j != i]
             entry["cluster_similarity"] = sum(sims) / len(sims) if sims else 0.0
     else:
@@ -210,9 +215,3 @@ def find_semantically_similar_words(
     )
 
     return results
-
-    # clusters = cluster_definitions(results, sentence_model)
-
-    # print(f"[Debug] Created {len(clusters)} semantic clusters for '{target_word}'.")
-
-    # return clusters
