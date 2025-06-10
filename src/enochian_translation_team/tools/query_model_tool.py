@@ -1,4 +1,5 @@
 import os
+from tenacity import retry, wait_fixed, wait_random, stop_after_attempt
 from typing import Optional, Callable
 from openai import OpenAI
 from crewai.tools import BaseTool
@@ -11,6 +12,7 @@ class QueryModelTool(BaseTool):
         "You are a computational linguist specializing in dead and obscure languages."
     )
 
+    @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(4) + wait_random(1, 5))
     def _run(
         self,
         prompt: str,

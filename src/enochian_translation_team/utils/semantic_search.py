@@ -47,7 +47,7 @@ def build_enhanced_definition(def_entry):
     return f"{base_def.lower()}.{usage_snippet.lower()}"
 
 
-def cluster_definitions(definitions, model, threshold=0.33):
+def cluster_definitions(definitions, model, threshold=0.3):
     pairs = [
         (build_enhanced_definition(d), d) for d in definitions if d.get("definition")
     ]
