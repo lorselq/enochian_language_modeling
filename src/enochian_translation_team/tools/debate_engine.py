@@ -220,7 +220,7 @@ Focus your analysis on:
 ⚠️ DO NOT use any Enochian words, real or imagined, as part of your justification other than those given here: {candidate_list}
 All justification must come from **internal evidence only**—patterns observed across Enochian wordforms and meanings.
 
-With this in mind, examine the following definitions and citations (contained within square brackets, pipe-delimited, most relevant first) for the root '{root}':
+With this in mind, examine the following definitions and citations (contained within square brackets, pipe-delimited, most relevant first) for the root '{root.upper()}':
 
 {root_def_summary}
 
@@ -238,7 +238,7 @@ Your tone must be scholarly and confident. Avoid vague generalizations. Use exam
             description=f"""
 You are the **Lead Linguist** in a collaborative reverse-engineering initiative focused on the Enochian language—a constructed system with obscure morphology, irregular derivation, and no known linguistic relatives.
 
-You have received detailed analyses from five Junior Linguists, each offering perspectives on the proposed root: **'{root}'**.
+You have received detailed analyses from five Junior Linguists, each offering perspectives on the proposed root: **'{root.upper()}'**.
 
 Your task:
 - **Synthesize their insights into a single, cohesive proposal**
