@@ -36,12 +36,12 @@ class QueryModelTool(BaseTool):
             role = role_name or self.name  # Fallback to tool name if no role given
 
             completion = client.chat.completions.create(
-                model=os.getenv("MODEL_NAME", "deepseek-r1-distill-qwen-7b"),
+                model=os.getenv("MODEL_NAME", "deepseek/deepseek-r1-0528:free"),
                 messages=[
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.5,
+                temperature=1.15,
                 stream=True,
             )
 
