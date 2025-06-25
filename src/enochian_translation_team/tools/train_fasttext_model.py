@@ -1,99 +1,136 @@
-import json
 import os
-from tqdm import trange
-from gensim.models import FastText
+import json
+import hashlib
+import logging
+import random
+import numpy as np
+from typing import List
+from pathlib import Path
+from dataclasses import dataclass, asdict
+from gensim.models import FastText, Word2Vec
+from gensim.utils import simple_preprocess
 from enochian_translation_team.utils.config import get_config_paths
-from enochian_translation_team.utils.variant_utils import (
-    normalize_word,
-    apply_sequence_compressions,
-    generate_variants,
-)
+from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
+
+# --- Setup logging ---
+logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-def load_json(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+# --- Data classes for hyperparameters ---
+@dataclass
+class FastTextParams:
+    vector_size: int = 100
+    window: int = 5
+    min_count: int = 2
+    sg: int = 1
+    min_n: int = 3
+    max_n: int = 6
+    epochs: int = 30
+    alpha: float = 0.05
+    seed: int = 42
 
 
-def load_enochian_words(path):
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return [entry for entry in data if entry.get("normalized")]
+# --- Corpus & caching helpers ---
+def hash_entries(entries: List[Entry]) -> str:
+    # deterministic JSON of the entries (canonical + alternates + senses)
+    simplified = [
+        {
+            "canonical": e.canonical,
+            "alts": sorted([a.value for a in e.alternates]),
+            "senses": sorted([s.definition for s in (e.senses or [])]),
+        }
+        for e in entries
+    ]
+    return hashlib.md5(json.dumps(simplified, sort_keys=True).encode()).hexdigest()
 
 
-def prepare_training_data(entries, subst_map, compression_rules):
-    all_variants = []
-    for entry in entries:
-        base = entry["normalized"].lower()
-        norm = normalize_word(base, subst_map)
-        norm = apply_sequence_compressions(norm, compression_rules)
-
-        raw_variants = generate_variants(
-            norm, subst_map=subst_map, max_subs=3, return_subst_meta=True
-        )
-
-        variants_with_meta = [
-            {"variant": v, "num_subs": n, "letter_substitutions": l}
-            for v, n, l in raw_variants
-            if len(l) <= 1  # Explicitly enforce <= 1 letter-name sub
-        ]
-
-        # Sort by: fewer letter-name substitutions, then fewer total subs
-        preferred_variants = sorted(
-            variants_with_meta,
-            key=lambda x: (len(x["letter_substitutions"]), x["num_subs"]),
-        )
-
-        for item in preferred_variants:
-            variant = item["variant"]
-            if len(variant) >= 3:
-                ngrams = [variant[i : i + 3] for i in range(len(variant) - 2)]
-                all_variants.append(ngrams)
-
-    return all_variants
+# --- Sentence generator ---
+def load_sentences(entries: List[Entry]) -> List[List[str]]:
+    sentences: list[list[str]] = []
+    for e in entries:
+        # context window: canonical + all senses + all alternates
+        parts = [e.canonical]
+        parts += [s.definition for s in (e.senses or [])]
+        parts += [a.value for a in e.alternates]
+        # join into synthetic sentence
+        sent = " ".join(parts)
+        # tokenize using gensim's simple_preprocess (lowercase, remove punctuation/accents)
+        tokens = simple_preprocess(sent, deacc=True, min_len=1)
+        if tokens:
+            sentences.append(tokens)
+    return sentences
 
 
-def train_fasttext_model(sentences, total_epochs=100):
-    model = FastText(vector_size=75, window=3, min_count=1, workers=12, sg=1)
+# --- Training & caching ---
+
+
+def train_fasttext_model(
+    entries: List[Entry], out_path: Path, params: FastTextParams
+) -> Word2Vec:
+    # reproducibility
+    random.seed(params.seed)
+    np.random.seed(params.seed)
+
+    # corpus hashing for cache
+    corpus_hash = hash_entries(entries)
+    meta_path = out_path.with_suffix(".meta.json")
+    if out_path.exists() and meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+        if meta.get("hash") == corpus_hash and meta.get("params") == asdict(params):
+            logger.info("Loading existing FastText model (cache hit)")
+            return FastText.load(str(out_path))
+
+    # prepare data
+    sentences = load_sentences(entries)
+    logger.info(f"Corpus: {len(sentences)} sentences, vocab sample: {sentences[:2]}")
+
+    # build & train
+    model = FastText(
+        vector_size=params.vector_size,
+        window=params.window,
+        min_count=params.min_count,
+        sg=params.sg,
+        min_n=params.min_n,
+        max_n=params.max_n,
+        alpha=params.alpha,
+        seed=params.seed,
+        workers=os.cpu_count() or 1,
+    )
     model.build_vocab(sentences)
+    logger.info(f"Vocab size: {len(model.wv)}")
 
-    for epoch in trange(total_epochs, desc="Training FastText"):
+    for epoch in range(params.epochs):
         model.train(sentences, total_examples=len(sentences), epochs=1)
+        logger.info(f"Epoch {epoch+1}/{params.epochs} complete")
+
+    # save model + metadata
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(str(out_path))
+    meta = {"hash": corpus_hash, "params": asdict(params)}
+    meta_path.write_text(json.dumps(meta, indent=2))
+    logger.info(f"Model and metadata saved to {out_path}")
 
     return model
 
 
-def save_model(model, path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    model.save(str(path))
-
-
-def load_model(path):
-    return FastText.load(path)
+# --- Main script ---
 
 
 def main():
     paths = get_config_paths()
+    dict_path = Path(paths["dictionary"])
+    model_path = Path(paths.get("model_output", "fasttext.bin"))
 
-    print("[+] Loading corpus...")
-    entries = load_enochian_words(paths["dictionary"])
-    print(f"[+] Loaded {len(entries)} usable words.")
+    logger.info("Loading dictionary entries...")
+    entries = load_dictionary(str(dict_path))
+    logger.info(f"Loaded {len(entries)} entries")
 
-    print("[+] Loading substitution and compression rules...")
-    subst_map = load_json(paths["substitution_map"])
-    compression_rules = load_json(paths["sequence_compressions"])
+    params = FastTextParams()
+    logger.info(f"Training with params: {params}")
 
-    print("[+] Preparing training data...")
-    training_data = prepare_training_data(entries, subst_map, compression_rules)
-    print(f"[+] Generated {len(training_data)} variant n-gram samples.")
-
-    print("[+] Training FastText model...")
-    model = train_fasttext_model(training_data)
-
-    print(f"[+] Saving model to {paths['model_output']}...")
-    save_model(model, paths["model_output"])
-
-    print("[✓] FastText model created!")
+    model = train_fasttext_model(entries, model_path, params)
+    logger.info("Training complete")
 
 
 if __name__ == "__main__":

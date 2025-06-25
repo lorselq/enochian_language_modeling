@@ -1,5 +1,7 @@
+from typing import List
 import sys
 import json
+from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
 from gensim.models import FastText
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import SentenceTransformer, util
@@ -21,10 +23,9 @@ def load_substitution_map():
     return subst_map
 
 # === 1. Load Dictionary ===
-def load_entries():
+def load_entries() -> List[Entry]:
     path = get_config_paths()["dictionary"]
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_dictionary(str(path))
 
 # === 2. Load Model ===
 def load_fasttext():
