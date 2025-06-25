@@ -19,7 +19,7 @@ def get_windows_host_ip():
         return None
 
 
-def refresh_env(local=False) -> bool:
+def refresh_local_env(local=False) -> bool:
     """
     If local=True, regenerate .local_env with current Windows host IP.
     Then load .local_env into os.environ. Return True on success.
@@ -45,7 +45,7 @@ def refresh_env(local=False) -> bool:
             with open(env_path, "w") as f:
                 f.write("LOCAL_OPENAI_API_KEY=sk-local-testing-lol\n")
                 f.write(f"LOCAL_OPENAI_API_BASE={base_url}\n")
-                f.write("LOCAL_MODEL_NAME=openai/local-model\n")
+                f.write("LOCAL_MODEL_NAME=qwen3-8b\n")
                 f.write("PYTHONPATH=src\n")
             print(f"[SUCCESS] Wrote local env to {env_path}")
         except Exception as e:

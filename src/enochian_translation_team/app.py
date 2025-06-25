@@ -1,6 +1,6 @@
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from collections import defaultdict
-from enochian_translation_team.utils.local_env_refresher import refresh_env
+from enochian_translation_team.utils.local_env_refresher import refresh_local_env
 from enochian_translation_team.crew.root_extraction_crew import RootExtractionCrew
 
 
@@ -46,10 +46,13 @@ def stream_callback(role, message):
 def main():
     local_remote_mode = None
     while local_remote_mode not in ("1", "2"):
-        local_remote_mode = input("Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? ")
-    if local_remote_mode == "1":
-        if(refresh_env()):
-            load_dotenv(".env_local", override=True)
+        local_remote_mode = input("Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? [note: currently as debug always does (1)] ")
+    if local_remote_mode == "1" or local_remote_mode == "2":
+        if(refresh_local_env()):
+            env_local = find_dotenv(".env_local")
+            env_remote = find_dotenv(".env_remote")
+            load_dotenv(env_local, override=True)
+            load_dotenv(env_remote, override=True)
         else:
             print("[Error] Could not load environment file for local LLM connection. Exiting.")
             return
@@ -77,7 +80,7 @@ def main():
                 max_words = int(max_words_input)
             except ValueError:
                 print("Invalid number. Please use a digit.")
-        print(f"🔍 Evaluating \033[38;5;178m{max_words}\033[0m\n ngrams...")
+        print(f"🔍 Evaluating \033[38;5;178m{max_words}\033[0m ngrams...")
         crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
 
     print("\n\n🎉 The research team has completed their assigned task(s)!")

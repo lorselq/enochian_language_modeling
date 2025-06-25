@@ -49,7 +49,7 @@ class QueryModelTool(BaseTool):
         api_key_env: str,
         model_env: str,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str, str], None]] = None,
+        stream_callback: Optional[Callable[[str, str], None]] = None,
         print_chunks: bool = False,
         role_name: Optional[str] = None,
     ) -> str:
@@ -84,7 +84,9 @@ class QueryModelTool(BaseTool):
             content = getattr(delta, "content", "")
             if not content:
                 if time.time() > idle_deadline:
-                    raise TimeoutError("[Error] Timed out because remote LLM stream idle > 30 seconds")
+                    raise TimeoutError(
+                        "[Error] Timed out because remote LLM stream idle > 30 seconds"
+                    )
                 continue
 
             buffer.append(content)
@@ -94,23 +96,15 @@ class QueryModelTool(BaseTool):
                 print(f"{GRAY}{content}{RESET}", end="", flush=True)
             elif stream_callback:
                 # thinking tokens
-                stream_callback(role, f"{GRAY}{content}{RESET}", "thinking")
+                stream_callback(role, f"{WHITE}{content}{RESET}")
 
             if chunk.choices[0].finish_reason is not None:
                 break
 
             if time.time() > idle_deadline:
-                raise TimeoutError("[Error] Timed out because remote LLM stream idle > 30 seconds")
-
-        # emit final answer tokens
-        if print_chunks:
-            print()  # newline after thinking
-            for token in buffer:
-                print(f"{WHITE}{token}{RESET}", end="", flush=True)
-            print()
-        elif stream_callback:
-            for token in buffer:
-                stream_callback(role, f"{WHITE}{token}{RESET}", "answer")
+                raise TimeoutError(
+                    "[Error] Timed out because remote LLM stream idle > 30 seconds"
+                )
 
         return response_text or "[ERROR] No content returned."
 
@@ -122,10 +116,11 @@ class QueryModelTool(BaseTool):
     def _try_remote(
         self,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str, Optional[str]], None]] = None,
+        stream_callback: Optional[Callable[[str, str], None]] = None,
         print_chunks: bool = False,
         role_name: Optional[str] = None,
     ) -> str:
+        print(f"{GREEN}Attempting to connect to a remote LLM...{RESET}")
         return self._llm_call(
             api_base_env="REMOTE_OPENAI_API_BASE",
             api_key_env="REMOTE_OPENAI_API_KEY",
@@ -139,12 +134,11 @@ class QueryModelTool(BaseTool):
     def _run(
         self,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str, Optional[str]], None]] = None,
+        stream_callback: Optional[Callable[[str, str], None]] = None,
         print_chunks: bool = False,
         role_name: Optional[str] = None,
     ) -> str:
         try:
-            print(f"{GREEN}Attempting to connect to a remote LLM...{RESET}")
             return self._try_remote(
                 prompt,
                 stream_callback=stream_callback,

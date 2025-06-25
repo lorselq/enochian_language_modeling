@@ -1,6 +1,6 @@
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from collections import defaultdict
-from enochian_translation_team.utils.local_env_refresher import refresh_env
+from enochian_translation_team.utils.local_env_refresher import refresh_local_env
 from enochian_translation_team.crew.root_extraction_crew import RootExtractionCrew
 
 
@@ -44,29 +44,24 @@ def stream_callback(role, message):
 
 
 def main():
-    print("[✓] Launching CLI version...")
-
     local_remote_mode = None
     while local_remote_mode not in ("1", "2"):
-        local_remote_mode = input(
-            "Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? "
-        )
-    if local_remote_mode == "1":
-        if refresh_env():
-            load_dotenv(".env_local", override=True)
+        local_remote_mode = input("Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? [note: currently, as debug, always does (2)] ")
+    if local_remote_mode == "1" or local_remote_mode == "2":
+        if(refresh_local_env()):
+            env_local = find_dotenv(".env_local")
+            env_remote = find_dotenv(".env_remote")
+            load_dotenv(env_local, override=True)
+            load_dotenv(env_remote, override=True)
         else:
-            print(
-                "[Error] Could not load environment file for local LLM connection. Exiting."
-            )
+            print("[Error] Could not load environment file for local LLM connection. Exiting.")
             return
     else:
         load_dotenv(".env_remote", override=True)
-
+        
     debate_mode = None
     while debate_mode not in ("1", "2"):
-        debate_mode = input(
-            "Do you want to eval a specific ngram (1) or evaluate a number of ngrams (2)? "
-        )
+        debate_mode = input("Do you want to eval a specific ngram (1) or evaluate a number of ngrams (2)? ")
 
     crew = RootExtractionCrew()
 
@@ -89,6 +84,7 @@ def main():
         crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
 
     print("\n\n🎉 The research team has completed their assigned task(s)!")
+
 
 
 if __name__ == "__main__":

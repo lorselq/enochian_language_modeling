@@ -102,7 +102,7 @@ def debate_ngram(
         if word and definition:
             line = (
                 f"{word.strip()} — {definition.strip()} "
-                f"<fasttext:{fasttext}, semantic similarity:{semantic}, tier:{tier}>"
+                f"<fasttext:{fasttext}, semantic similarity:{semantic}, tier:{tier}>" if fasttext > 0 or semantic > 0 or tier != "Untiered" else ""
             )
             joined_defs.append(line)
     if root_entry is None:
@@ -114,7 +114,10 @@ def debate_ngram(
             ),
             None,
         )
-    selected_defs = select_definitions(joined_defs, max_words=75)
+    root_def_text = _get_field(root_entry, "definition", "")
+    if root_def_text == "":
+        print(f"[Error] root_entry is yielding definition of '{root_def_text}'")
+    selected_defs = select_definitions(joined_defs, max_words=100)
     root_def_summary = " | ".join(selected_defs) + (
         "..." if len(joined_defs) > len(selected_defs) else ""
     )
@@ -326,7 +329,7 @@ Focus on the following:
 
 If the proposal lacks linguistic rigor:
 - Clearly explain **why** and identify specific weak points
-- Suggest a **stronger candidate or cluster**, if one can be supported from the data
+- Suggest a **stronger alternative meaning**, if one can be supported from the data
 
 If there are any Enochian words used to justify the root's possible meaning, they must come from this list: {candidate_list}. If the Lead Linguist uses any Enochian words other than the ones in that list, call them out as hallucinations right away.
 
@@ -343,8 +346,8 @@ Your task:
 - **Directly address the Skeptic's objections** with clear, evidence-based rebuttals.
 - Reaffirm the **morphological and semantic rationale** that supports the root's candidacy.
 - Identify any misinterpretations or overly narrow assumptions in the Skeptic's argument.
-- Defend the use of empirical metrics (e.g., FastText similarity, semantic cohesion) as legitimate support for root analysis.
-- Justify abstract or metaphorical readings **if grounded in internal Enochian evidence**.
+- Examine whether any **alternative interpretations** the Skeptic raised have basis and adopt them if they do (the Skeptic may or may not provide any).
+- Justify abstract or metaphorical readings **if grounded in evidence provided in this prompt**.
 
 Your tone must be:
 - **Confident** (you are the expert)
@@ -385,9 +388,8 @@ You must:
                 "Your ruling must weigh the core arguments on both sides, focusing on:\n"
                 "- Linguistic plausibility\n"
                 "- Semantic cohesion across definitions\n"
-                "- Morphological consistency or structure\n"
+                "- Whether the proposal is vague or lacking substance\n"
                 "- Whether the defense meaningfully addressed the skeptic’s objections\n"
-                "- Use of empirical metrics (e.g., FastText similarity, semantic alignment)\n\n"
                 "Assume the data provided is all that is available, and that metric thresholds are valid and statistically derived.\n"
                 "Abstract or metaphorical meanings are acceptable if supported by internal consistency.\n\n"
                 "Be concise, definitive, and analytical. No hedging.\n\n"
@@ -420,32 +422,32 @@ You must:
     RESET = "\033[0m"
 
     junior_cb = (
-        (lambda _role, content, kind: stream_callback("Junior Linguist", content, kind))
+        (lambda _role, content: stream_callback("Junior Linguist", content))
         if stream_callback
         else None
     )
     linguist_cb = (
-        (lambda _role, content, kind: stream_callback("Linguist", content, kind))
+        (lambda _role, content: stream_callback("Linguist", content))
         if stream_callback
         else None
     )
     skeptic_cb = (
-        (lambda _role, content, kind: stream_callback("Skeptic", content, kind))
+        (lambda _role, content: stream_callback("Skeptic", content))
         if stream_callback
         else None
     )
     adjudicator_cb = (
-        (lambda _role, content, kind: stream_callback("Adjudicator", content, kind))
+        (lambda _role, content: stream_callback("Adjudicator", content))
         if stream_callback
         else None
     )
     glossator_cb = (
-        (lambda _role, content, kind: stream_callback("Glossator", content, kind))
+        (lambda _role, content: stream_callback("Glossator", content))
         if stream_callback
         else None
     )
     summarizer_cb = (
-        (lambda _role, content, kind: stream_callback("TLDR", content, kind))
+        (lambda _role, content: stream_callback("TLDR", content))
         if stream_callback
         else None
     )
@@ -601,7 +603,7 @@ You must:
                 if is_canon:
                     adjudicator_ruling = (
                         f"✅ ACCEPTED\n"
-                        f"The proposed root '{root.upper()}' is already a canon entry defined as '{_get_field(root_entry.senses[0].definition, 'definition', '') if root_entry and root_entry.senses and root_entry.senses[0].definition else ''}'. "
+                        f"The proposed root '{root.upper()}' is already a canon entry defined as '{root_def_text}'. "
                         "This existing definition provides sufficient internal linguistic evidence for approval.\n"
                         "The following debate is preserved for insight and extended justification:"
                     )
@@ -677,8 +679,7 @@ You must:
                 archivist_summary_formatted += "\n\n=== 🧐 GLOSSATOR ===\n" + gloss
 
             tldr_summary = tools["tldr"]._run(
-                prompt="Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n"
-                + archivist_summary_formatted,
+                prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{archivist_summary_formatted}",
                 stream_callback=summarizer_cb,
             )
 
