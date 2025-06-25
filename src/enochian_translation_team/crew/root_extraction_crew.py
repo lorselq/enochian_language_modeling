@@ -1,6 +1,8 @@
+from typing import List
 import re
 import json
 import sqlite3
+from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
 from itertools import chain
 from tqdm import tqdm
 from collections import Counter, defaultdict
@@ -16,6 +18,7 @@ from enochian_translation_team.utils.semantic_search import (
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index
+from enochian_translation_team.utils.dictionary_loader import load_dictionary
 
 
 class RootExtractionCrew:
@@ -65,19 +68,8 @@ class RootExtractionCrew:
         with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
             json.dump(sorted(list(combined)), f, indent=2)
 
-    def load_entries(self):
-        with open(self.dictionary_path, "r", encoding="utf-8") as f:
-            raw_entries = json.load(f)
-
-        entries = []
-        for e in raw_entries:
-            if (
-                e.get("normalized")
-                and e.get("definition")
-                and e.get("canon_word") is True
-            ):
-                entries.append(e)
-        return entries
+    def load_entries(self) -> List[Entry]:
+        return load_dictionary(str(self.dictionary_path))
 
     def load_subst_map(self):
         with open(self.subst_map_path, "r", encoding="utf-8") as f:
@@ -113,10 +105,21 @@ class RootExtractionCrew:
         )
         return cursor.fetchone() is not None
 
-    def get_matching_variant(self, ngram, canonical):
+    def get_matching_variant(self, ngram: str, canonical: str) -> str | None:
+        """
+        Look up in the ngrams table which canonical word
+        corresponds to this ngram+canonical pair. Since we've
+        removed the 'variant' column, we now return the 'canonical'.
+        """
         cursor = self.ngram_db.cursor()
         cursor.execute(
-            "SELECT variant FROM ngrams WHERE ngram = ? AND canonical = ? LIMIT 1",
+            """
+            SELECT canonical
+              FROM ngrams
+             WHERE ngram = ?
+               AND canonical = ?
+             LIMIT 1
+            """,
             (ngram, canonical),
         )
         row = cursor.fetchone()
@@ -126,7 +129,7 @@ class RootExtractionCrew:
         seen = set()
         unique = []
         for entry in entries:
-            key = entry["normalized"]
+            key = entry.canonical
             if key not in seen:
                 seen.add(key)
                 unique.append(entry)
@@ -142,18 +145,33 @@ class RootExtractionCrew:
         return "unknown"
 
     def evaluate_ngram(self, ngram, cluster, stream_callback=None, cluster_id=None):
+        def _get_field(item, field, default=""):
+            """
+            Unified accessor for Entry objects and dicts.
+            """
+            if isinstance(item, dict):
+                return item.get(field, default)
+            else:
+                return getattr(item, field, default)
+            
         print(
             f"[Debug] Evaluating cluster with length of {len(cluster)} for {ngram}..."
         )
 
         cluster_note = f"[Cluster {cluster_id}]" if cluster_id is not None else ""
-        definitions = [
-            c["definition"]
-            for c in tqdm(
-                cluster, desc=f"{cluster_note} Evaluating cluster for {ngram.upper()}"
-            )
-            if c["definition"]
-        ]
+        definitions = []
+        for c in tqdm(
+            cluster, desc=f"{cluster_note} Evaluating cluster for {ngram.upper()}"
+        ):
+            # pull out the raw definition text, whether c is an Entry or a dict
+            if hasattr(c, "definition"):
+                def_text = c.definition
+            else:
+                def_text = c.get("definition", "")
+
+            # only keep non-empty definitions
+            if def_text:
+                definitions.append(def_text)
         cohesion_score = compute_cluster_cohesion(definitions, self.sentence_model)
         semantic_hits = sum(1 for c in cluster if c["source"] in ("semantic", "both"))
         semantic_coverage = round(semantic_hits / len(cluster), 3) if cluster else 0.0
@@ -165,49 +183,49 @@ class RootExtractionCrew:
         root_entry = None
 
         for c in cluster:
-            if not c.get("definition"):
+            if not _get_field(c, "definition", ""):
                 continue
 
-            citations = c.get("citations", [])
+            citations = _get_field(c, "key_citations", "")
             if citations and isinstance(citations[0], dict):
                 contexts = [
-                    cite.get("context", "").strip()
+                    _get_field(cite, "context", "").strip()
                     for cite in citations
-                    if cite.get("context")
+                    if _get_field(cite, "context", "")
                 ]
             else:
                 contexts = citations
 
             definition = (
-                f"{c.get('definition', '')} [{' / '.join(contexts[:2])}]"
+                f"{_get_field(c, 'definition', '')} [{' / '.join(contexts[:2])}]"
                 if contexts
-                else c.get("definition", "")
+                else _get_field(c, "definition", "")
             )
 
             entry = {
-                "word": c.get("word", "").upper(),
+                "word": _get_field(c, "word", "").upper(),
                 "definition": definition,
-                "normalized": c.get("normalized", "").lower(),
-                "fasttext": c.get("fasttext", 0.0),
-                "semantic": c.get("semantic", 0.0),
-                "score": c.get("score", 0.0),
-                "tier": c.get("tier", "Untiered"),
-                "priority": c.get("priority", 0),
-                "citations": c.get("citations", []),
-                "source": c.get("source", "unknown"),
+                "normalized": _get_field(c, "normalized", "").lower(),
+                "fasttext": _get_field(c, "fasttext", "0.0"),
+                "semantic": _get_field(c, "semantic", "0.0"),
+                "score": _get_field(c, "score", "0.0"),
+                "tier": _get_field(c, "tier", "Untiered"),
+                "priority": _get_field(c, "priority", "0"),
+                "citations": _get_field(c, "citations", ""),
+                "source": _get_field(c, "source", "unknown"),
             }
 
             # Check if this is the literal ngram word
             if (
-                entry.get("normalized", "")
+                _get_field(entry, "normalized", "")
                 == ngram_lower
                 # or entry.get("word", "").lower() == ngram_lower    # temporarily suspended from action
             ):
-                root_entry = c.copy()  # <- This preserves all fields
+                root_entry = c  # We can directly use the Entry object
                 anchor_entry = {
-                    "word": f"{c.get('word', '')} ⭐️ (root form)",
+                    "word": f"{_get_field(c, 'word', '')} ⭐️ (root form)",
                     "definition": definition,
-                    "normalized": c.get("normalized", "").lower(),
+                    "normalized": _get_field(c, "normalized", "").lower(),
                 }
             else:
                 trimmed_cluster.append(entry)
@@ -217,10 +235,10 @@ class RootExtractionCrew:
             trimmed_cluster.insert(0, anchor_entry)
 
         # Check for exact-match anchor word in the cluster
-        if root_entry and root_entry.get("definition"):
+        if root_entry and _get_field(root_entry, "definition", ""):
             root_callout = (
                 f"📌 Note: The proposed root '{ngram.upper()}' is itself a defined word: "
-                f"**{root_entry.get('definition')}**\n"
+                f"**{_get_field(root_entry, 'definition', '')}**\n"
                 "This may indicate its role as a base morpheme from which related forms are derived.\n"
             )
         else:
@@ -237,7 +255,7 @@ class RootExtractionCrew:
 
         tiered_groups = defaultdict(list)
         for c in cluster:
-            tier = c.get("tier", "Untiered")
+            tier = _get_field(c, "tier", "Untiered")
             tiered_groups[tier].append(c)
         for tier, group in tiered_groups.items():
             group.sort(
@@ -250,7 +268,7 @@ class RootExtractionCrew:
             seen = set()
             unique = []
             for entry in group:
-                key = entry.get("normalized", "").lower()
+                key = _get_field(entry, "normalized", "").lower()
                 if key not in seen:
                     seen.add(key)
                     unique.append(entry)
@@ -290,9 +308,18 @@ class RootExtractionCrew:
     def run_with_streaming(
         self, max_words=None, stream_callback=None, single_ngram=None
     ):
+        def _get_field(item, field, default=""):
+            """
+            Unified accessor for Entry objects and dicts.
+            """
+            if isinstance(item, dict):
+                return item.get(field, default)
+            else:
+                return getattr(item, field, default)
+        
         build_and_save_ngram_index()
         if single_ngram:
-            ngram_generator = [(single_ngram, 418)]  # Use a fake count
+            ngram_generator = [(single_ngram, 9001)]  # Use a fake count
             max_words = 999
             if single_ngram in self.processed_ngrams:
                 print(
@@ -305,6 +332,8 @@ class RootExtractionCrew:
         seen_words = 0
 
         print("🪄 Initializing semantic tribunal...\n")
+    
+
         for ngram, count in ngram_generator:
             if ngram in self.processed_ngrams:
                 print(
@@ -313,7 +342,7 @@ class RootExtractionCrew:
                 continue
 
             print(
-                f"[✓] Processing root candidate: '{ngram.upper()}' (appears in {count} forms)"
+                f"[✓] Processing root candidate: '{ngram.upper()}'"
             )
 
             semantic_candidates = find_semantically_similar_words(
@@ -324,24 +353,46 @@ class RootExtractionCrew:
                 subst_map=self.subst_map,
             )
 
-            index_candidates = self.candidate_finder.get_candidates(
-                ngram=ngram,
-                top_n=20,
-                similarity_threshold=0.35,
-                include_context=True,
-            )
+            # index_candidates = self.candidate_finder.find_candidates(
+            #     target=ngram, top_k=9999 # corpus is only ~1350 words long at most, so this will capture all candidates
+            # )
+            
+            index_candidates = self.candidate_finder.get_all_ngram_candidates(ngram)
+            print(f"[Debug] index_candidates (count={len(index_candidates)}): "
+                f"{[c['normalized'] for c in index_candidates][:10]}…")
 
             if not semantic_candidates or len(semantic_candidates) < 2:
                 print(f"[⚠️] Too few semantic candidates for '{ngram}'. Skipping.")
                 continue
 
             clusters = cluster_definitions(semantic_candidates, self.sentence_model)
+            print(f"[Debug] cluster_definitions returned {len(clusters)} clusters")
+            for i, cl in enumerate(clusters):
+                print(
+                    f"[Debug] - Cluster {i} has {len(cl)} items; sample normals ({len(cl)} entries long): "
+                    f"{[_get_field(c, 'normalized', '') for c in cl[:15]]}"
+                )
 
-            for cluster_id, cluster in enumerate(clusters):
-                sem_norms = {c["normalized"] for c in cluster}
-                index_norms = {c["normalized"] for c in index_candidates}
+            for cluster_id, cluster in enumerate(
+                tqdm(
+                    clusters,
+                    desc="Evaluating clusters",
+                    total=len(clusters),
+                    bar_format="{desc}: {n_fmt}/{total_fmt}",
+                )
+            ):
+                print(
+                    f"[Debug] entering cluster_id={cluster_id} with {len(cluster)} items and element type={type(cluster[0])}"
+                )
+                sem_norms = {_get_field(c, "normalized", "") for c in cluster if _get_field(c, "normalized", "")}
+                index_norms = {
+                    _get_field(c, "normalized", "") for c in index_candidates if _get_field(c, "normalized", "")
+                }
                 overlap = sem_norms & index_norms
 
+                print("[Debug] sem_norms sample:", list(sem_norms)[:5])
+                print("[Debug] index_norms:", list(index_norms))
+                print("[Debug] overlap:", overlap)
                 if not overlap or len(overlap) < 2:
                     print(
                         f"[Skipped] Potential cluster for '{ngram}' did not meet overlap threshold."
@@ -350,12 +401,17 @@ class RootExtractionCrew:
 
                 merged_cluster = []
 
-                for word in {c["normalized"] for c in cluster + index_candidates}:
+                merged_items = list(cluster) + index_candidates
+
+                for word in {
+                    _get_field(c, "normalized", "") for c in merged_items if _get_field(c, "normalized", "")
+                }:
                     sem_entry = next(
-                        (c for c in cluster if c["normalized"] == word), None
+                        (c for c in cluster if _get_field(c, "normalized", "") == word), None
                     )
                     index_entry = next(
-                        (c for c in index_candidates if c["normalized"] == word), None
+                        (c for c in index_candidates if _get_field(c, "normalized", "") == word),
+                        None,
                     )
 
                     if not sem_entry and index_entry:
@@ -364,19 +420,37 @@ class RootExtractionCrew:
                     if not self.is_ngram_in_variants(ngram, word):
                         continue
 
-                    entry_word = sem_entry.get("word") if sem_entry else word
-                    variant_used = self.get_matching_variant(ngram, word)
+                    entry_word = _get_field(sem_entry, "word", word) if sem_entry else word
+                    if isinstance(word, str) and word:
+                        variant_used = self.get_matching_variant(ngram, word)
+                    else:
+                        variant_used = None
+
+                    sem_cits = (sem_entry.get("citations") or []) if sem_entry else []
+                    idx_cits = (
+                        (index_entry.get("citations") or []) if index_entry else []
+                    )
+
+                    citations = {
+                        c.context.strip()
+                        for c in sem_cits + idx_cits
+                        if _get_field(c, "context", "")
+                    }
 
                     merged_cluster.append(
                         {
                             "word": (
-                                f"{entry_word.upper()} (via: {variant_used})"
+                                f"{entry_word.upper() if entry_word else ''} (via: {variant_used})"
                                 if variant_used and variant_used != word
-                                else entry_word.upper()
+                                else (
+                                    entry_word.upper()
+                                    if entry_word
+                                    else "[ERROR] word not located"
+                                )
                             ),
                             "normalized": word,
                             "definition": (
-                                sem_entry.get("definition")
+                                sem_entry.get("definition", None)
                                 if sem_entry
                                 else (
                                     index_entry.get(
@@ -412,22 +486,7 @@ class RootExtractionCrew:
                                 sem_entry.get("levenshtein", 99) if sem_entry else 99
                             ),
                             "source": self._get_source_label(sem_entry, index_entry),
-                            "citations": list(
-                                {
-                                    c.get("context", "").strip()
-                                    for c in (
-                                        sem_entry.get("citations", [])
-                                        if sem_entry
-                                        else []
-                                    )
-                                    + (
-                                        index_entry.get("citations", [])
-                                        if index_entry
-                                        else []
-                                    )
-                                    if c.get("context")
-                                }
-                            ),
+                            "citations": list(citations),
                         }
                     )
 
@@ -454,23 +513,19 @@ class RootExtractionCrew:
                 self.processed_ngrams.add(ngram)
                 self.save_processed_ngrams()
 
-                if "Archivist" in evaluated:
-                    save_log(
-                        [("Archivist", evaluated["Archivist"])],
-                        label=f"{ngram}_cluster{cluster_id + 1}of{len(clusters)}",
-                    )
-
                 if "Glossator" in evaluated:
                     with open(self.new_definitions_path, "a", encoding="utf-8") as f:
-                        source_words = ", ".join(c["word"] for c in merged_cluster)
+                        source_words = ", ".join(
+                            _get_field(c, "word", "") for c in merged_cluster
+                        )
                         f.write(
                             f"{evaluated['Glossator'].strip()} NOTE: this was inferred from the following words: {source_words}.\n\n"
                         )
 
-                if stream_callback:
-                    for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
-                        if role in evaluated:
-                            stream_callback(role, evaluated[role])
+                # if stream_callback:
+                #     for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
+                #         if role in evaluated:
+                #             stream_callback(role, evaluated[role])
 
             seen_words += 1
             if max_words and seen_words >= max_words:

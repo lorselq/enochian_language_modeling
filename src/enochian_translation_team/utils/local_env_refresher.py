@@ -1,6 +1,8 @@
 import os
 import re
 import subprocess
+from dotenv import load_dotenv, find_dotenv
+
 
 def get_windows_host_ip():
     try:
@@ -16,7 +18,22 @@ def get_windows_host_ip():
         print(f"[ERROR] Failed to parse routing table: {e}")
         return None
 
-def refresh_env(local=False):
+
+def refresh_env(local=False) -> bool:
+    """
+    If local=True, regenerate .local_env with current Windows host IP.
+    Then load .local_env into os.environ. Return True on success.
+    """
+    # location of the env file at your project root
+    explicit_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../../.env_local")
+    )
+    
+    if os.path.exists(explicit_path):
+        env_path = explicit_path
+    else:
+        env_path = find_dotenv(".env_local")
+
     if local:
         ip = get_windows_host_ip()
         if not ip:
@@ -24,20 +41,27 @@ def refresh_env(local=False):
             return False
 
         base_url = f"http://{ip}:1234/v1"
-        # write .env in the root project folder
-        env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.env"))
-
         try:
             with open(env_path, "w") as f:
-                f.write(f"OPENAI_API_KEY=sk-local-testing-lol\n")
-                f.write(f"OPENAI_API_BASE={base_url}\n")
-                f.write(f"MODEL_NAME=openai/local-model\n")
-                f.write(f"PYTHONPATH=src\n")
-            print(f"[SUCCESS] .env updated with IP: {ip}")
-            return True
+                f.write("LOCAL_OPENAI_API_KEY=sk-local-testing-lol\n")
+                f.write(f"LOCAL_OPENAI_API_BASE={base_url}\n")
+                f.write("LOCAL_MODEL_NAME=openai/local-model\n")
+                f.write("PYTHONPATH=src\n")
+            print(f"[SUCCESS] Wrote local env to {env_path}")
         except Exception as e:
-            print(f"[ERROR] Writing .env failed: {e}")
+            print(f"[ERROR] Writing .local_env failed: {e}")
             return False
-    else:
-        env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.env"))
-        
+
+    # Now load it
+    if not os.path.exists(env_path):
+        print(f"[ERROR] Could not find local env file at {env_path}.")
+        return False
+
+    # load_dotenv will read KEY=VALUE lines into os.environ
+    loaded = load_dotenv(env_path, override=True)
+    if not loaded:
+        print(f"[ERROR] Failed to load environment from {env_path}.")
+        return False
+
+    print(f"[SUCCESS] Loaded environment from {env_path}")
+    return True

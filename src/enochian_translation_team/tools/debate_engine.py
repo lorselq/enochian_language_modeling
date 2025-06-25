@@ -1,6 +1,50 @@
 from typing import Optional
 from crewai import Agent, Task, Crew
+from sentence_transformers import SentenceTransformer, util
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
+from enochian_translation_team.utils.dictionary_loader import Entry
+import logging
+
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("openai.api_requestor").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+AGREEMENT_THRESHOLD = 0.85
+
+
+def _get_field(item, field, default=""):
+    if isinstance(item, dict):
+        return item.get(field, default)
+    return getattr(item, field, default)
+
+
+def check_convergence(texts: list[str]) -> bool:
+    # Need at least two items to compute pairwise similarity
+    if len(texts) < 2:
+        return False
+
+    # 1) Embed all texts
+    embs = embedder.encode(texts, convert_to_tensor=True)
+
+    # 2) Compute pairwise cosine-sim matrix
+    sims = util.cos_sim(embs, embs)
+
+    # 3) Collect only the lower-triangle off-diagonal scores
+    scores: list[float] = []
+    n = len(texts)
+    for i in range(n):
+        for j in range(i):
+            scores.append(float(sims[i, j]))
+
+    # 4) If for some reason we still have no scores, treat as not converged
+    if not scores:
+        return False
+
+    # 5) Compute average and compare against threshold
+    avg_sim = sum(scores) / len(scores)
+    return avg_sim >= AGREEMENT_THRESHOLD
 
 
 def select_definitions(def_list, max_words=75):
@@ -38,20 +82,22 @@ def safe_output(crew_output) -> dict:
 
 def debate_ngram(
     root: str,
-    candidates: list[dict],
+    candidates: list[Entry],
     stats_summary: str,
     stream_callback=None,
-    root_entry: Optional[dict] = None,
+    root_entry: Optional[Entry] = None,
 ):
     joined_defs = []
-    candidate_list = '"' + ", ".join(c["word"].upper() for c in candidates) + '"'
+    candidate_list = (
+        '"' + ", ".join(_get_field(c, "word", "").upper() for c in candidates) + '"'
+    )
 
     for c in candidates:
-        word = c.get("word", "")
-        definition = c.get("definition", "")
-        fasttext = round(c.get("fasttext", 0.0), 3)
-        semantic = round(c.get("semantic", 0.0), 3)
-        tier = c.get("tier", "Untiered")
+        word = _get_field(c, "word", "")
+        definition = _get_field(c, "definition", "")
+        fasttext = round(float(_get_field(c, "fasttext", "0.0")), 3)
+        semantic = round(float(_get_field(c, "semantic", "0.0")), 3)
+        tier = _get_field(c, "tier", "Untiered")
 
         if word and definition:
             line = (
@@ -61,18 +107,24 @@ def debate_ngram(
             joined_defs.append(line)
     if root_entry is None:
         root_entry = next(
-            (c for c in candidates if c.get("word", "").lower() == root.lower()), None
+            (
+                c
+                for c in candidates
+                if _get_field(c, "word", "").lower() == root.lower()
+            ),
+            None,
         )
     selected_defs = select_definitions(joined_defs, max_words=75)
     root_def_summary = " | ".join(selected_defs) + (
         "..." if len(joined_defs) > len(selected_defs) else ""
     )
 
-    is_canon = bool(root_entry and root_entry.get("definition"))
+    is_canon = bool(root_entry and _get_field(root_entry, "definition", ""))
 
-    if root_entry and root_entry.get("definition"):
-        extra_prompt = f"⚠️ Reminder: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. Consider this as a potential anchor.\n"
-        skeptic_hint = f"\n\n🧐 Note: The root '{root}' is already defined in the corpus as '{root_entry.get('definition')}'. This lends strong weight towards its inclusion as a root word that should be accepted. Consider this in your critique."
+    if root_entry and _get_field(root_entry, "definition", ""):
+        definition = _get_field(root_entry, "definition", "")
+        extra_prompt = f"⚠️ Reminder: The root '{root}' is already defined in the corpus as '{definition}'. Consider this as a potential anchor.\n"
+        skeptic_hint = f"\n\n🧐 Note: The root '{root}' is already defined in the corpus as '{definition}'. This lends strong weight towards its inclusion as a root word that should be accepted. Consider this in your critique."
     else:
         extra_prompt = ""
         skeptic_hint = ""
@@ -80,19 +132,13 @@ def debate_ngram(
     # === AGENTS ===
     tools = {
         "linguist": QueryModelTool(
-            system_prompt="""
+            system_prompt=f"""
                 You are a **disciplined and insightful computational linguist** specializing in the Enochian language—a constructed system with irregular morphology, cryptic derivations, and unknown origin.
 
-                Your task is to **evaluate a proposed root** by identifying **semantic and morphological overlaps** across a set of candidate words. Focus your attention on:
-                - Shared prefixes, suffixes, or internal substrings
-                - Repetition or structural similarity in word forms
-                - Overlapping definitions and contextual meanings from citations
-
                 ⚠️ DO NOT reference natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative outside sources.
-                All reasoning must rely exclusively on **internal evidence**—relationships and patterns among the Enochian words themselves.
+                All reasoning must rely exclusively on **internal evidence**—relationships and patterns among the Enochian words themselves. Do not deviate from these words: 
 
                 Your tone must be confident, scholarly, and analytical.
-                Use specific examples. Clearly explain why any connections you observe are linguistically plausible, not merely coincidental.
 
                 Be thorough, avoid vague generalizations, and always back claims with observed data.
                 """,
@@ -127,12 +173,6 @@ def debate_ngram(
             system_prompt="""
                 You are a skeptical linguist evaluating a proposed root analysis in the Enochian language. Your goal is to identify flawed reasoning, superficial pattern-matching, or semantic inconsistencies.
 
-                You have received a synthesized proposal from the Lead Linguist. Critically evaluate whether:
-                - The words cited genuinely share meaning or structure
-                - The claimed morphological patterns are consistent and non-coincidental
-                - Semantic overlap is significant, not just rhetorical
-                - Tiering is justified based on empirical thresholds (e.g., FastText similarity, semantic alignment)
-
                 Do not dismiss arguments just because they involve theological or metaphysical frameworks—these are valid within Enochian's system. However, be vigilant about overreach, cherry-picked evidence, or unjustified leaps in logic.
 
                 If the root hypothesis lacks rigor, clearly explain why. Offer specific counterpoints. If you believe a stronger candidate or cluster exists, propose it concisely—but only if the evidence supports it.
@@ -158,6 +198,11 @@ def debate_ngram(
         "glossator": QueryModelTool(
             system_prompt="You are a highly precise Enochian glossator. Your role is to propose a single, clear, authoritative dictionary-style definition for a root word that has been approved by an adjudicator. Use the prior linguistic analysis to distill the core conceptual meaning of the word, based solely on its internal usage patterns, morphology, and semantic range across the cited examples. Avoid descriptive summaries. Instead, craft a definition that would be suitable for formal inclusion in a lexicon. This definition should be concise (1-2 lines), but maximally informative. You must not reference English or natural-language etymology. Write in an academic tone, as if submitting this to a linguistic corpus project.",
             name="Glossator",
+            description="",
+        ),
+        "tldr": QueryModelTool(
+            system_prompt="You are a helpful summarizer. You don't repeat anything anyone says and you use your own words.",
+            name="TLDR",
             description="",
         ),
     }
@@ -374,234 +419,301 @@ You must:
     GRAY = "\033[90m"
     RESET = "\033[0m"
 
+    junior_cb = (
+        (lambda _role, content, kind: stream_callback("Junior Linguist", content, kind))
+        if stream_callback
+        else None
+    )
     linguist_cb = (
-        (lambda r, m: stream_callback("Linguist", m)) if stream_callback else None
+        (lambda _role, content, kind: stream_callback("Linguist", content, kind))
+        if stream_callback
+        else None
     )
     skeptic_cb = (
-        (lambda r, m: stream_callback("Skeptic", m)) if stream_callback else None
+        (lambda _role, content, kind: stream_callback("Skeptic", content, kind))
+        if stream_callback
+        else None
     )
     adjudicator_cb = (
-        (lambda r, m: stream_callback("Adjudicator", m)) if stream_callback else None
+        (lambda _role, content, kind: stream_callback("Adjudicator", content, kind))
+        if stream_callback
+        else None
     )
     glossator_cb = (
-        (lambda r, m: stream_callback("Glossator", m)) if stream_callback else None
+        (lambda _role, content, kind: stream_callback("Glossator", content, kind))
+        if stream_callback
+        else None
     )
-
-    # === LINGUISTS ===
-    if stream_callback:
-        stream_callback("Linguist", "**Linguist:**")
+    summarizer_cb = (
+        (lambda _role, content, kind: stream_callback("TLDR", content, kind))
+        if stream_callback
+        else None
+    )
 
     # separator between words
     print("\n\n\n")
     print(
-        f"==={(len('Now discussing the possible root word ') + len(f'<{root}>')) * '='}==="
+        f"==={(len('Now discussing the possible root word ') + len(f'<{root.upper()}>')) * '='}==="
     )
-    print(f"===Now discussing the possible root word '{root}'===")
+    print(f"===Now discussing the possible root word '{root.upper()}'===")
     print(
-        f"==={(len('Now discussing the possible root word ') + len(f'<{root}>')) * '='}==="
+        f"==={(len('Now discussing the possible root word ') + len(f'<{root.upper()}>')) * '='}==="
     )
 
-    # === RESEARCH TEAM ===
+    print(f"{GRAY}Starting prompt for research team: {tasks['propose'].description}")
+
+    STAGES = [
+        ("linguist", 5),
+        ("synthesis", 1),
+        ("skeptic", 1),
+        ("defend", 1),
+        ("rebuttal", 1),
+        ("adjudicator", 1),
+        ("glossator", 1),
+        ("summarizer", 1),
+    ]
+
     linguist_variants = []
-    for i in range(5):
-        if i == 0:
+    linguist_proposal = ""
+    skeptic_response = ""
+    adjudicator_ruling = ""
+    gloss = ""
+    for stage_name, count in STAGES:
+
+        if stage_name == "linguist":
+            agent_tool = tools[stage_name]
+            for i in range(count):
+                print(
+                    f"\n\n>>>👩‍🎓\tLinguist {i + 1}'s research on the root word...\n{GRAY}"
+                )
+                variant = agent_tool._run(
+                    prompt=tasks["propose"].description
+                    + "\nYour goal is: "
+                    + tasks["propose"].expected_output.lower(),
+                    stream_callback=junior_cb,
+                    print_chunks=True,
+                    role_name=f"👩‍🎓 Junior Linguist Researcher #{i + 1}",
+                )
+                linguist_variants.append(variant)
+                if check_convergence(linguist_variants):
+                    print(
+                        "Linguists have converged on similar analyses, passing research to the Lead Linguist..."
+                    )
+                    # jump to the “synthesis” stage index
+                    break
+        elif stage_name == "synthesis":
+            agent_tool = tools[stage_name]
             print(
-                f"{GRAY}Starting prompt for research team: {tasks['propose'].description}"
+                f"\n\n{RESET}>>>🥸\tLead Linguist's turn to propose a new root word...\nSynthesizing junior linguist's input into a meaningful argument:"
             )
-        print(
-            f"\n\n>>>👩‍🎓\tLinguist {i + 1}'s research on the root word...\n{GRAY}Research:"
-        )
-        variant = tools["linguist"]._run(
-            prompt=tasks["propose"].description
-            + "\nYour goal is: "
-            + tasks["propose"].expected_output.lower(),
-            stream_callback=linguist_cb,
-            print_chunks=True,
-            role_name=f"👩‍🎓 Junior Linguist Researcher #{i+1}",
-        )
-        linguist_variants.append(variant)
-
-    # === LEAD LINGUIST: 1 ===
-    print(
-        f"\n\n{RESET}>>>🥸\tLead Linguist's turn to propose a new root word...\nSynthesizing junior linguist's input into a meaningful argument:"
-    )
-
-    linguist_proposal = tools["synthesis"]._run(
-        prompt="\n".join([tasks["synthesize"].description, *linguist_variants]),
-        stream_callback=linguist_cb,
-        print_chunks=True,
-        role_name="🥸\tLead Linguist",
-    )
-
-    # === SKEPTIC: 1 ===
-    if stream_callback:
-        stream_callback("Skeptic", "**Skeptic:**")
-
-    print(
-        f"\n\n{RESET}>>>🤔\tSkeptic's turn to refute...\nRefutation prompt:{GRAY}",
-        tasks["counter"].description,
-        f"\n{RESET}",
-    )
-
-    skeptic_response = tools["skeptic"]._run(
-        prompt="\n".join(
-            [
+            if linguist_variants and len(linguist_variants) > 0:
+                linguist_proposal = agent_tool._run(
+                    prompt="\n".join(
+                        [tasks["synthesize"].description, *linguist_variants]
+                    ),
+                    stream_callback=linguist_cb,
+                    print_chunks=True,
+                    role_name="🥸\tLead Linguist",
+                )
+            else:
+                print(f"[Error] linguist_variants are empty")
+                break
+        elif stage_name == "skeptic":
+            agent_tool = tools[stage_name]
+            print(
+                f"\n\n{RESET}>>>🤔\tSkeptic's turn to refute...\nRefutation prompt:{GRAY}",
                 tasks["counter"].description,
-                f"Linguist said: {linguist_proposal}",
-                f"Your goal: {tasks['counter'].expected_output.lower()}",
-            ]
-        ),
-        stream_callback=skeptic_cb,
-        print_chunks=True,
-        role_name="🤔\tSkeptic",
-    )
-
-    # === LEAD LINGUIST: 2 ===
-    if stream_callback:
-        stream_callback("Linguist", "**Linguist (Defense):**")
-
-    print(
-        f"\n\n{RESET}>>>🥸\tLead Linguist's turn to defend...\nDefense prompt:{GRAY}",
-        tasks["defend"].description,
-        f"{RESET}\n",
-    )
-
-    linguist_defense = tools["linguist"]._run(
-        prompt="\n".join(
-            [
+                f"\n{RESET}",
+            )
+            if linguist_proposal and len(linguist_proposal) > 0:
+                skeptic_response = agent_tool._run(
+                    prompt="\n".join(
+                        [
+                            tasks["counter"].description,
+                            f"Linguist said: {linguist_proposal}",
+                            f"Your goal: {tasks['counter'].expected_output.lower()}",
+                        ]
+                    ),
+                    stream_callback=skeptic_cb,
+                    print_chunks=True,
+                    role_name="🤔\tSkeptic",
+                )
+            else:
+                print("[Error] linguist_proposal defined as ''")
+                break
+        elif stage_name == "defend":
+            agent_tool = tools["linguist"]
+            print(
+                f"\n\n{RESET}>>>🥸\tLead Linguist's turn to defend...\nDefense prompt:{GRAY}",
                 tasks["defend"].description,
-                f"Skeptic said: {skeptic_response}",
-                f"Your goal: {tasks['defend'].expected_output.lower()}",
-            ]
-        ),
-        stream_callback=linguist_cb,
-        print_chunks=True,
-        role_name="🥸\tLead Linguist",
-    )
-
-    # === SKEPTIC: 2 ===
-    if stream_callback:
-        stream_callback("Skeptic", "**Skeptic (Rebuttal):**")
-
-    print(
-        f"\n\n{RESET}>>>🤔\tSkeptic's turn to rebuttal...\nFinal word:{GRAY}",
-        tasks["rebuttal"].description,
-        f"{RESET}\n",
-    )
-    skeptic_rebuttal = tools["skeptic"]._run(
-        prompt="\n".join(
-            [
-                tasks["rebuttal"].description,
-                f"Linguist proposed: {linguist_proposal}",
-                f"You replied: {skeptic_response}",
-                f"Linguist defended by arguing: {linguist_defense}",
-                f"Your goal: {tasks['rebuttal'].expected_output.lower()}",
-            ]
-        ),
-        stream_callback=skeptic_cb,
-        print_chunks=True,
-        role_name="🤔\tSkeptic",
-    )
-
-    # === ADJUDICATOR ===
-    if stream_callback:
-        stream_callback("Adjudicator", "**Adjudicator:**")
-
-    print(
-        f"\n\n{RESET}>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\nRuling:{GRAY}",
-        tasks["ruling"].description,
-        f"{RESET}\n",
-    )
-
-    if is_canon:
-        adjudicator_ruling = (
-            f"✅ ACCEPTED\n"
-            f"The proposed root '{root.upper()}' is already a canon entry defined as '{root_entry.get('definition') if root_entry else ''}'. "
-            "This existing definition provides sufficient internal linguistic evidence for approval.\n"
-            "The following debate is preserved for insight and extended justification:"
-        )
-        print(adjudicator_ruling)
-    else:
-        adjudicator_ruling = tools["adjudicator"]._run(
-            prompt="\n".join(
-                [
+                f"{RESET}\n",
+            )
+            if skeptic_response and len(skeptic_response) > 0:
+                linguist_defense = agent_tool._run(
+                    prompt="\n".join(
+                        [
+                            tasks["defend"].description,
+                            f"Skeptic said: {skeptic_response}",
+                            f"Your goal: {tasks['defend'].expected_output.lower()}",
+                        ]
+                    ),
+                    stream_callback=linguist_cb,
+                    print_chunks=True,
+                    role_name="🥸\tLead Linguist",
+                )
+            else:
+                print("[Error] skeptic_response defined as ''")
+                break
+        elif stage_name == "rebuttal":
+            if linguist_defense and len(linguist_defense) > 0:
+                agent_tool = tools["skeptic"]
+                print(
+                    f"\n\n{RESET}>>>🤔\tSkeptic's turn to rebuttal...\nFinal word:{GRAY}",
+                    tasks["rebuttal"].description,
+                    f"{RESET}\n",
+                )
+                skeptic_rebuttal = agent_tool._run(
+                    prompt="\n".join(
+                        [
+                            tasks["rebuttal"].description,
+                            f"Linguist proposed: {linguist_proposal}",
+                            f"You replied: {skeptic_response}",
+                            f"Linguist defended by arguing: {linguist_defense}",
+                            f"Your goal: {tasks['rebuttal'].expected_output.lower()}",
+                        ]
+                    ),
+                    stream_callback=skeptic_cb,
+                    print_chunks=True,
+                    role_name="🤔\tSkeptic",
+                )
+            else:
+                print("[Error] linguist_defense defined as ''")
+                break
+        elif stage_name == "adjudicator":
+            agent_tool = tools[stage_name]
+            if skeptic_rebuttal and len(skeptic_rebuttal) > 0:
+                print(
+                    f"\n\n{RESET}>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\nRuling:{GRAY}",
                     tasks["ruling"].description,
-                    f"Linguist proposed: {linguist_proposal}",
-                    f"Skeptic replied: {skeptic_response}",
-                    f"Linguist defended by arguing for: {linguist_defense}",
-                    f"Skeptic made their final argument against: {skeptic_rebuttal}"
-                    f"Your goal: {tasks['ruling'].expected_output.lower()}",
-                ]
-            ),
-            stream_callback=adjudicator_cb,
-            print_chunks=True,
-            role_name="👩‍⚖️\tAdjudicator",
-        )
+                    f"{RESET}\n",
+                )
+
+                if is_canon:
+                    adjudicator_ruling = (
+                        f"✅ ACCEPTED\n"
+                        f"The proposed root '{root.upper()}' is already a canon entry defined as '{_get_field(root_entry.senses[0].definition, 'definition', '') if root_entry and root_entry.senses and root_entry.senses[0].definition else ''}'. "
+                        "This existing definition provides sufficient internal linguistic evidence for approval.\n"
+                        "The following debate is preserved for insight and extended justification:"
+                    )
+                    print(adjudicator_ruling)
+                else:
+                    adjudicator_ruling = agent_tool._run(
+                        prompt="\n".join(
+                            [
+                                tasks["ruling"].description,
+                                f"Linguist proposed: {linguist_proposal}",
+                                f"Skeptic replied: {skeptic_response}",
+                                f"Linguist defended by arguing for: {linguist_defense}",
+                                f"Skeptic made their final argument against: {skeptic_rebuttal}"
+                                f"Your goal: {tasks['ruling'].expected_output.lower()}",
+                            ]
+                        ),
+                        stream_callback=adjudicator_cb,
+                        print_chunks=True,
+                        role_name="👩‍⚖️\tAdjudicator",
+                    )
+            else:
+                print("[Error] skeptic_rebuttal defined as ''")
+                break
+        elif stage_name == "glossator":
+            agent_tool = tools[stage_name]
+            gloss = f"<there is no (new) definition for '{root.upper()}'>"
+            if (
+                adjudicator_ruling
+                and len(adjudicator_ruling) > 0
+                and adjudicator_ruling.strip().lower().startswith("✅ accepted")
+                or adjudicator_ruling.strip().lower().startswith("accepted")
+                or "✅" in adjudicator_ruling
+            ):
+                # if stream_callback:
+                #     stream_callback("Glossator", "**Glossator:**")
+
+                print(
+                    f"\n\n{RESET}>>>🧐\tGlossator's turn to provide a definition...\nGenerating definition...\n"
+                )
+
+                gloss = agent_tool._run(
+                    prompt="\n".join(
+                        [
+                            tasks["gloss"].description,
+                            f"Linguist proposed: {linguist_proposal}",
+                            f"Skeptic replied: {skeptic_response}",
+                            f"Linguist defended by arguing for: {linguist_defense}",
+                            f"Skeptic made their final argument against: {skeptic_rebuttal}"
+                            f"Adjudicator decided: {adjudicator_ruling}",
+                        ]
+                    ),
+                    stream_callback=glossator_cb,
+                    print_chunks=True,
+                    role_name="🧐\tGlossator",
+                )
+        elif stage_name == "summarizer":
+            archivist_summary_formatted = (
+                "=== 📖 PROMPT FOR LINGUIST ===\n"
+                + tasks["propose"].description.strip()
+                + "\n\n=== 🥸 LINGUIST PROPOSAL ===\n"
+                + linguist_proposal.strip()
+                + "\n\n=== 🤔 SKEPTIC ===\n"
+                + skeptic_response.strip()
+                + "\n\n=== 🥸 DEFENSE ===\n"
+                + linguist_defense.strip()
+                + "\n\n=== 🤔 REBUTTAL ===\n"
+                + skeptic_rebuttal.strip()
+                + "\n\n=== 👩‍⚖️ ADJUDICATOR ===\n"
+                + adjudicator_ruling.strip()
+            )
+
+            if gloss and len(gloss) > 0:
+                archivist_summary_formatted += "\n\n=== 🧐 GLOSSATOR ===\n" + gloss
+
+            tldr_summary = tools["tldr"]._run(
+                prompt="Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n"
+                + archivist_summary_formatted,
+                stream_callback=summarizer_cb,
+            )
+
+            archivist_summary_formatted = (
+                "\n\n=== 📜 SUMMARY ===\n"
+                + tldr_summary.strip()
+                + "\n\n\n========================\n====== TRANSCRIPT ======\n========================\n\n"
+                + archivist_summary_formatted
+            )
+        else:
+            print(f'[Debug] stage name "{stage_name}" not found oh nooo!')
+
+    # # === LINGUISTS ===
+    # if stream_callback:
+    #     stream_callback("Linguist", "**Linguist:**")
+
+    # # === LEAD LINGUIST: 1 ===
+
+    # # === SKEPTIC: 1 ===
+    # if stream_callback:
+    #     stream_callback("Skeptic", "**Skeptic:**")
+
+    # # === LEAD LINGUIST: 2 ===
+    # if stream_callback:
+    #     stream_callback("Linguist", "**Linguist (Defense):**")
+
+    # # === SKEPTIC: 2 ===
+    # if stream_callback:
+    #     stream_callback("Skeptic", "**Skeptic (Rebuttal):**")
+
+    # # === ADJUDICATOR ===
+    # if stream_callback:
+    #     stream_callback("Adjudicator", "**Adjudicator:**")
 
     # === GLOSSATOR ===
-    gloss = f"<there is no (new) definition for '{root.upper()}'>"
-    if (
-        adjudicator_ruling.strip().lower().startswith("✅ accepted")
-        or adjudicator_ruling.strip().lower().startswith("accepted")
-        or "✅" in adjudicator_ruling
-    ):
-        if stream_callback:
-            stream_callback("Glossator", "**Glossator:**")
-
-        print(
-            f"\n\n{RESET}>>>🧐\tGlossator's turn to provide a definition...\nGenerating definition...\n"
-        )
-
-        gloss = tools["glossator"]._run(
-            prompt="\n".join(
-                [
-                    tasks["gloss"].description,
-                    f"Linguist proposed: {linguist_proposal}",
-                    f"Skeptic replied: {skeptic_response}",
-                    f"Linguist defended by arguing for: {linguist_defense}",
-                    f"Skeptic made their final argument against: {skeptic_rebuttal}"
-                    f"Adjudicator decided: {adjudicator_ruling}",
-                ]
-            ),
-            stream_callback=glossator_cb,
-            print_chunks=True,
-            role_name="🧐\tGlossator",
-        )
-
-    tldr_tool = QueryModelTool(
-        system_prompt="You are a helpful summarizer. You don't repeat anything anyone says and you use your own words."
-    )
-
-    archivist_summary_formatted = (
-        "=== 📖 PROMPT FOR LINGUIST ===\n"
-        + tasks["propose"].description.strip()
-        + "\n\n=== 🥸 LINGUIST PROPOSAL ===\n"
-        + linguist_proposal.strip()
-        + "\n\n=== 🤔 SKEPTIC ===\n"
-        + skeptic_response.strip()
-        + "\n\n=== 🥸 DEFENSE ===\n"
-        + linguist_defense.strip()
-        + "\n\n=== 🤔 REBUTTAL ===\n"
-        + skeptic_rebuttal.strip()
-        + "\n\n=== 👩‍⚖️ ADJUDICATOR ===\n"
-        + adjudicator_ruling.strip()
-    )
-
-    if gloss:
-        archivist_summary_formatted += "\n\n=== 🧐 GLOSSATOR ===\n" + gloss
-
-    tldr_summary = tldr_tool._run(
-        prompt="Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n"
-        + archivist_summary_formatted,
-        stream_callback=None,
-    )
-
-    archivist_summary_formatted = (
-        "\n\n=== 📜 SUMMARY ===\n"
-        + tldr_summary.strip()
-        + "\n\n\n========================\n====== TRANSCRIPT ======\n========================\n\n"
-        + archivist_summary_formatted
-    )
 
     return {
         "Linguist": linguist_proposal,
