@@ -80,7 +80,7 @@ def main():
                 max_words = int(max_words_input)
             except ValueError:
                 print("Invalid number. Please use a digit.")
-        print(f"🔍 Evaluating \033[38;5;178m{max_words}\033[0m\n ngrams...")
+        print(f"🔍 Evaluating \033[38;5;178m{max_words}\033[0m ngrams...")
         crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
 
     print("\n\n🎉 The research team has completed their assigned task(s)!")
