@@ -107,9 +107,9 @@ def score_cluster_array(
     clusters: list[list],
     *,
     min_clusters: int = 6,
-    max_clusters: int = 30,
+    max_clusters: int = 40,
     target_avg_low: float = 8.0,
-    target_avg_high: float = 15.0,
+    target_avg_high: float = 25.0,
     weight_count: float = 1.0,
     weight_avg: float = 1.0,
     weight_std: float = 0.3,
@@ -191,27 +191,33 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
 
     # 1) Hyperparameter grids
     configs = []
-    for t in range(50, 81, 5):
+    for t in range(50, 81, 1):
         configs.append(("agglomerative", {"threshold": t / 100}))
-    for e in range(50, 81, 5):
+    for e in range(50, 81, 1):
         configs.append(("dbscan", {"eps": e / 100, "min_samples": 2}))
-    for g in range(50, 81, 5):
+    for g in range(50, 81, 1):
         configs.append(("graph", {"threshold": g / 100}))
         configs.append(("ego", {"threshold": g / 100}))
-    for k in range(3, 11, 1):
+    for k in range(3, 13, 1):
         configs.append(("knn", {"k": k}))
-    for nc in range(4, 17, 1):
+    for nc in range(3, 20, 1):
         configs.append(("fuzzy", {"n_clusters": nc, "m": 2.0}))
 
     print(f"[DEBUG] Will evaluate {len(configs)} method/param combinations")
 
     best_score = float("inf")
     best_clusters_idx = []
-    best_meta = (0, 0, 0, 0, 0) # fixes a Pylance error rather than assigning None to the var
+    best_meta = (
+        0,
+        0,
+        0,
+        0,
+        0,
+    )  # fixes a Pylance error rather than assigning None to the var
 
     # 2) Evaluate each config
-    for method, params in configs:
-        print(f"[DEBUG] Trying {method.upper()} with {params}")
+    for method, params in tqdm(configs, desc="Finding best configuration"):
+        # print(f"[DEBUG] Trying {method.upper()} with {params}")
         clusters_idx = []
 
         if method == "agglomerative":
@@ -311,7 +317,7 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
     # 6) Map back to entries and return
     best_clusters = [[original_entries[i] for i in cl] for cl in best_clusters_idx]
     print(
-        f"[DEBUG] Final best config: {best_meta[0]} {best_meta[1]} "
+        f"[DEBUG] 🏆 Final best config: {best_meta[0]} {best_meta[1]} "
         f"(sil={best_meta[2]:.3f}, db={best_meta[3]:.3f}, ch={best_meta[4]:.1f}, score={best_score:.3f})"
     )
     return best_clusters
@@ -346,12 +352,20 @@ def find_semantically_similar_words(
     )
     variants = [v[0] for v in variants_raw]
 
-    target_entry = next(
-        (e for e in entries if normalize_form(e.canonical) == normalized_query),
-        None,
-    )
-    if not target_entry:
+    all_roots = [normalized_query] + variants
+    index_entries = [
+        e for e in entries
+        if any(root in normalize_form(e.canonical) for root in all_roots)
+    ]
+    if not index_entries:
         return []
+
+    # target_entry = next(
+    #     (e for e in entries if normalize_form(e.canonical) == normalized_query),
+    #     None,
+    # )
+    # if not target_entry:
+    #     return []
 
     results = []
     for entry in tqdm(entries, desc="Processing dictionary entries"):
@@ -373,10 +387,13 @@ def find_semantically_similar_words(
                 default=0.0,
             )
 
-        def_score = definition_similarity(
-            build_enhanced_definition(target_entry),
-            build_enhanced_definition(entry),
-            sentence_model,
+        def_score = max(
+            definition_similarity(
+                build_enhanced_definition(root_e),
+                build_enhanced_definition(entry),
+                sentence_model,
+            )
+            for root_e in index_entries
         )
 
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
@@ -441,7 +458,7 @@ def find_semantically_similar_words(
 
         for i, entry in tqdm(
             enumerate(results),
-            f"Calculating definition similarity across all words (~{len(entries)})",
+            f"Calculating definition across all relevant words (up to {len(entries)})",
         ):
             sims = []
             for j in range(len(results)):

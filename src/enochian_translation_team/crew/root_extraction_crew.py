@@ -327,6 +327,8 @@ class RootExtractionCrew:
                 )
         else:
             ngram_generator = self.stream_ngrams_from_sqlite(min_freq=2)
+            ngrams = sorted(ngram_generator, key=lambda x: (-x[1], x[0]))
+
 
         output = []
         seen_words = 0
@@ -334,7 +336,7 @@ class RootExtractionCrew:
         print("🪄 Initializing semantic tribunal...\n")
     
 
-        for ngram, count in ngram_generator:
+        for ngram, count in ngrams:
             if ngram in self.processed_ngrams:
                 print(
                     f"[Skipping] Root candidate '{ngram}' has already been processed; moving on..."
@@ -352,6 +354,7 @@ class RootExtractionCrew:
                 target_word=ngram,
                 subst_map=self.subst_map,
             )
+            print(f"[Debug] number of semantic candidates for {ngram}: {len(semantic_candidates)}")
 
             # index_candidates = self.candidate_finder.find_candidates(
             #     target=ngram, top_k=9999 # corpus is only ~1350 words long at most, so this will capture all candidates
@@ -382,7 +385,7 @@ class RootExtractionCrew:
                 )
             ):
                 print(
-                    f"[Debug] entering cluster_id={cluster_id} with {len(cluster)} items and element type={type(cluster[0])}"
+                    f"[Debug] entering cluster #{cluster_id} (out of {len(clusters)}). This cluster contains {len(cluster)} entries"
                 )
                 sem_norms = {_get_field(c, "normalized", "") for c in cluster if _get_field(c, "normalized", "")}
                 index_norms = {
@@ -390,9 +393,9 @@ class RootExtractionCrew:
                 }
                 overlap = sem_norms & index_norms
 
-                print("[Debug] sem_norms sample:", list(sem_norms)[:5])
-                print("[Debug] index_norms:", list(index_norms))
-                print("[Debug] overlap:", overlap)
+                print("[Debug] sem_norms sample:", ", ".join(list(sem_norms)[:8]), "..." if len(sem_norms) > 8 else "")
+                print("[Debug] index_norms:", ", ".join(list(index_norms)[:8]), "..." if len(index_norms) > 8 else "")
+                print("[Debug] overlap:", overlap if len(overlap) > 0 else "none whatsoever")
                 if not overlap or len(overlap) < 2:
                     print(
                         f"[Skipped] Potential cluster for '{ngram}' did not meet overlap threshold."
@@ -509,6 +512,7 @@ class RootExtractionCrew:
 
                 output.append(evaluated)
 
+                save_log([("Archivist", evaluated["Archivist"])], label=ngram)
                 self.save_results(output)
                 self.processed_ngrams.add(ngram)
                 self.save_processed_ngrams()
@@ -530,7 +534,9 @@ class RootExtractionCrew:
             seen_words += 1
             if max_words and seen_words >= max_words:
                 break
-
+            
+        print("🎉 Clusters complete! 🎊")
+            
         if self.ngram_db:
             self.ngram_db.close()
 

@@ -16,7 +16,7 @@ from enochian_translation_team.utils.variant_utils import (
 )
 
 # --- Logging setup ---
-logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.WARNING)
+logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -91,7 +91,7 @@ def filter_by_pmi(
 
 # --- Main building & saving ---
 def build_and_save_ngram_index(
-    min_n: int = 2, max_n: int = 6, pmi_threshold: float = 2.0
+    min_n: int = 1, max_n: int = 6, pmi_threshold: float = 2.0
 ):
     paths = get_config_paths()
     dict_path = paths["dictionary"]
