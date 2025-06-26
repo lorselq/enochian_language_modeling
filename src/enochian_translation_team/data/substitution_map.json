@@ -152,7 +152,7 @@
   "z": {
     "canonical": "z",
     "alternates": [
-      { "value": "zod", "confidence": "medium", "direction": "to" },
+      { "value": "zod", "confidence": "low", "direction": "to" },
       { "value": "ceph", "confidence": "low", "direction": "to" },
       { "value": "cef", "confidence": "low", "direction": "to" }
     ]

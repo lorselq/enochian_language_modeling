@@ -1,8 +1,8 @@
-from typing import List
+import datetime
 import re
 import json
 import sqlite3
-from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
+from typing import List
 from itertools import chain
 from tqdm import tqdm
 from collections import Counter, defaultdict
@@ -18,7 +18,7 @@ from enochian_translation_team.utils.semantic_search import (
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index
-from enochian_translation_team.utils.dictionary_loader import load_dictionary
+from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
 
 
 class RootExtractionCrew:
@@ -145,6 +145,9 @@ class RootExtractionCrew:
         return "unknown"
 
     def evaluate_ngram(self, ngram, cluster, stream_callback=None, cluster_id=None):
+        GOLD = "\033[38;5;178m"
+        RESET = "\033[0m"
+
         def _get_field(item, field, default=""):
             """
             Unified accessor for Entry objects and dicts.
@@ -153,15 +156,16 @@ class RootExtractionCrew:
                 return item.get(field, default)
             else:
                 return getattr(item, field, default)
-            
+
         print(
-            f"[Debug] Evaluating cluster with length of {len(cluster)} for {ngram}..."
+            f"[Debug] Evaluating cluster with length of {len(cluster)} for {GOLD}{ngram}{RESET}..."
         )
 
         cluster_note = f"[Cluster {cluster_id}]" if cluster_id is not None else ""
         definitions = []
         for c in tqdm(
-            cluster, desc=f"{cluster_note} Evaluating cluster for {ngram.upper()}"
+            cluster,
+            desc=f"{cluster_note} Evaluating cluster for {GOLD}{ngram.upper()}{RESET}",
         ):
             # pull out the raw definition text, whether c is an Entry or a dict
             if hasattr(c, "definition"):
@@ -308,6 +312,13 @@ class RootExtractionCrew:
     def run_with_streaming(
         self, max_words=None, stream_callback=None, single_ngram=None
     ):
+        GOLD = "\033[38;5;178m"
+        GREEN = "\033[38;5;120m"
+        YELLOW = "\033[38;5;190m"
+        BLUE = "\033[38;5;153m"
+        PINK = "\033[38;5;213m"
+        RESET = "\033[0m"
+
         def _get_field(item, field, default=""):
             """
             Unified accessor for Entry objects and dicts.
@@ -316,35 +327,36 @@ class RootExtractionCrew:
                 return item.get(field, default)
             else:
                 return getattr(item, field, default)
-        
+
         build_and_save_ngram_index()
         if single_ngram:
-            ngram_generator = [(single_ngram, 9001)]  # Use a fake count
+            ngrams = [(single_ngram, 9001)]  # Use a fake count
             max_words = 999
             if single_ngram in self.processed_ngrams:
                 print(
-                    f"[Warning] The ngram {single_ngram.upper()} has already been processed, so our work is already done."
+                    f"[Warning] The ngram {GOLD}{single_ngram.upper()}{RESET} has already been processed, so our work is already done."
                 )
         else:
-            ngram_generator = self.stream_ngrams_from_sqlite(min_freq=2)
-            ngrams = sorted(ngram_generator, key=lambda x: (-x[1], x[0]))
-
+            ngrams = sorted(
+                self.stream_ngrams_from_sqlite(min_freq=2), key=lambda x: (-x[1], x[0])
+            )
 
         output = []
         seen_words = 0
 
         print("🪄 Initializing semantic tribunal...\n")
-    
 
+        skipped = 0
         for ngram, count in ngrams:
             if ngram in self.processed_ngrams:
-                print(
-                    f"[Skipping] Root candidate '{ngram}' has already been processed; moving on..."
-                )
+                skipped += 1
                 continue
 
             print(
-                f"[✓] Processing root candidate: '{ngram.upper()}'"
+                f"[Debug] Skipping {skipped} ngrams because they have already been processed. Now to one that hasn't..."
+            )
+            print(
+                f"[✓] Beginning examination of root-word candidate {GOLD}{ngram.upper()}{RESET}."
             )
 
             semantic_candidates = find_semantically_similar_words(
@@ -354,15 +366,19 @@ class RootExtractionCrew:
                 target_word=ngram,
                 subst_map=self.subst_map,
             )
-            print(f"[Debug] number of semantic candidates for {ngram}: {len(semantic_candidates)}")
+            print(
+                f"[Debug] number of semantic candidates for {ngram}: {len(semantic_candidates)}"
+            )
 
             # index_candidates = self.candidate_finder.find_candidates(
             #     target=ngram, top_k=9999 # corpus is only ~1350 words long at most, so this will capture all candidates
             # )
-            
+
             index_candidates = self.candidate_finder.get_all_ngram_candidates(ngram)
-            print(f"[Debug] index_candidates (count={len(index_candidates)}): "
-                f"{[c['normalized'] for c in index_candidates][:10]}…")
+            print(
+                f"[Debug] index_candidates (count={len(index_candidates)}): "
+                f"{[c['normalized'] for c in index_candidates][:10]}…"
+            )
 
             if not semantic_candidates or len(semantic_candidates) < 2:
                 print(f"[⚠️] Too few semantic candidates for '{ngram}'. Skipping.")
@@ -370,11 +386,6 @@ class RootExtractionCrew:
 
             clusters = cluster_definitions(semantic_candidates, self.sentence_model)
             print(f"[Debug] cluster_definitions returned {len(clusters)} clusters")
-            for i, cl in enumerate(clusters):
-                print(
-                    f"[Debug] - Cluster {i} has {len(cl)} items; sample normals ({len(cl)} entries long): "
-                    f"{[_get_field(c, 'normalized', '') for c in cl[:15]]}"
-                )
 
             for cluster_id, cluster in enumerate(
                 tqdm(
@@ -385,35 +396,65 @@ class RootExtractionCrew:
                 )
             ):
                 print(
-                    f"[Debug] entering cluster #{cluster_id} (out of {len(clusters)}). This cluster contains {len(cluster)} entries"
+                    f"[Debug] Entering cluster #{cluster_id + 1} (out of {len(clusters)}). This cluster contains {len(cluster)} entries."
                 )
-                sem_norms = {_get_field(c, "normalized", "") for c in cluster if _get_field(c, "normalized", "")}
+                sem_norms = {
+                    _get_field(c, "normalized", "")
+                    for c in cluster
+                    if _get_field(c, "normalized", "")
+                }
                 index_norms = {
-                    _get_field(c, "normalized", "") for c in index_candidates if _get_field(c, "normalized", "")
+                    _get_field(c, "normalized", "")
+                    for c in index_candidates
+                    if _get_field(c, "normalized", "")
                 }
                 overlap = sem_norms & index_norms
 
-                print("[Debug] sem_norms sample:", ", ".join(list(sem_norms)[:8]), "..." if len(sem_norms) > 8 else "")
-                print("[Debug] index_norms:", ", ".join(list(index_norms)[:8]), "..." if len(index_norms) > 8 else "")
-                print("[Debug] overlap:", overlap if len(overlap) > 0 else "none whatsoever")
+                print(
+                    "[Debug] Semantic cluster contains the following (displaying up to 8 normalized words):",
+                    f"{RESET}, {BLUE}".join(list(sem_norms)[:8]).upper(),
+                    "..." if len(sem_norms) > 8 else "",
+                )
+                print(
+                    f"[Debug] Words and variants that contain {GOLD}{ngram.upper()}{RESET}:",
+                    f"{RESET}, {YELLOW}".join(list(index_norms)[:8]).upper(),
+                    "..." if len(index_norms) > 8 else "",
+                )
+                print(
+                    "[Debug] Is there any overlap between the two? ",
+                    (
+                        f"{GREEN}Yes! There is!{RESET}"
+                        if len(overlap) > 0
+                        else f"{PINK}None whatsoever{RESET}"
+                    ),
+                )
                 if not overlap or len(overlap) < 2:
                     print(
-                        f"[Skipped] Potential cluster for '{ngram}' did not meet overlap threshold."
+                        f"[Debug] Skipped cluster #{cluster_id + 1} for {GOLD}{ngram.upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things."
                     )
                     continue
+                else:
+                    print("")
 
                 merged_cluster = []
 
                 merged_items = list(cluster) + index_candidates
 
                 for word in {
-                    _get_field(c, "normalized", "") for c in merged_items if _get_field(c, "normalized", "")
+                    _get_field(c, "normalized", "")
+                    for c in merged_items
+                    if _get_field(c, "normalized", "")
                 }:
                     sem_entry = next(
-                        (c for c in cluster if _get_field(c, "normalized", "") == word), None
+                        (c for c in cluster if _get_field(c, "normalized", "") == word),
+                        None,
                     )
                     index_entry = next(
-                        (c for c in index_candidates if _get_field(c, "normalized", "") == word),
+                        (
+                            c
+                            for c in index_candidates
+                            if _get_field(c, "normalized", "") == word
+                        ),
                         None,
                     )
 
@@ -423,7 +464,9 @@ class RootExtractionCrew:
                     if not self.is_ngram_in_variants(ngram, word):
                         continue
 
-                    entry_word = _get_field(sem_entry, "word", word) if sem_entry else word
+                    entry_word = (
+                        _get_field(sem_entry, "word", word) if sem_entry else word
+                    )
                     if isinstance(word, str) and word:
                         variant_used = self.get_matching_variant(ngram, word)
                     else:
@@ -512,10 +555,13 @@ class RootExtractionCrew:
 
                 output.append(evaluated)
 
-                save_log([("Archivist", evaluated["Archivist"])], label=ngram)
+                save_log(
+                    [("Archivist", evaluated["Archivist"])],
+                    label=ngram,
+                    cluster_number=str(cluster_id + 1),
+                    cluster_total=str(len(clusters)),
+                )
                 self.save_results(output)
-                self.processed_ngrams.add(ngram)
-                self.save_processed_ngrams()
 
                 if "Glossator" in evaluated:
                     with open(self.new_definitions_path, "a", encoding="utf-8") as f:
@@ -523,20 +569,22 @@ class RootExtractionCrew:
                             _get_field(c, "word", "") for c in merged_cluster
                         )
                         f.write(
-                            f"{evaluated['Glossator'].strip()} NOTE: this was inferred from the following words: {source_words}.\n\n"
+                            f"=======recorded at {datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')} for cluster {cluster_id + 1}/{len(clusters)}======={evaluated['Glossator'].strip()} NOTE: this was inferred from the following words: {source_words}.\n\n"
                         )
 
                 # if stream_callback:
                 #     for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
                 #         if role in evaluated:
                 #             stream_callback(role, evaluated[role])
-
+            self.processed_ngrams.add(ngram)
+            self.save_processed_ngrams()
             seen_words += 1
+
             if max_words and seen_words >= max_words:
                 break
-            
+
         print("🎉 Clusters complete! 🎊")
-            
+
         if self.ngram_db:
             self.ngram_db.close()
 

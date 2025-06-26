@@ -44,6 +44,8 @@ def stream_callback(role, message):
 
 
 def main():
+    GOLD = "\033[38;5;178m"
+    RESET = "\033[0m"
     local_remote_mode = None
     while local_remote_mode not in ("1", "2"):
         local_remote_mode = input("Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? [note: currently, as debug, always does (2)] ")
@@ -67,7 +69,7 @@ def main():
 
     if debate_mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip().lower()
-        print(f"🔍 Evaluating single ngram: \033[38;5;178m{ngram.upper()}\033[0m\n")
+        print(f"🔍 Evaluating single ngram: {GOLD}{ngram.upper()}{RESET}\n")
         crew.run_with_streaming(single_ngram=ngram, stream_callback=stream_callback)
 
     else:
@@ -80,7 +82,7 @@ def main():
                 max_words = int(max_words_input)
             except ValueError:
                 print("Invalid number. Please use a digit.")
-        print(f"🔍 Evaluating \033[38;5;178m{max_words}\033[0m ngrams...")
+        print(f"🔍 Evaluating {GOLD}{max_words}{RESET} ngrams...")
         crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
 
     print("\n\n🎉 The research team has completed their assigned task(s)!")
