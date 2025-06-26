@@ -102,7 +102,9 @@ def debate_ngram(
         if word and definition:
             line = (
                 f"{word.strip()} — {definition.strip()} "
-                f"<fasttext:{fasttext}, semantic similarity:{semantic}, tier:{tier}>" if fasttext > 0 or semantic > 0 or tier != "Untiered" else ""
+                f"<fasttext:{fasttext}, semantic similarity:{semantic}, tier:{tier}>"
+                if fasttext > 0 or semantic > 0 or tier != "Untiered"
+                else ""
             )
             joined_defs.append(line)
     if root_entry is None:
@@ -136,52 +138,39 @@ def debate_ngram(
     tools = {
         "linguist": QueryModelTool(
             system_prompt=f"""
-                You are a **disciplined and insightful computational linguist** specializing in the Enochian language—a constructed system with irregular morphology, cryptic derivations, and unknown origin.
+You are a **disciplined and insightful computational linguist** specializing in the Enochian language—a constructed system with irregular morphology, cryptic derivations, and unknown origin.
 
-                ⚠️ DO NOT reference natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative outside sources.
-                All reasoning must rely exclusively on **internal evidence**—relationships and patterns among the Enochian words themselves. Do not deviate from these words: 
+⚠️ DO NOT reference natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative outside sources.
+All reasoning must rely exclusively on **internal evidence**—relationships and patterns among the Enochian words themselves. Do not deviate from these words: 
 
-                Your tone must be confident, scholarly, and analytical.
+Your tone must be confident, scholarly, and analytical.
 
-                Be thorough, avoid vague generalizations, and always back claims with observed data.
-                """,
+Be thorough, avoid vague generalizations, and always back claims with observed data.""",
             name="Junior Research Linguist",
+            description="",
+        ),
+        "initial_ruling": QueryModelTool(
+            system_prompt=f"You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is).",
+            name="Adjudicator",
             description="",
         ),
         "synthesis": QueryModelTool(
             system_prompt="""
-                You are the Lead Linguist in a collaborative reverse-engineering effort focused on the Enochian language—a system with obscure morphology and nonstandard linguistic structures.
+You are the Lead Linguist in a collaborative reverse-engineering effort focused on the Enochian language—a system with obscure morphology and nonstandard linguistic structures.
 
-                You have received analytical reports from five Junior Linguists, each offering observations on the same proposed root.
+You have received analytical reports from five Junior Linguists, each offering observations on the same proposed root.
 
-                Your task:
-                - Synthesize their insights into a **single, cohesive proposal**.
-                - Prioritize **common patterns or shared conclusions** across the responses.
-                - Highlight **strong arguments**, discarding speculation or weak/unsubstantiated claims.
-                - Do **not repeat all points**—only include the most persuasive and consistent ideas.
-
-                Focus on:
-                - Morphological regularities (shared prefixes, suffixes, or structures)
-                - Semantic overlap across definitions
-                - Citational or contextual clues that reinforce connections
-
-                Your tone should be polished, scholarly, and decisive—this is the authoritative linguistic interpretation that will be presented to the Adjudicator.
-
-                Do not hedge. Present the best possible case for this root as a meaningful candidate, based solely on internal linguistic evidence from the Enochian data.
-                """,
+Your tone should be polished, scholarly, and decisive.""",
             name="Lead Linguist",
             description="",
         ),
         "skeptic": QueryModelTool(
             system_prompt="""
-                You are a skeptical linguist evaluating a proposed root analysis in the Enochian language. Your goal is to identify flawed reasoning, superficial pattern-matching, or semantic inconsistencies.
+You are a skeptical linguist evaluating a proposed root analysis in the Enochian language. Your goal is to identify flawed reasoning, superficial pattern-matching, or semantic inconsistencies in what your colleagues are suggesting.
 
-                Do not dismiss arguments just because they involve theological or metaphysical frameworks—these are valid within Enochian's system. However, be vigilant about overreach, cherry-picked evidence, or unjustified leaps in logic.
+Do not dismiss arguments just because they involve theological or metaphysical frameworks—these are valid within Enochian's system. However, be vigilant about overreach, cherry-picked evidence, or unjustified leaps in logic.
 
-                If the root hypothesis lacks rigor, clearly explain why. Offer specific counterpoints. If you believe a stronger candidate or cluster exists, propose it concisely—but only if the evidence supports it.
-
-                Your tone is incisive, precise, and intellectually honest. Your aim is not to destroy for its own sake, but to ensure that only the most robust linguistic hypotheses move forward.
-                """,
+Your tone is incisive, precise, and intellectually honest.""",
             name="Skeptic",
             description="",
         ),
@@ -282,9 +271,35 @@ Your tone must be scholarly and confident. Avoid vague generalizations. Use exam
 """,
             expected_output="A strong case for the root, citing semantic and morphological evidence.",
         ),
+        "initial_ruling": Task(
+            description=(
+                "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is). "
+                f"Review the the arguments made by the junior research linguists regarding the ngram '{root.upper()}'. Your job is to determine if this ngram or root warrants further study, which is to say:\n\n"
+                "**Should this ngram, proposed as a root, be investigated further to the end of reverse-engineering of the Enochian language?**\n\n"
+                "While you love the idea of adding new root word candidates to the glossary and are excited for new possibilities it could bring in cutting-edge digital humanities research, "
+                "you temper this enthusiasm with scholarly professionalism and rational skepticism. Nevertheless, you are inclined to give grace whenever appropriate in this phase. "
+                "To say **✅ ACCEPTED** means further evaluation will take place; to say **❌ REJECTED** means you set aside this cluster to investigate a different one. "
+                "You must START your response with either:\n"
+                "✅ ACCEPTED\n"
+                "or\n"
+                "❌ REJECTED\n"
+                "— Nothing else may come before this line. This format is **mandatory**.\n\n"
+                "Your ruling must weigh the core arguments, focusing on:\n"
+                "- Linguistic plausibility\n"
+                "- Semantic cohesion across definitions\n"
+                "- Whether there are **better possible candidates** that capture what the junior research linguists believe the ngram accomplishes\n"
+                "- Whether the proposal is vague or lacking substance\n"
+                "Assume the data provided is all that is available, and that metric thresholds are valid and statistically derived.\n"
+                "Abstract or metaphorical meanings are acceptable if supported by internal consistency.\n\n"
+                "Be concise, definitive, and analytical. No hedging.\n\n"
+                "Begin with the ruling, then follow with a 1–3 sentence justification.\n\n"
+                "+++\n\n"
+            ),
+            expected_output="A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a concise rationale for this verdict.",
+        ),
         "synthesize": Task(
             description=f"""
-You are the **Lead Linguist** in a collaborative reverse-engineering initiative focused on the Enochian language—a constructed system with obscure morphology, irregular derivation, and no known linguistic relatives.
+You are the **Lead Linguist** in a collaborative reverse-engineering initiative focused on the Enochian language—a constructed system with obscure morphology, irregular derivation, and no known linguistic relatives. You specialize in low-corpora constructed languages, making you perfect for this task.
 
 You have received detailed analyses from five Junior Linguists, each offering perspectives on the proposed root: **'{root.upper()}'**.
 
@@ -378,8 +393,11 @@ You must:
         ),
         "ruling": Task(
             description=(
-                "Review the full exchange between the Linguist and the Skeptic. Your job is to make a clear and final determination:\n\n"
+                "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is). "
+                "Review the full exchange between your colleagues, the Linguist and the Skeptic. Your job is to make a clear and final determination:\n\n"
                 "**Should this proposed root be accepted as a meaningful candidate for future reverse-engineering of the Enochian language?**\n\n"
+                "While you love the idea of adding new root word candidates to the glossary and are excited for new possibilities it could bring in cutting-edge digital humanities research, "
+                "you temper this enthusiasm with scholarly professionalism and rational skepticism. Nevertheless, you are inclined to give grace when appropriate. "
                 "You must START your response with either:\n"
                 "✅ ACCEPTED\n"
                 "or\n"
@@ -466,6 +484,7 @@ You must:
 
     STAGES = [
         ("linguist", 5),
+        ("initial_ruling", 1),
         ("synthesis", 1),
         ("skeptic", 1),
         ("defend", 1),
@@ -476,10 +495,16 @@ You must:
     ]
 
     linguist_variants = []
+    initial_ruling = ""
+    initial_rejection = f"🪄 Judgment has been passed: the ngram '{root.upper()}' bears no fruit. Onwards!"
     linguist_proposal = ""
     skeptic_response = ""
+    linguist_defense = ""
+    skeptic_rebuttal = ""
     adjudicator_ruling = ""
     gloss = ""
+    tldr_summary = ""
+    transcript = ""
     for stage_name, count in STAGES:
 
         if stage_name == "linguist":
@@ -502,6 +527,47 @@ You must:
                         "Linguists have converged on similar analyses, passing research to the Lead Linguist..."
                     )
                     # jump to the “synthesis” stage index
+                    break
+        elif stage_name == "initial_ruling":
+            agent_tool = tools[stage_name]
+            print(
+                f"\n\n{RESET}>>>👩‍⚖️\tAdjudicator's turn to decide if we should move forward...\n{GRAY}",
+                tasks["initial_ruling"].description,
+                f"{RESET}\n",
+            )
+            if is_canon:
+                initial_ruling = (
+                    f"✅ ACCEPTED\n"
+                    f"The proposed root '{root.upper()}' is already a canon entry defined as '{root_def_text}'. "
+                    "This existing definition provides sufficient internal linguistic evidence for approval.\n"
+                    "The following debate is preserved for insight and extended justification:"
+                )
+                print(initial_ruling)
+                continue
+            else:
+                if linguist_variants and len(linguist_variants) > 0:
+                    initial_ruling = agent_tool._run(
+                        prompt="\n".join(
+                            [tasks["initial_ruling"].description, *linguist_variants]
+                        ),
+                        stream_callback=adjudicator_cb,
+                        print_chunks=True,
+                        role_name="👩‍⚖️\tAdjudicator",
+                    )
+                else:
+                    print(f"[Error] linguist_variants are empty")
+                    txt = initial_ruling.strip().lower()
+                initial_ruling_verdict = (
+                    txt.startswith("✅ accepted")
+                    or txt.startswith("accepted")
+                    or "✅" in initial_ruling
+                )
+                
+                if initial_ruling and initial_ruling_verdict:
+                    continue
+                else:
+                    print("\n\n")
+                    print(initial_rejection)
                     break
         elif stage_name == "synthesis":
             agent_tool = tools[stage_name]
@@ -570,7 +636,7 @@ You must:
             if linguist_defense and len(linguist_defense) > 0:
                 agent_tool = tools["skeptic"]
                 print(
-                    f"\n\n{RESET}>>>🤔\tSkeptic's turn to rebuttal...\nFinal word:{GRAY}",
+                    f"\n\n{RESET}>>>🤔\tSkeptic's turn to give the final word:{GRAY}",
                     tasks["rebuttal"].description,
                     f"{RESET}\n",
                 )
@@ -595,7 +661,7 @@ You must:
             agent_tool = tools[stage_name]
             if skeptic_rebuttal and len(skeptic_rebuttal) > 0:
                 print(
-                    f"\n\n{RESET}>>>👩‍⚖️\tAdjudicator's turn to pass their ruling...\nRuling:{GRAY}",
+                    f"\n\n{RESET}>>>👩‍⚖️\tAdjudicator's turn to pass the final ruling...\n{GRAY}",
                     tasks["ruling"].description,
                     f"{RESET}\n",
                 )
@@ -660,35 +726,37 @@ You must:
                     role_name="🧐\tGlossator",
                 )
         elif stage_name == "summarizer":
-            archivist_summary_formatted = (
-                "=== 📖 PROMPT FOR LINGUIST ===\n"
-                + tasks["propose"].description.strip()
-                + "\n\n=== 🥸 LINGUIST PROPOSAL ===\n"
-                + linguist_proposal.strip()
-                + "\n\n=== 🤔 SKEPTIC ===\n"
-                + skeptic_response.strip()
-                + "\n\n=== 🥸 DEFENSE ===\n"
-                + linguist_defense.strip()
-                + "\n\n=== 🤔 REBUTTAL ===\n"
-                + skeptic_rebuttal.strip()
-                + "\n\n=== 👩‍⚖️ ADJUDICATOR ===\n"
-                + adjudicator_ruling.strip()
-            )
+            lines = []
+            intro_lines = []
+            
+            lines.append("=== 📖 PROMPT FOR LINGUIST ===\n")
+            lines.append(tasks["propose"].description.strip())
+            lines.append("\n\n=== 🔍 FIRST LOOK ===\n")
+            lines.append(initial_ruling.strip())
+            lines.append("\n\n=== 🥸 LINGUIST PROPOSAL ===\n" if linguist_proposal.strip() else "")
+            lines.append(linguist_proposal.strip())
+            lines.append("\n\n=== 🤔 SKEPTIC ===\n" if skeptic_response.strip() else "")
+            lines.append(skeptic_response.strip())
+            lines.append("\n\n=== 🥸 DEFENSE ===\n" if linguist_defense.strip() else "")
+            lines.append(linguist_defense.strip())
+            lines.append("\n\n=== 🤔 REBUTTAL ===\n" if skeptic_rebuttal.strip() else "")
+            lines.append(skeptic_rebuttal.strip())
+            lines.append("\n\n=== 👩‍⚖️ ADJUDICATOR ===\n" if adjudicator_ruling.strip() else "")
+            lines.append(adjudicator_ruling.strip())
 
             if gloss and len(gloss) > 0:
-                archivist_summary_formatted += "\n\n=== 🧐 GLOSSATOR ===\n" + gloss
+                lines.append("\n\n=== 🧐 GLOSSATOR ===\n" + gloss)
 
             tldr_summary = tools["tldr"]._run(
-                prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{archivist_summary_formatted}",
+                prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{''.join(lines)}",
                 stream_callback=summarizer_cb,
             )
 
-            archivist_summary_formatted = (
-                "\n\n=== 📜 SUMMARY ===\n"
-                + tldr_summary.strip()
-                + "\n\n\n========================\n====== TRANSCRIPT ======\n========================\n\n"
-                + archivist_summary_formatted
-            )
+            intro_lines.append("\n\n=== 📜 SUMMARY ===\n")
+            intro_lines.append(tldr_summary.strip())
+            intro_lines.append("\n\n\n========================\n====== TRANSCRIPT ======\n========================\n\n")
+
+            transcript = "".join(intro_lines + lines)
         else:
             print(f'[Debug] stage name "{stage_name}" not found oh nooo!')
 
@@ -723,7 +791,7 @@ You must:
         "Rebuttal": skeptic_rebuttal,
         "Adjudicator": adjudicator_ruling,
         "Glossator": gloss,
-        "Archivist": archivist_summary_formatted,
+        "Archivist": transcript,
         "summary": tldr_summary,
         "raw_output": {
             "Linguist": linguist_proposal,
@@ -732,7 +800,7 @@ You must:
             "Rebuttal": skeptic_rebuttal,
             "Adjudicator": adjudicator_ruling,
             "Glossator": gloss,
-            "Archivist": archivist_summary_formatted,
+            "Archivist": transcript,
             "summary": tldr_summary,
         },
     }

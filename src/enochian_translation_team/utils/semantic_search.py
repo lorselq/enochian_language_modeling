@@ -107,9 +107,9 @@ def score_cluster_array(
     clusters: list[list],
     *,
     min_clusters: int = 6,
-    max_clusters: int = 40,
-    target_avg_low: float = 8.0,
-    target_avg_high: float = 25.0,
+    max_clusters: int = 35,
+    target_avg_low: float = 11.0,
+    target_avg_high: float = 22.0,
     weight_count: float = 1.0,
     weight_avg: float = 1.0,
     weight_std: float = 0.3,
@@ -329,8 +329,8 @@ def find_semantically_similar_words(
     entries,
     target_word,
     subst_map,
-    fasttext_weight=0.50,
-    definition_weight=0.50,
+    fasttext_weight=0.40,
+    definition_weight=0.60,
     min_similarity=0.05,
 ):
     # Hard fix for malformed subst_map
@@ -401,7 +401,7 @@ def find_semantically_similar_words(
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(
             normalized_query
         ):
-            final_score += 0.30
+            final_score += 0.60
 
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(
             normalized_query

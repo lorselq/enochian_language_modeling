@@ -3,12 +3,15 @@ import re
 from typing import Optional
 from pathlib import Path
 
-def save_log(log_entries, label: Optional[str] = None):
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = f"{label.upper()}_" if label else ""
+def save_log(log_entries, label: Optional[str] = None, cluster_number: Optional[str] = None, cluster_total: Optional[str] = None):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    name = f"{label.upper()}" if label else "ngram-missing"
+    cluster_info = ""
+    if cluster_number and cluster_total:
+        cluster_info = f"clstr{cluster_number}-of-{cluster_total}_"
     log_dir = Path("logs")
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{name}{timestamp}_log.txt"
+    log_path = log_dir / f"{name}_{timestamp}_{cluster_info}log.txt"
 
     header_re = re.compile(r"^\*\*(.+?):\*\*", re.MULTILINE)
 

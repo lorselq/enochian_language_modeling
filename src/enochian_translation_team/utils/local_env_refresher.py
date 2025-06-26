@@ -45,7 +45,7 @@ def refresh_local_env(local=False) -> bool:
             with open(env_path, "w") as f:
                 f.write("LOCAL_OPENAI_API_KEY=sk-local-testing-lol\n")
                 f.write(f"LOCAL_OPENAI_API_BASE={base_url}\n")
-                f.write("LOCAL_MODEL_NAME=qwen3-8b\n")
+                f.write("LOCAL_MODEL_NAME=deepseek/deepseek-r1-0528-qwen3-8b\n")
                 f.write("PYTHONPATH=src\n")
             print(f"[SUCCESS] Wrote local env to {env_path}")
         except Exception as e:
