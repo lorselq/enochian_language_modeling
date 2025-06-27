@@ -2,6 +2,7 @@ import datetime
 import re
 import json
 import sqlite3
+import random
 from typing import List
 from itertools import chain
 from tqdm import tqdm
@@ -144,7 +145,7 @@ class RootExtractionCrew:
             return "index"
         return "unknown"
 
-    def evaluate_ngram(self, ngram, cluster, stream_callback=None, cluster_id=None):
+    def evaluate_ngram(self, ngram: str, cluster, stream_callback=None):
         GOLD = "\033[38;5;178m"
         RESET = "\033[0m"
 
@@ -157,16 +158,8 @@ class RootExtractionCrew:
             else:
                 return getattr(item, field, default)
 
-        print(
-            f"[Debug] Evaluating cluster with length of {len(cluster)} for {GOLD}{ngram}{RESET}..."
-        )
-
-        cluster_note = f"[Cluster {cluster_id}]" if cluster_id is not None else ""
         definitions = []
-        for c in tqdm(
-            cluster,
-            desc=f"{cluster_note} Evaluating cluster for {GOLD}{ngram.upper()}{RESET}",
-        ):
+        for c in cluster:
             # pull out the raw definition text, whether c is an Entry or a dict
             if hasattr(c, "definition"):
                 def_text = c.definition
@@ -209,6 +202,7 @@ class RootExtractionCrew:
             entry = {
                 "word": _get_field(c, "word", "").upper(),
                 "definition": definition,
+                "enhanced_definition": _get_field(c, "enhanced_definition", ""),
                 "normalized": _get_field(c, "normalized", "").lower(),
                 "fasttext": _get_field(c, "fasttext", "0.0"),
                 "semantic": _get_field(c, "semantic", "0.0"),
@@ -219,16 +213,16 @@ class RootExtractionCrew:
                 "source": _get_field(c, "source", "unknown"),
             }
 
+            print("\n\n")
+            print("TESTING: ", entry)
+            print(f"TESTING 2: eval of {ngram_lower} == {_get_field(entry, 'normalized', '')}--", _get_field(entry, "normalized", "") == ngram_lower)
+
             # Check if this is the literal ngram word
-            if (
-                _get_field(entry, "normalized", "")
-                == ngram_lower
-                # or entry.get("word", "").lower() == ngram_lower    # temporarily suspended from action
-            ):
+            if _get_field(entry, "normalized", "") == ngram_lower:
                 root_entry = c  # We can directly use the Entry object
                 anchor_entry = {
-                    "word": f"{_get_field(c, 'word', '')} ⭐️ (root form)",
-                    "definition": definition,
+                    "word": f"{_get_field(c, 'word', '')} ⭐️",
+                    "definition": _get_field(c, "enhanced_definition", ""),
                     "normalized": _get_field(c, "normalized", "").lower(),
                 }
             else:
@@ -353,7 +347,9 @@ class RootExtractionCrew:
                 continue
 
             print(
-                f"[Debug] Skipping {skipped} ngrams because they have already been processed. Now to one that hasn't..."
+                f"Skipping {skipped} ngrams because they have already been processed. Now to one that hasn't...\n"
+                if skipped != 0
+                else ""
             )
             print(
                 f"[✓] Beginning examination of root-word candidate {GOLD}{ngram.upper()}{RESET}."
@@ -366,38 +362,29 @@ class RootExtractionCrew:
                 target_word=ngram,
                 subst_map=self.subst_map,
             )
-            print(
-                f"[Debug] number of semantic candidates for {ngram}: {len(semantic_candidates)}"
-            )
 
             # index_candidates = self.candidate_finder.find_candidates(
             #     target=ngram, top_k=9999 # corpus is only ~1350 words long at most, so this will capture all candidates
             # )
 
             index_candidates = self.candidate_finder.get_all_ngram_candidates(ngram)
-            print(
-                f"[Debug] index_candidates (count={len(index_candidates)}): "
-                f"{[c['normalized'] for c in index_candidates][:10]}…"
-            )
-
             if not semantic_candidates or len(semantic_candidates) < 2:
-                print(f"[⚠️] Too few semantic candidates for '{ngram}'. Skipping.")
+                print(
+                    f"[⚠️] Too few semantic candidates for '{ngram.upper()}'. Skipping."
+                )
                 continue
 
             clusters = cluster_definitions(semantic_candidates, self.sentence_model)
-            print(f"[Debug] cluster_definitions returned {len(clusters)} clusters")
+            print(
+                f"Beginning the evaluation of {len(clusters)} clusters. ",
+                (
+                    "Should be fairly quick, all considered!\n"
+                    if len(clusters) < 43
+                    else "This could take a while if we're being honest...\n"
+                ),
+            )
 
-            for cluster_id, cluster in enumerate(
-                tqdm(
-                    clusters,
-                    desc="Evaluating clusters",
-                    total=len(clusters),
-                    bar_format="{desc}: {n_fmt}/{total_fmt}",
-                )
-            ):
-                print(
-                    f"[Debug] Entering cluster #{cluster_id + 1} (out of {len(clusters)}). This cluster contains {len(cluster)} entries."
-                )
+            for cluster_id, cluster in enumerate(clusters):
                 sem_norms = {
                     _get_field(c, "normalized", "")
                     for c in cluster
@@ -411,26 +398,41 @@ class RootExtractionCrew:
                 overlap = sem_norms & index_norms
 
                 print(
-                    "[Debug] Semantic cluster contains the following (displaying up to 8 normalized words):",
-                    f"{RESET}, {BLUE}".join(list(sem_norms)[:8]).upper(),
-                    "..." if len(sem_norms) > 8 else "",
+                    f"Now examining cluster #{cluster_id + 1} of {len(clusters)} by finding the intersection between",
+                    f"the {len(sem_norms)} semantic candidates and the {len(index_norms)} the words",
+                    f"(and their extended variations) that contain '{GOLD}{ngram.upper()}{RESET}' as one of its components.",
                 )
+
+                sem_formatted_list = [
+                    f"{GREEN}{norm.upper()}{RESET}" for norm in list(sem_norms)[:5]
+                ]
                 print(
-                    f"[Debug] Words and variants that contain {GOLD}{ngram.upper()}{RESET}:",
-                    f"{RESET}, {YELLOW}".join(list(index_norms)[:8]).upper(),
-                    "..." if len(index_norms) > 8 else "",
+                    f"Some words from the semantic candidates (up to 5):",
+                    ", ".join(sem_formatted_list),
+                    "..." if len(sem_norms) > 5 else "",
                 )
+
+                idx_formatted_list = [
+                    f"{BLUE}{norm.upper()}{RESET}" for norm in list(index_norms)[:5]
+                ]
+                random.shuffle(idx_formatted_list)
                 print(
-                    "[Debug] Is there any overlap between the two? ",
+                    f"And some words/variants containing the ngram (up to 5):",
+                    ", ".join(idx_formatted_list),
+                    "..." if len(index_norms) > 5 else "",
+                )
+
+                print(
+                    "... Now, the important question: is their sufficient overlap between the two groups?",
                     (
-                        f"{GREEN}Yes! There is!{RESET}"
-                        if len(overlap) > 0
-                        else f"{PINK}None whatsoever{RESET}"
+                        f"{YELLOW}Yes! There is!{RESET}"
+                        if len(overlap) >= 2
+                        else f"{PINK}Either only one shared item or none whatsoever.{RESET} 😢"
                     ),
                 )
                 if not overlap or len(overlap) < 2:
                     print(
-                        f"[Debug] Skipped cluster #{cluster_id + 1} for {GOLD}{ngram.upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things."
+                        f"We have skipped cluster #{cluster_id + 1} for {GOLD}{ngram.upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things."
                     )
                     continue
                 else:
@@ -440,86 +442,67 @@ class RootExtractionCrew:
 
                 merged_items = list(cluster) + index_candidates
 
-                for word in {
-                    _get_field(c, "normalized", "")
-                    for c in merged_items
-                    if _get_field(c, "normalized", "")
-                }:
+                for word in merged_items:
+                    norm = _get_field(word, "normalized", "").lower()
+                    if not norm:
+                        continue
+
                     sem_entry = next(
-                        (c for c in cluster if _get_field(c, "normalized", "") == word),
+                        (c for c in cluster if _get_field(c, "normalized", "") == norm),
                         None,
                     )
                     index_entry = next(
                         (
                             c
                             for c in index_candidates
-                            if _get_field(c, "normalized", "") == word
+                            if _get_field(c, "normalized", "") == norm
                         ),
                         None,
                     )
 
-                    if not sem_entry and index_entry:
+                    if not sem_entry and index_entry and norm.lower() != ngram.lower():
                         continue
 
-                    if not self.is_ngram_in_variants(ngram, word):
+                    if not self.is_ngram_in_variants(ngram, norm):
                         continue
 
-                    entry_word = (
-                        _get_field(sem_entry, "word", word) if sem_entry else word
-                    )
-                    if isinstance(word, str) and word:
-                        variant_used = self.get_matching_variant(ngram, word)
+                    if isinstance(norm, str) and norm:
+                        variant_used = self.get_matching_variant(ngram, norm)
                     else:
                         variant_used = None
 
-                    sem_cits = (sem_entry.get("citations") or []) if sem_entry else []
+                    sem_cits = sem_entry.get("citations") if sem_entry else []
                     idx_cits = (
                         (index_entry.get("citations") or []) if index_entry else []
                     )
 
-                    citations = {
-                        c.context.strip()
+                    citations = [
+                        c["context"].strip()
                         for c in sem_cits + idx_cits
-                        if _get_field(c, "context", "")
-                    }
+                        if c["context"]
+                    ]
+                    
+                    if sem_entry:
+                        definition = sem_entry["definition"]
+                        enhanced = sem_entry["enhanced_definition"]
+                    else:
+                        dict_entry = next(e for e in self.entries if e.normalized == norm)
+                        definition = "; ".join(s.definition for s in dict_entry.senses or [])
+                        enhanced = f"{definition}. Possible uses: " + ", ".join([f"`{c}`" for c in citations])
 
                     merged_cluster.append(
                         {
                             "word": (
-                                f"{entry_word.upper() if entry_word else ''} (via: {variant_used})"
+                                f"{norm.upper()})"
                                 if variant_used and variant_used != word
-                                else (
-                                    entry_word.upper()
-                                    if entry_word
-                                    else "[ERROR] word not located"
-                                )
+                                else f"{norm.upper()}"
                             ),
-                            "normalized": word,
-                            "definition": (
-                                sem_entry.get("definition", None)
-                                if sem_entry
-                                else (
-                                    index_entry.get(
-                                        "definition",
-                                        "[Error] no definition provided semantic entry",
-                                    )
-                                    if index_entry
-                                    else "[Error] no definition provided for semantic entry or index entry"
-                                )
-                            ),
-                            "fasttext": (
-                                float(sem_entry.get("fasttext", 0.0))
-                                if sem_entry
-                                else 0.0
-                            ),
-                            "semantic": (
-                                float(sem_entry.get("semantic", 0.0))
-                                if sem_entry
-                                else 0.0
-                            ),
-                            "score": (
-                                float(sem_entry.get("score", 0.0)) if sem_entry else 0.0
-                            ),
+                            "normalized": norm,
+                            "definition": definition,
+                            "enhanced_definition": enhanced,
+                            "fasttext": float(_get_field(sem_entry, "fasttext", "0.0")),
+                            "semantic": float(_get_field(sem_entry, "semantic", "0.0")),
+                            "score": float(_get_field(sem_entry, "score", "0.0")),
                             "tier": (
                                 sem_entry.get("tier", "Untiered")
                                 if sem_entry
@@ -537,18 +520,19 @@ class RootExtractionCrew:
                     )
 
                 if len(merged_cluster) < 2:
-                    print(f"[⚠️] Merged cluster too small for '{ngram}'. Skipping.")
+                    print(
+                        f"[⚠️] Merged cluster too small for {GOLD}{ngram.upper()}{RESET}. Skipping."
+                    )
                     continue
 
                 print(
-                    f"[→] Evaluating cluster {cluster_id + 1}/{len(clusters)} for '{ngram.upper()}'..."
+                    f"[→] Beginning {GOLD}{ngram.upper()}{RESET} via analysis of cluster #{cluster_id + 1} (of {len(clusters)})"
                 )
 
                 evaluated = self.evaluate_ngram(
                     ngram,
                     merged_cluster,
-                    stream_callback=stream_callback,
-                    cluster_id=cluster_id,
+                    stream_callback=stream_callback
                 )
                 evaluated["overlap_count"] = len(overlap)
                 evaluated["cluster_size"] = len(merged_cluster)
@@ -583,7 +567,7 @@ class RootExtractionCrew:
             if max_words and seen_words >= max_words:
                 break
 
-        print("🎉 Clusters complete! 🎊")
+        print("🎊 Clusters complete! ")
 
         if self.ngram_db:
             self.ngram_db.close()

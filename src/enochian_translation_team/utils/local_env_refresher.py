@@ -47,7 +47,6 @@ def refresh_local_env(local=False) -> bool:
                 f.write(f"LOCAL_OPENAI_API_BASE={base_url}\n")
                 f.write("LOCAL_MODEL_NAME=deepseek/deepseek-r1-0528-qwen3-8b\n")
                 f.write("PYTHONPATH=src\n")
-            print(f"[SUCCESS] Wrote local env to {env_path}")
         except Exception as e:
             print(f"[ERROR] Writing .local_env failed: {e}")
             return False
@@ -63,5 +62,4 @@ def refresh_local_env(local=False) -> bool:
         print(f"[ERROR] Failed to load environment from {env_path}.")
         return False
 
-    print(f"[SUCCESS] Loaded environment from {env_path}")
     return True
