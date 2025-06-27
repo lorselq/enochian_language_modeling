@@ -213,10 +213,6 @@ class RootExtractionCrew:
                 "source": _get_field(c, "source", "unknown"),
             }
 
-            print("\n\n")
-            print("TESTING: ", entry)
-            print(f"TESTING 2: eval of {ngram_lower} == {_get_field(entry, 'normalized', '')}--", _get_field(entry, "normalized", "") == ngram_lower)
-
             # Check if this is the literal ngram word
             if _get_field(entry, "normalized", "") == ngram_lower:
                 root_entry = c  # We can directly use the Entry object
@@ -493,7 +489,7 @@ class RootExtractionCrew:
                     merged_cluster.append(
                         {
                             "word": (
-                                f"{norm.upper()})"
+                                f"{norm.upper()}"
                                 if variant_used and variant_used != word
                                 else f"{norm.upper()}"
                             ),
