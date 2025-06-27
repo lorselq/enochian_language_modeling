@@ -89,12 +89,12 @@ def debate_ngram(
 ):
     joined_defs = []
     candidate_list = (
-        '"' + ", ".join(_get_field(c, "word", "").upper() for c in candidates) + '"'
+        ", ".join(_get_field(c, "word", "").upper() for c in candidates)
     )
 
     for c in candidates:
         word = _get_field(c, "word", "")
-        definition = _get_field(c, "definition", "")
+        definition = _get_field(c, "enhanced_definition", "")
         fasttext = round(float(_get_field(c, "fasttext", "0.0")), 3)
         semantic = round(float(_get_field(c, "semantic", "0.0")), 3)
         tier = _get_field(c, "tier", "Untiered")
@@ -119,7 +119,7 @@ def debate_ngram(
     root_def_text = _get_field(root_entry, "definition", "")
     if root_def_text == "":
         print(f"[Error] root_entry is yielding definition of '{root_def_text}'")
-    selected_defs = select_definitions(joined_defs, max_words=100)
+    selected_defs = select_definitions(joined_defs, max_words=300)
     root_def_summary = " | ".join(selected_defs) + (
         "..." if len(joined_defs) > len(selected_defs) else ""
     )
@@ -128,8 +128,8 @@ def debate_ngram(
 
     if root_entry and _get_field(root_entry, "definition", ""):
         definition = _get_field(root_entry, "definition", "")
-        extra_prompt = f"⚠️ Reminder: The root '{root}' is already defined in the corpus as '{definition}'. Consider this as a potential anchor.\n"
-        skeptic_hint = f"\n\n🧐 Note: The root '{root}' is already defined in the corpus as '{definition}'. This lends strong weight towards its inclusion as a root word that should be accepted. Consider this in your critique."
+        extra_prompt = f"⚠️ Reminder: The root '{root.upper()}' is already defined in the corpus as '{definition}'. Consider this as a potential anchor.\n"
+        skeptic_hint = f"\n\n🧐 Note: The root '{root.upper()}' is already defined in the corpus as '{definition}'. This lends strong weight towards its inclusion as a root word that should be accepted. Consider this in your critique."
     else:
         extra_prompt = ""
         skeptic_hint = ""
@@ -199,41 +199,6 @@ Your tone is incisive, precise, and intellectually honest.""",
         ),
     }
 
-    # === AGENTS (not needed at present) ===
-    # agents = {
-    #     "linguist": Agent(
-    #         role="Linguist",
-    #         goal="Analyze the semantic relationships between these Enochian words and their definitions. Identify shared morphemes or root candidates based on: shared character substrings (especially prefixes/suffixes); overlapping definitions or conceptual meanings; patterns in usage across citations. Justify why these words might be related, but never use English, Greek, Latin, or Hebrew etymology to substantiate a proposed Enochian root word. Never use hypothetical Enochian words you've made up to justify your arguments; use only the ones provided in the prompts. Reference actual text segments or gloss overlaps.",
-    #         backstory="A creative, inventive, and excited linguist with deep pattern recognition skills, always hopeful to discover something new and great.",
-    #         tools=[tools["linguist"], tools["synthesis"]],
-    #         verbose=True,
-    #         callbacks=[stream_callback] if stream_callback else [],
-    #     ),
-    #     "skeptic": Agent(
-    #         role="Skeptic",
-    #         goal="You are a skeptical linguist. Critically examine the Linguist's proposed root and semantic analysis. Look for: weak reasoning or overgeneralization; words grouped together without strong definition overlap; n-grams that appear coincidentally (e.g., short, common patterns). Propose stronger alternatives if you have them, or explain why a proposal lacks rigor.",
-    #         backstory="A cynical critic with linguistic expertise and a grudge against bad etymology.",
-    #         tools=[tools["skeptic"]],
-    #         verbose=True,
-    #         callbacks=[stream_callback] if stream_callback else [],
-    #     ),
-    #     "adjudicator": Agent(
-    #         role="Adjudicator",
-    #         goal="Make a judgment call based on both sides.",
-    #         backstory="A supervising linguist who wants solid reasoning before accepting newly proposed root words as part of the lexicon.",
-    #         tools=[tools["adjudicator"]],
-    #         verbose=True,
-    #         callbacks=[stream_callback] if stream_callback else [],
-    #     ),
-    #     "glossator": Agent(
-    #         role="Glossator",
-    #         goal="Write a clear, precise, and lexicon-ready definition for an approved Enochian root word, based on all the prior linguistic reasoning and citation patterns.",
-    #         backstory="A senior philologist responsible for converting root hypotheses into formal dictionary entries for the Enochian corpus. Deeply meticulous and wary of poetic overreach.",
-    #         tools=[tools["glossator"]],
-    #         verbose=True,
-    #         callbacks=[stream_callback] if stream_callback else [],
-    #     ),
-    # }
     about_enochiana = "As a bit of context about the Enochian language: the root words are derived from Enochian, the language Adam spoke (from the Biblical Adam and Eve), and is allegedly used as a form of celestial speech by angels and other divine entities; there are many Christian (and Gnostic) undertones in the language, and the known words' main focus is divine cosmology, theology, and human action and government."
     about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
 
@@ -242,7 +207,7 @@ Your tone is incisive, precise, and intellectually honest.""",
             description=f"""
 You are a **disciplined and insightful computational linguist** specializing in the Enochian language—a constructed system with irregular morphology, cryptic derivations, and unknown origin.
 
-Your task is to **evaluate the root candidate '{root}'** by analyzing semantic and morphological overlap across its proposed related words.
+Your task is to **evaluate the root candidate '{root.upper()}'** by analyzing semantic and morphological overlap across its proposed related words.
 
 Begin with the following semantic stats:
 
@@ -254,7 +219,7 @@ Focus your analysis on:
 - Overlapping meanings in definitions and contextual usage (citations)
 
 ⚠️ DO NOT use natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative comparisons to outside languages.
-⚠️ DO NOT use any Enochian words, real or imagined, as part of your justification other than those given here: {candidate_list}
+⚠️ DO NOT use any Enochian words as part of your justification other than those given here: {candidate_list}
 All justification must come from **internal evidence only**—patterns observed across Enochian wordforms and meanings.
 
 With this in mind, examine the following definitions and citations (contained within square brackets, pipe-delimited, most relevant first) for the root '{root.upper()}':
@@ -418,14 +383,14 @@ You must:
         ),
         "gloss": Task(
             description=(
-                f'The adjudicator has approved the root "{root}". Your responsibility is to respond with a precise and practical dictionary-style entry.\n\n'
+                f'The adjudicator has approved the root "{root.upper()}". Your responsibility is to respond with a precise and practical dictionary-style entry.\n\n'
                 "Your definition must:\n"
                 "- Describe the **core semantic meaning** of the root\n"
                 "- Indicate how it functions **morphologically** (e.g., prefix, infix, suffix)\n"
                 "- Explain its **role** in compound or derived words (e.g., what kind of meaning it adds and how it functions)\n"
                 "- Provide **guidance** on how this root could help decode other, currently unknown words\n\n"
                 "Format your output as:\n"
-                f"{root} - [Definition including both meaning and morphological/functional guidance.]\n\n"
+                f"{root.upper()} - [Definition including both meaning and morphological/functional guidance, especially its possible semantic contribution to compound words.]\n\n"
                 "Focus entirely on internal linguistic evidence and patterns observed across related Enochian words. DO NOT reference English, Greek, Latin, or Hebrew etymologies.\n"
                 "Below is a summary of the debate and root data. Use it to guide your construction of the definition:\n\n"
             ),
@@ -471,7 +436,7 @@ You must:
     )
 
     # separator between words
-    print("\n\n\n")
+    print("\n")
     print(
         f"==={(len('Now discussing the possible root word ') + len(f'<{root.upper()}>')) * '='}==="
     )

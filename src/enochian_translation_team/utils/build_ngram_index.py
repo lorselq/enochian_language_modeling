@@ -74,6 +74,7 @@ def filter_by_pmi(
     # Only consider ngrams of length >= 2
     for ng, df in ngram_df.items():
         if len(ng) < 2:
+            filtered.append(ng)
             continue
         # very rough PMI: log(df / (sum of dfs of subparts)^2 * total_docs)
         # split into two halves
@@ -98,14 +99,14 @@ def build_and_save_ngram_index(
     ngram_db_path = paths["ngram_index"]
 
     # Check dictionary hash to skip rebuild
-    dict_bytes = open(dict_path, "rb").read()
-    dict_hash = hashlib.md5(dict_bytes).hexdigest()
-    meta_path = str(ngram_db_path) + ".meta.json"
-    if os.path.exists(ngram_db_path) and os.path.exists(meta_path):
-        meta = json.loads(open(meta_path).read())
-        if meta.get("dict_hash") == dict_hash:
-            logger.info("N-gram index up-to-date (cache hit)")
-            return
+    # dict_bytes = open(dict_path, "rb").read()
+    # dict_hash = hashlib.md5(dict_bytes).hexdigest()
+    # meta_path = str(ngram_db_path) + ".meta.json"
+    # if os.path.exists(ngram_db_path) and os.path.exists(meta_path):
+    #     meta = json.loads(open(meta_path).read())
+    #     if meta.get("dict_hash") == dict_hash:
+    #         logger.info("N-gram index up-to-date (cache hit)")
+    #         return
 
     # Load raw entries
     entries = json.loads(open(dict_path, "r", encoding="utf-8").read())
@@ -162,17 +163,17 @@ def build_and_save_ngram_index(
     conn.close()
 
     # Save metadata
-    json.dump(
-        {
-            "dict_hash": dict_hash,
-            "min_n": min_n,
-            "max_n": max_n,
-            "pmi_threshold": pmi_threshold,
-        },
-        open(meta_path, "w"),
-        indent=2,
-    )
-    logger.info(f"N-gram index built and saved to {ngram_db_path}")
+    # json.dump(
+    #     {
+    #         "dict_hash": dict_hash,
+    #         "min_n": min_n,
+    #         "max_n": max_n,
+    #         "pmi_threshold": pmi_threshold,
+    #     },
+    #     open(meta_path, "w"),
+    #     indent=2,
+    # )
+    # logger.info(f"N-gram index built and saved to {ngram_db_path}")
 
 
 def main():

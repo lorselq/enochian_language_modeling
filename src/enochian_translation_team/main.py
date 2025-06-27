@@ -48,7 +48,7 @@ def main():
     RESET = "\033[0m"
     local_remote_mode = None
     while local_remote_mode not in ("1", "2"):
-        local_remote_mode = input("Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? [note: currently, as debug, always does (2)] ")
+        local_remote_mode = input("Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? ")
     if local_remote_mode == "1" or local_remote_mode == "2":
         if(refresh_local_env()):
             env_local = find_dotenv(".env_local")

@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import networkx as nx
 from typing import List
@@ -63,14 +64,14 @@ def build_enhanced_definition(def_entry):
     # Handle both object and dictionary input
     if isinstance(def_entry, dict):
         senses = def_entry.get("senses", [])
-        context_tags = def_entry.get("context_tags", [])
+        key_citations = def_entry.get("key_citations", [])
     else:
         senses = getattr(def_entry, "senses", [])
-        context_tags = getattr(def_entry, "context_tags", [])
+        key_citations = getattr(def_entry, "key_citations", [])
 
     # quick fix
-    if context_tags == None:
-        context_tags = []
+    if key_citations == None:
+        key_citations = []
 
     base_def = (
         " ".join(
@@ -86,7 +87,7 @@ def build_enhanced_definition(def_entry):
     )
 
     usage_examples = []
-    for cite in context_tags:
+    for cite in key_citations:
         if isinstance(cite, dict):
             context = cite.get("context", "")
         else:
@@ -95,7 +96,7 @@ def build_enhanced_definition(def_entry):
             usage_examples.append(context.strip())
 
     if usage_examples:
-        formatted_usages = ", ".join(f"`{ex}`" for ex in usage_examples)
+        formatted_usages = ", ".join([f"`{ex}`" for ex in usage_examples])
         usage_snippet = f" Usage: {formatted_usages}"
     else:
         usage_snippet = ""
@@ -109,10 +110,10 @@ def score_cluster_array(
     min_clusters: int = 6,
     max_clusters: int = 35,
     target_avg_low: float = 11.0,
-    target_avg_high: float = 22.0,
+    target_avg_high: float = 20.0,
     weight_count: float = 1.0,
-    weight_avg: float = 1.0,
-    weight_std: float = 0.3,
+    weight_avg: float = 1.3,
+    weight_std: float = 0.4,
 ) -> float:
     sizes = np.array([len(c) for c in clusters], dtype=float)
     count = len(sizes)
@@ -187,23 +188,23 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
     implemented via index-based clustering to ensure consistency.
     """
     N = len(texts)
-    print(f"[DEBUG] Tuning clustering for {N} items")
 
     # 1) Hyperparameter grids
     configs = []
-    for t in range(50, 81, 1):
+    for t in range(50, 81):
         configs.append(("agglomerative", {"threshold": t / 100}))
-    for e in range(50, 81, 1):
+    for e in range(50, 81):
         configs.append(("dbscan", {"eps": e / 100, "min_samples": 2}))
-    for g in range(50, 81, 1):
+    for g in range(50, 81):
         configs.append(("graph", {"threshold": g / 100}))
         configs.append(("ego", {"threshold": g / 100}))
-    for k in range(3, 13, 1):
+    for k in range(3, min(N, 13)):
         configs.append(("knn", {"k": k}))
-    for nc in range(3, 20, 1):
+    for nc in range(3, 20):
         configs.append(("fuzzy", {"n_clusters": nc, "m": 2.0}))
 
-    print(f"[DEBUG] Will evaluate {len(configs)} method/param combinations")
+    print()
+    print(f"We are about to evaluate {N} entries using {len(configs)} method/param combinations to identify the way to cluster them.")
 
     best_score = float("inf")
     best_clusters_idx = []
@@ -307,7 +308,7 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
         # print(
         #     f"[DEBUG]   scores → sil={sil:.3f}, db={db:.3f}, ch={ch:.1f}, pen={penalty:.3f}"
         # )
-        combo = -sil + db - 0.1 * ch + penalty
+        combo = -sil + db - 0.1 * math.log10(ch + 1) + penalty
         if combo < best_score:
             best_score = combo
             best_clusters_idx = clusters_idx
@@ -317,8 +318,9 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
     # 6) Map back to entries and return
     best_clusters = [[original_entries[i] for i in cl] for cl in best_clusters_idx]
     print(
-        f"[DEBUG] 🏆 Final best config: {best_meta[0]} {best_meta[1]} "
+        f"🏆 Final best config: {best_meta[0]} {best_meta[1]} "
         f"(sil={best_meta[2]:.3f}, db={best_meta[3]:.3f}, ch={best_meta[4]:.1f}, score={best_score:.3f})"
+        f"\n"
     )
     return best_clusters
 
@@ -347,28 +349,52 @@ def find_semantically_similar_words(
             ) from e
 
     normalized_query = normalize_form(target_word)
+
     variants_raw = generate_variants(
         normalized_query, subst_map, return_subst_meta=True
     )
     variants = [v[0] for v in variants_raw]
 
+    entries = [
+        e
+        for e in entries
+        if normalized_query in normalize_form(e.canonical)
+        or any(v in normalize_form(e.canonical) for v in variants)
+    ]
+
+    for e in entries:
+        e.enhanced_definition = build_enhanced_definition(e)
+
     all_roots = [normalized_query] + variants
     index_entries = [
-        e for e in entries
+        e
+        for e in entries
         if any(root in normalize_form(e.canonical) for root in all_roots)
     ]
     if not index_entries:
         return []
 
-    # target_entry = next(
-    #     (e for e in entries if normalize_form(e.canonical) == normalized_query),
-    #     None,
-    # )
-    # if not target_entry:
-    #     return []
+    enhanced_entry_embeddings = [e.enhanced_definition for e in entries]
+    enhanced_index_defs = [e.enhanced_definition for e in index_entries]
+
+    root_embeddings = sentence_model.encode(
+        enhanced_index_defs,
+        convert_to_tensor=True,
+        #        show_progress_bar=False
+    )
+
+    entry_embeddings = sentence_model.encode(
+        enhanced_entry_embeddings,
+        convert_to_tensor=True,
+        # show_progress_bar=False
+    )
+
+    cosine_matrix = util.cos_sim(entry_embeddings, root_embeddings)
+    enh_def_scores = cosine_matrix.max(dim=1).values.cpu().tolist()
 
     results = []
-    for entry in tqdm(entries, desc="Processing dictionary entries"):
+
+    for i, entry in enumerate(tqdm(entries, desc="Processing relevant dictionary entries")):
         cand_norm = normalize_form(entry.canonical)
         if (
             cand_norm == normalized_query
@@ -387,15 +413,7 @@ def find_semantically_similar_words(
                 default=0.0,
             )
 
-        def_score = max(
-            definition_similarity(
-                build_enhanced_definition(root_e),
-                build_enhanced_definition(entry),
-                sentence_model,
-            )
-            for root_e in index_entries
-        )
-
+        def_score = enh_def_scores[i]
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
 
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(
@@ -444,7 +462,7 @@ def find_semantically_similar_words(
                 "priority": priority,
                 "tier": tier,
                 "levenshtein": levenshtein_distance(normalized_query, cand_norm),
-                "citations": getattr(entry, "context_tags", []),
+                "citations": getattr(entry, "key_citations", []),
             }
         )
 
@@ -458,7 +476,7 @@ def find_semantically_similar_words(
 
         for i, entry in tqdm(
             enumerate(results),
-            f"Calculating definition across all relevant words (up to {len(entries)})",
+            f"Calculating definition similarity across all relevant words (up to {len(entries)})",
         ):
             sims = []
             for j in range(len(results)):
