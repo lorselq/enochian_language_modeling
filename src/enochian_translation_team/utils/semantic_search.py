@@ -1,4 +1,6 @@
 import math
+import sys
+import time
 import numpy as np
 import networkx as nx
 from typing import List
@@ -22,6 +24,17 @@ from enochian_translation_team.utils.variant_utils import generate_variants
 
 def normalize_form(word):
     return word.lower()
+
+
+def stream_text(text: str, delay: float = 0.02):
+    for c in text:
+        sys.stdout.write(c)
+        sys.stdout.flush()
+        try:
+            time.sleep(delay)
+        except KeyboardInterrupt:
+            # if you really need to interrupt, break cleanly
+            break
 
 
 def definition_similarity(def1, def2, sentence_model):
@@ -204,7 +217,11 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
         configs.append(("fuzzy", {"n_clusters": nc, "m": 2.0}))
 
     print()
-    print(f"We are about to evaluate {N} entries using {len(configs)} method/param combinations to identify the way to cluster them.")
+    stream_text(
+        f"We are about to evaluate {N} entries using {len(configs)} method/param combinations to identify the way to cluster them."
+    )
+    print()
+    time.sleep(0.6)
 
     best_score = float("inf")
     best_clusters_idx = []
@@ -317,11 +334,13 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
 
     # 6) Map back to entries and return
     best_clusters = [[original_entries[i] for i in cl] for cl in best_clusters_idx]
-    print(
+    stream_text(
         f"🏆 Final best config: {best_meta[0]} {best_meta[1]} "
         f"(sil={best_meta[2]:.3f}, db={best_meta[3]:.3f}, ch={best_meta[4]:.1f}, score={best_score:.3f})"
-        f"\n"
+        f"\n\n"
     )
+    print()
+    time.sleep(1)
     return best_clusters
 
 
@@ -394,7 +413,9 @@ def find_semantically_similar_words(
 
     results = []
 
-    for i, entry in enumerate(tqdm(entries, desc="Processing relevant dictionary entries")):
+    for i, entry in enumerate(
+        tqdm(entries, desc="Processing relevant dictionary entries")
+    ):
         cand_norm = normalize_form(entry.canonical)
         if (
             cand_norm == normalized_query

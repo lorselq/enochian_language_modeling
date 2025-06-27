@@ -1,9 +1,11 @@
+import logging
+import time
+import sys
 from typing import Optional
 from crewai import Agent, Task, Crew
 from sentence_transformers import SentenceTransformer, util
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
 from enochian_translation_team.utils.dictionary_loader import Entry
-import logging
 
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("openai.api_requestor").setLevel(logging.WARNING)
@@ -18,6 +20,17 @@ def _get_field(item, field, default=""):
     if isinstance(item, dict):
         return item.get(field, default)
     return getattr(item, field, default)
+
+
+def stream_text(text: str, delay: float = 0.003):
+    for c in text:
+        sys.stdout.write(c)
+        sys.stdout.flush()
+        try:
+            time.sleep(delay)
+        except KeyboardInterrupt:
+            # if you really need to interrupt, break cleanly
+            break
 
 
 def check_convergence(texts: list[str]) -> bool:
@@ -112,7 +125,7 @@ def debate_ngram(
             (
                 c
                 for c in candidates
-                if _get_field(c, "word", "").lower() == root.lower()
+                if _get_field(c, "normalized", "").lower() == root.lower()
             ),
             None,
         )
@@ -258,7 +271,6 @@ Your tone must be scholarly and confident. Avoid vague generalizations. Use exam
                 "Abstract or metaphorical meanings are acceptable if supported by internal consistency.\n\n"
                 "Be concise, definitive, and analytical. No hedging.\n\n"
                 "Begin with the ruling, then follow with a 1–3 sentence justification.\n\n"
-                "+++\n\n"
             ),
             expected_output="A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a concise rationale for this verdict.",
         ),
@@ -444,8 +456,12 @@ You must:
     print(
         f"==={(len('Now discussing the possible root word ') + len(f'<{root.upper()}>')) * '='}==="
     )
-
-    print(f"{GRAY}Starting prompt for research team: {tasks['propose'].description}")
+    time.sleep(2)
+    
+    print(f"{GRAY}Starting prompt for research team:", end=" ")
+    time.sleep(0.7)
+    stream_text(tasks['propose'].description)
+    print(f"\n{RESET}\n")
 
     STAGES = [
         ("linguist", 5),
@@ -471,12 +487,12 @@ You must:
     tldr_summary = ""
     transcript = ""
     for stage_name, count in STAGES:
-
+        time.sleep(1)
         if stage_name == "linguist":
             agent_tool = tools[stage_name]
             for i in range(count):
                 print(
-                    f"\n\n>>>📃\tOne of the junior researchers prepares to deliver their research on '{root.upper()}'...\n{GRAY}"
+                    f"\n\n>>>🥺\tOne of the junior researchers prepares to deliver their research on '{root.upper()}'...\n{GRAY}"
                 )
                 variant = agent_tool._run(
                     prompt=tasks["propose"].description
@@ -484,22 +500,22 @@ You must:
                     + tasks["propose"].expected_output.lower(),
                     stream_callback=junior_cb,
                     print_chunks=True,
-                    role_name=f"👩‍🎓\tJunior Linguist #{i + 1}",
+                    role_name=f"🥺\tJunior Linguist #{i + 1}",
                 )
                 linguist_variants.append(variant)
                 if check_convergence(linguist_variants):
                     print(
                         "Linguists have converged on similar analyses, passing research to the Lead Linguist..."
                     )
+                    time.sleep(0.7)
                     # jump to the “synthesis” stage index
                     break
         elif stage_name == "initial_ruling":
             agent_tool = tools[stage_name]
-            print(
-                f"\n\n{RESET}>>>👩‍⚖️\tAn expert in the field takes an initial look at the research and decides whether it makes sense to deliberate on the material or move on to other ngram candidates...\n{GRAY}",
-                tasks["initial_ruling"].description,
-                f"{RESET}\n",
-            )
+            print(f"\n\n{RESET}>>>👩‍⚖️\tAn expert in the field takes an initial look at the research and decides whether it makes sense to deliberate on the material or move on to other ngram candidates...\n\n{GRAY}")
+            stream_text(tasks["initial_ruling"].description)                                
+            print(f"\n{RESET}\n")
+            
             if is_canon:
                 initial_ruling = (
                     f"✅ ACCEPTED\n"
@@ -521,7 +537,9 @@ You must:
                     )
                 else:
                     print(f"[Error] linguist_variants are empty")
-                    txt = initial_ruling.strip().lower()
+                    
+
+                txt = initial_ruling.strip().lower()
                 initial_ruling_verdict = (
                     txt.startswith("✅ accepted")
                     or txt.startswith("accepted")
@@ -536,9 +554,7 @@ You must:
                     break
         elif stage_name == "synthesis":
             agent_tool = tools[stage_name]
-            print(
-                f"\n\n{RESET}>>>🥸\tThe Senior Linguist reads the reports of their juniors and begins synthesizing them into a meaningful proposal...\n{GRAY}"
-            )
+            print(f"\n\n{RESET}>>>🥸\tThe Senior Linguist reads the reports of their juniors and begins synthesizing them into a meaningful proposal...\n{GRAY}")
             if linguist_variants and len(linguist_variants) > 0:
                 linguist_proposal = agent_tool._run(
                     prompt="\n".join(
@@ -553,11 +569,10 @@ You must:
                 break
         elif stage_name == "skeptic":
             agent_tool = tools[stage_name]
-            print(
-                f"\n\n{RESET}>>>🤔\tThe Skeptic understands the proposal and wishes to make a critique...\n{GRAY}",
-                tasks["counter"].description,
-                f"\n{RESET}",
-            )
+            print(f"\n\n{RESET}>>>🤔\tThe Skeptic understands the proposal and wishes to make a critique...\n{GRAY}")
+            stream_text(tasks["counter"].description)
+            print(f"\n{RESET}\n")
+             
             if linguist_proposal and len(linguist_proposal) > 0:
                 skeptic_response = agent_tool._run(
                     prompt="\n".join(
@@ -600,11 +615,10 @@ You must:
         elif stage_name == "rebuttal":
             if linguist_defense and len(linguist_defense) > 0:
                 agent_tool = tools["skeptic"]
-                print(
-                    f"\n\n{RESET}>>>🤔\tThe Skeptic considers and prepares a final criticism...\n{GRAY}",
-                    tasks["rebuttal"].description,
-                    f"{RESET}\n",
-                )
+                print(f"\n\n{RESET}>>>🤔\tThe Skeptic considers and prepares a final criticism...\n{GRAY}")
+                stream_text(tasks["rebuttal"].description)
+                print(f"\n{RESET}\n")
+
                 skeptic_rebuttal = agent_tool._run(
                     prompt="\n".join(
                         [
@@ -625,11 +639,9 @@ You must:
         elif stage_name == "adjudicator":
             agent_tool = tools[stage_name]
             if skeptic_rebuttal and len(skeptic_rebuttal) > 0:
-                print(
-                    f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}",
-                    tasks["ruling"].description,
-                    f"{RESET}\n",
-                )
+                print(f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}")
+                stream_text(tasks["ruling"].description)
+                f"\n{RESET}\n"
 
                 if is_canon:
                     adjudicator_ruling = (
@@ -638,7 +650,9 @@ You must:
                         "This existing definition provides sufficient internal linguistic evidence for approval.\n"
                         "The prior debate is preserved for insight and extended justification."
                     )
-                    print(adjudicator_ruling)
+                    stream_text(adjudicator_ruling)
+                    print()
+                        
                 else:
                     adjudicator_ruling = agent_tool._run(
                         prompt="\n".join(
@@ -709,7 +723,7 @@ You must:
             if gloss and len(gloss) > 0:
                 lines.append("\n\n=== 🧐 GLOSSATOR ===\n" + gloss + "\n\n")
 
-            print(f"🧙‍♂️ I humbly present to you the key takeaways of this discussion.")
+            print(f"🧙‍♂️ I humbly present to you the key takeaways of this discussion.\n\n")
             tldr_summary = tools["tldr"]._run(
                 prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{''.join(lines)}",
                 stream_callback=summarizer_cb,
