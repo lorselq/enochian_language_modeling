@@ -422,13 +422,9 @@ class RootExtractionCrew:
                 sem_formatted_list = [
                     f"{GREEN}{norm.upper()}{RESET}" for norm in list(sem_norms)[:5]
                 ]
-                stream_text(
-                    f"Some words from the semantic candidates (up to 5): "
-                    + ", ".join(sem_formatted_list)
-                    + "..."
-                    if len(sem_norms) > 5
-                    else ""
-                )
+                sem_formatted_list = f"Some words from the semantic candidates (up to 5): " + ", ".join(sem_formatted_list)
+                sem_formatted_list += "..." if len(sem_norms) > 5 else ""
+                stream_text(sem_formatted_list)
                 time.sleep(0.3)
                 print()
 
@@ -436,13 +432,9 @@ class RootExtractionCrew:
                     f"{BLUE}{norm.upper()}{RESET}" for norm in list(index_norms)[:5]
                 ]
                 random.shuffle(idx_formatted_list)
-                stream_text(
-                    f"And some words/variants containing the ngram (up to 5): "
-                    + ", ".join(idx_formatted_list)
-                    + "..."
-                    if len(index_norms) > 5
-                    else ""
-                )
+                idx_formatted_list = f"And some words/variants containing the ngram (up to 5): " + ", ".join(idx_formatted_list)
+                idx_formatted_list += "..." if len(index_norms) > 5 else ""
+                stream_text(idx_formatted_list)
                 time.sleep(1.2)
                 print()
 
@@ -589,12 +581,13 @@ class RootExtractionCrew:
 
                 if "Glossator" in evaluated:
                     with open(self.new_definitions_path, "a", encoding="utf-8") as f:
-                        source_words = ", ".join(
-                            _get_field(c, "word", "") for c in merged_cluster
-                        )
-                        f.write(
-                            f"=======recorded at {datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')} for cluster {cluster_id + 1}/{len(clusters)}======={evaluated['Glossator'].strip()} NOTE: this was inferred from the following words: {source_words}.\n\n"
-                        )
+                        source_words_and_meanings = []
+                        for c in merged_cluster:
+                            source_words_and_meanings.append(f"{_get_field(c, 'word', '').upper()}: {_get_field(c, 'definition', '')}")
+                        if len(evaluated['Glossator'].strip()) > 0:
+                            f.write(
+                                f"=======recorded at {datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')} for cluster {cluster_id + 1}/{len(clusters)}=======\n{evaluated['Glossator'].strip()}\nNOTE: this was inferred from the following words: {source_words_and_meanings}.\n\n"
+                            )
 
                 # if stream_callback:
                 #     for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
