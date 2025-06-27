@@ -22,7 +22,7 @@ def _get_field(item, field, default=""):
     return getattr(item, field, default)
 
 
-def stream_text(text: str, delay: float = 0.003):
+def stream_text(text: str, delay: float = 0.006):
     for c in text:
         sys.stdout.write(c)
         sys.stdout.flush()
@@ -129,9 +129,10 @@ def debate_ngram(
             ),
             None,
         )
-    root_def_text = _get_field(root_entry, "definition", "")
-    if root_def_text == "":
-        print(f"[Error] root_entry is yielding definition of '{root_def_text}'")
+    root_def_text = (
+        _get_field(root_entry, "enhanced_definition", "")
+        or _get_field(root_entry, "definition", "")
+    )
     selected_defs = select_definitions(joined_defs, max_words=300)
     root_def_summary = " | ".join(selected_defs) + (
         "..." if len(joined_defs) > len(selected_defs) else ""
@@ -448,7 +449,6 @@ You must:
     )
 
     # separator between words
-    print("\n")
     print(
         f"==={(len('Now discussing the possible root word ') + len(f'<{root.upper()}>')) * '='}==="
     )

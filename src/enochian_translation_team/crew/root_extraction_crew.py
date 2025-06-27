@@ -389,7 +389,7 @@ class RootExtractionCrew:
             clusters = cluster_definitions(semantic_candidates, self.sentence_model)
             follow_phrase = (
                 "Should be fairly quick, all considered!\n"
-                if len(clusters) < 43
+                if len(clusters) < 10
                 else "This could take a while if we're being honest...\n"
             )
             stream_text(
@@ -567,7 +567,7 @@ class RootExtractionCrew:
                     continue
 
                 stream_text(
-                    f"[→] Beginning {GOLD}{ngram.upper()}{RESET} via analysis of cluster #{cluster_id + 1} (of {len(clusters)}).\n"
+                    f"\n[→] Beginning {GOLD}{ngram.upper()}{RESET} via analysis of cluster #{cluster_id + 1} (of {len(clusters)}).\n"
                 )
                 time.sleep(0.5)
 
