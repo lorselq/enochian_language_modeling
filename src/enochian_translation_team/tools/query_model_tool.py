@@ -120,7 +120,7 @@ class QueryModelTool(BaseTool):
         print_chunks: bool = False,
         role_name: Optional[str] = None,
     ) -> str:
-        print(f"{GREEN}Attempting to connect to a remote LLM...{RESET}")
+        print(f"\n{GREEN}Attempting to connect to a remote LLM...{RESET}\n")
         return self._llm_call(
             api_base_env="REMOTE_OPENAI_API_BASE",
             api_key_env="REMOTE_OPENAI_API_KEY",

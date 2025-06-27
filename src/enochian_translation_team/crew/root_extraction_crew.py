@@ -467,9 +467,14 @@ class RootExtractionCrew:
                     else:
                         variant_used = None
 
-                    sem_cits = sem_entry.get("citations") if sem_entry else []
+                    def safe_list(ls):
+                        return ls if isinstance(ls, list) else []
+
+                    sem_cits = (
+                        safe_list(sem_entry.get("citations")) if sem_entry else []
+                    )
                     idx_cits = (
-                        (index_entry.get("citations") or []) if index_entry else []
+                        safe_list(index_entry.get("citations")) if index_entry else []
                     )
 
                     citations = [
@@ -477,14 +482,20 @@ class RootExtractionCrew:
                         for c in sem_cits + idx_cits
                         if c["context"]
                     ]
-                    
+
                     if sem_entry:
                         definition = sem_entry["definition"]
                         enhanced = sem_entry["enhanced_definition"]
                     else:
-                        dict_entry = next(e for e in self.entries if e.normalized == norm)
-                        definition = "; ".join(s.definition for s in dict_entry.senses or [])
-                        enhanced = f"{definition}. Possible uses: " + ", ".join([f"`{c}`" for c in citations])
+                        dict_entry = next(
+                            e for e in self.entries if e.normalized == norm
+                        )
+                        definition = "; ".join(
+                            s.definition for s in dict_entry.senses or []
+                        )
+                        enhanced = f"{definition}. Possible uses: " + ", ".join(
+                            [f"`{c}`" for c in citations]
+                        )
 
                     merged_cluster.append(
                         {
@@ -526,9 +537,7 @@ class RootExtractionCrew:
                 )
 
                 evaluated = self.evaluate_ngram(
-                    ngram,
-                    merged_cluster,
-                    stream_callback=stream_callback
+                    ngram, merged_cluster, stream_callback=stream_callback
                 )
                 evaluated["overlap_count"] = len(overlap)
                 evaluated["cluster_size"] = len(merged_cluster)
