@@ -674,7 +674,7 @@ You must:
                 break
         elif stage_name == "glossator":
             agent_tool = tools[stage_name]
-            gloss = f"<there is no (new) definition for '{root.upper()}'>"
+            gloss = ""
             if (
                 adjudicator_ruling
                 and len(adjudicator_ruling) > 0
@@ -721,9 +721,12 @@ You must:
             lines.append(adjudicator_ruling.strip())
 
             if gloss and len(gloss) > 0:
-                lines.append("\n\n=== 🧐 GLOSSATOR ===\n" + gloss + "\n\n")
+                lines.append("\n\n=== 🧐 GLOSSATOR ===\n")
+                lines.append(gloss if len(gloss) > 0 else f"<No new definition for already-established word: '{root.upper()}'")
+                lines.append(f", which is understood to mean: {_get_field(root_entry, 'enhanced_definition', '')}" if root_entry and len(_get_field(root_entry, 'enhanced_definition', '')) > 0 else ".")
+                lines.append("\n")
 
-            print(f"🧙‍♂️ I humbly present to you the key takeaways of this discussion.\n\n")
+            print(f"\n\n🧙‍♂️ I humbly present to you the key takeaways of this discussion.\n")
             tldr_summary = tools["tldr"]._run(
                 prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{''.join(lines)}",
                 stream_callback=summarizer_cb,
