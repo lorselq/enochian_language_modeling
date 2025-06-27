@@ -476,7 +476,7 @@ You must:
             agent_tool = tools[stage_name]
             for i in range(count):
                 print(
-                    f"\n\n>>>👩‍🎓\tLinguist {i + 1}'s research on the root word...\n{GRAY}"
+                    f"\n\n>>>👩‍🎓\tJunior Linguist #{i + 1} prepares to deliver their research on '{root.upper()}'...\n{GRAY}"
                 )
                 variant = agent_tool._run(
                     prompt=tasks["propose"].description
@@ -484,7 +484,7 @@ You must:
                     + tasks["propose"].expected_output.lower(),
                     stream_callback=junior_cb,
                     print_chunks=True,
-                    role_name=f"👩‍🎓 Junior Linguist Researcher #{i + 1}",
+                    role_name=f"👩‍🎓 Junior Linguist #{i + 1}",
                 )
                 linguist_variants.append(variant)
                 if check_convergence(linguist_variants):
@@ -496,7 +496,7 @@ You must:
         elif stage_name == "initial_ruling":
             agent_tool = tools[stage_name]
             print(
-                f"\n\n{RESET}>>>👩‍⚖️\tAdjudicator's turn to decide if we should move forward...\n{GRAY}",
+                f"\n\n{RESET}>>>👩‍⚖️\tAn expert in the field takes an initial look at the research and decides whether it makes sense to deliberate on the material or move on to other ngram candidates...\n{GRAY}",
                 tasks["initial_ruling"].description,
                 f"{RESET}\n",
             )
@@ -537,7 +537,7 @@ You must:
         elif stage_name == "synthesis":
             agent_tool = tools[stage_name]
             print(
-                f"\n\n{RESET}>>>🥸\tLead Linguist's turn to propose a new root word...\nSynthesizing junior linguist's input into a meaningful argument:"
+                f"\n\n{RESET}>>>🥸\tThe Senior Linguist reads the reports of their juniors and begins synthesizing them into a meaningful proposal...\n{GRAY}"
             )
             if linguist_variants and len(linguist_variants) > 0:
                 linguist_proposal = agent_tool._run(
@@ -546,7 +546,7 @@ You must:
                     ),
                     stream_callback=linguist_cb,
                     print_chunks=True,
-                    role_name="🥸\tLead Linguist",
+                    role_name="🥸\tSenior Linguist",
                 )
             else:
                 print(f"[Error] linguist_variants are empty")
@@ -554,7 +554,7 @@ You must:
         elif stage_name == "skeptic":
             agent_tool = tools[stage_name]
             print(
-                f"\n\n{RESET}>>>🤔\tSkeptic's turn to refute...\nRefutation prompt:{GRAY}",
+                f"\n\n{RESET}>>>🤔\tThe Skeptic understands the proposal and wishes to make a critique...\n{GRAY}",
                 tasks["counter"].description,
                 f"\n{RESET}",
             )
@@ -577,7 +577,7 @@ You must:
         elif stage_name == "defend":
             agent_tool = tools["linguist"]
             print(
-                f"\n\n{RESET}>>>🥸\tLead Linguist's turn to defend...\nDefense prompt:{GRAY}",
+                f"\n\n{RESET}>>>🥸\tThe Lead Linguist's considers what the Skeptic has said and prepares a defense...\n{GRAY}",
                 tasks["defend"].description,
                 f"{RESET}\n",
             )
@@ -592,7 +592,7 @@ You must:
                     ),
                     stream_callback=linguist_cb,
                     print_chunks=True,
-                    role_name="🥸\tLead Linguist",
+                    role_name="🥸\tSenior Linguist",
                 )
             else:
                 print("[Error] skeptic_response defined as ''")
@@ -601,7 +601,7 @@ You must:
             if linguist_defense and len(linguist_defense) > 0:
                 agent_tool = tools["skeptic"]
                 print(
-                    f"\n\n{RESET}>>>🤔\tSkeptic's turn to give the final word:{GRAY}",
+                    f"\n\n{RESET}>>>🤔\tThe Skeptic considers and prepares a final criticism...\n{GRAY}",
                     tasks["rebuttal"].description,
                     f"{RESET}\n",
                 )
@@ -626,7 +626,7 @@ You must:
             agent_tool = tools[stage_name]
             if skeptic_rebuttal and len(skeptic_rebuttal) > 0:
                 print(
-                    f"\n\n{RESET}>>>👩‍⚖️\tAdjudicator's turn to pass the final ruling...\n{GRAY}",
+                    f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}",
                     tasks["ruling"].description,
                     f"{RESET}\n",
                 )
@@ -636,7 +636,7 @@ You must:
                         f"✅ ACCEPTED\n"
                         f"The proposed root '{root.upper()}' is already a canon entry defined as '{root_def_text}'. "
                         "This existing definition provides sufficient internal linguistic evidence for approval.\n"
-                        "The following debate is preserved for insight and extended justification:"
+                        "The prior debate is preserved for insight and extended justification."
                     )
                     print(adjudicator_ruling)
                 else:
@@ -672,7 +672,7 @@ You must:
                 #     stream_callback("Glossator", "**Glossator:**")
 
                 print(
-                    f"\n\n{RESET}>>>🧐\tGlossator's turn to provide a definition...\nGenerating definition...\n"
+                    f"\n\n{RESET}>>>🧐\tA resident Glossator reads the research and discussion and begins putting together a meaningful definition...\n"
                 )
 
                 gloss = agent_tool._run(
@@ -710,7 +710,7 @@ You must:
             lines.append(adjudicator_ruling.strip())
 
             if gloss and len(gloss) > 0:
-                lines.append("\n\n=== 🧐 GLOSSATOR ===\n" + gloss)
+                lines.append("\n\n=== 🧐 GLOSSATOR ===\n" + gloss + "\n\n")
 
             tldr_summary = tools["tldr"]._run(
                 prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{''.join(lines)}",
