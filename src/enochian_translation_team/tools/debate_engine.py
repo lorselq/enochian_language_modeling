@@ -476,7 +476,7 @@ You must:
             agent_tool = tools[stage_name]
             for i in range(count):
                 print(
-                    f"\n\n>>>👩‍🎓\tJunior Linguist #{i + 1} prepares to deliver their research on '{root.upper()}'...\n{GRAY}"
+                    f"\n\n>>>📃\tOne of the junior researchers prepares to deliver their research on '{root.upper()}'...\n{GRAY}"
                 )
                 variant = agent_tool._run(
                     prompt=tasks["propose"].description
@@ -484,7 +484,7 @@ You must:
                     + tasks["propose"].expected_output.lower(),
                     stream_callback=junior_cb,
                     print_chunks=True,
-                    role_name=f"👩‍🎓 Junior Linguist #{i + 1}",
+                    role_name=f"👩‍🎓\tJunior Linguist #{i + 1}",
                 )
                 linguist_variants.append(variant)
                 if check_convergence(linguist_variants):
@@ -668,9 +668,6 @@ You must:
                 or adjudicator_ruling.strip().lower().startswith("accepted")
                 or "✅" in adjudicator_ruling
             ):
-                # if stream_callback:
-                #     stream_callback("Glossator", "**Glossator:**")
-
                 print(
                     f"\n\n{RESET}>>>🧐\tA resident Glossator reads the research and discussion and begins putting together a meaningful definition...\n"
                 )
@@ -712,6 +709,7 @@ You must:
             if gloss and len(gloss) > 0:
                 lines.append("\n\n=== 🧐 GLOSSATOR ===\n" + gloss + "\n\n")
 
+            print(f"🧙‍♂️ I humbly present to you the key takeaways of this discussion.")
             tldr_summary = tools["tldr"]._run(
                 prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{''.join(lines)}",
                 stream_callback=summarizer_cb,
@@ -724,30 +722,6 @@ You must:
             transcript = "".join(intro_lines + lines)
         else:
             print(f'[Debug] stage name "{stage_name}" not found oh nooo!')
-
-    # # === LINGUISTS ===
-    # if stream_callback:
-    #     stream_callback("Linguist", "**Linguist:**")
-
-    # # === LEAD LINGUIST: 1 ===
-
-    # # === SKEPTIC: 1 ===
-    # if stream_callback:
-    #     stream_callback("Skeptic", "**Skeptic:**")
-
-    # # === LEAD LINGUIST: 2 ===
-    # if stream_callback:
-    #     stream_callback("Linguist", "**Linguist (Defense):**")
-
-    # # === SKEPTIC: 2 ===
-    # if stream_callback:
-    #     stream_callback("Skeptic", "**Skeptic (Rebuttal):**")
-
-    # # === ADJUDICATOR ===
-    # if stream_callback:
-    #     stream_callback("Adjudicator", "**Adjudicator:**")
-
-    # === GLOSSATOR ===
 
     return {
         "Linguist": linguist_proposal,
