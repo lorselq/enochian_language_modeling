@@ -1,8 +1,10 @@
 import datetime
 import re
+import sys
 import json
 import sqlite3
 import random
+import time
 from typing import List
 from itertools import chain
 from tqdm import tqdm
@@ -20,6 +22,17 @@ from enochian_translation_team.utils.semantic_search import (
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index
 from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
+
+
+def stream_text(text: str, delay: float = 0.0125):
+    for c in text:
+        sys.stdout.write(c)
+        sys.stdout.flush()
+        try:
+            time.sleep(delay)
+        except KeyboardInterrupt:
+            # if you really need to interrupt, break cleanly
+            break
 
 
 class RootExtractionCrew:
@@ -323,9 +336,10 @@ class RootExtractionCrew:
             ngrams = [(single_ngram, 9001)]  # Use a fake count
             max_words = 999
             if single_ngram in self.processed_ngrams:
-                print(
-                    f"[Warning] The ngram {GOLD}{single_ngram.upper()}{RESET} has already been processed, so our work is already done."
+                stream_text(
+                    f"[Warning] The ngram {GOLD}{single_ngram.upper()}{RESET} has already been processed, so our work is already done.\n"
                 )
+                time.sleep(1)
         else:
             ngrams = sorted(
                 self.stream_ngrams_from_sqlite(min_freq=2), key=lambda x: (-x[1], x[0])
@@ -334,7 +348,8 @@ class RootExtractionCrew:
         output = []
         seen_words = 0
 
-        print("🪄 Initializing semantic tribunal...\n")
+        stream_text("🪄 Initializing semantic tribunal...\n\n")
+        time.sleep(1.5)
 
         skipped = 0
         for ngram, count in ngrams:
@@ -342,14 +357,15 @@ class RootExtractionCrew:
                 skipped += 1
                 continue
 
-            print(
-                f"Skipping {skipped} ngrams because they have already been processed. Now to one that hasn't...\n"
-                if skipped != 0
-                else ""
+            if skipped != 0:
+                stream_text(
+                    f"Skipping {skipped} ngrams because they have already been processed. Now to one that hasn't...\n\n"
+                )
+                time.sleep(1)
+            stream_text(
+                f"[✓] Beginning examination of root-word candidate {GOLD}{ngram.upper()}{RESET}.\n"
             )
-            print(
-                f"[✓] Beginning examination of root-word candidate {GOLD}{ngram.upper()}{RESET}."
-            )
+            time.sleep(0.5)
 
             semantic_candidates = find_semantically_similar_words(
                 ft_model=self.fasttext,
@@ -365,20 +381,23 @@ class RootExtractionCrew:
 
             index_candidates = self.candidate_finder.get_all_ngram_candidates(ngram)
             if not semantic_candidates or len(semantic_candidates) < 2:
-                print(
-                    f"[⚠️] Too few semantic candidates for '{ngram.upper()}'. Skipping."
+                stream_text(
+                    f"[⚠️] Too few semantic candidates for '{ngram.upper()}'. Skipping.\n"
                 )
                 continue
 
             clusters = cluster_definitions(semantic_candidates, self.sentence_model)
-            print(
-                f"Beginning the evaluation of {len(clusters)} clusters. ",
-                (
-                    "Should be fairly quick, all considered!\n"
-                    if len(clusters) < 43
-                    else "This could take a while if we're being honest...\n"
-                ),
+            follow_phrase = (
+                "Should be fairly quick, all considered!\n"
+                if len(clusters) < 43
+                else "This could take a while if we're being honest...\n"
             )
+            stream_text(
+                f"Beginning the evaluation of {len(clusters)} clusters. "
+                + follow_phrase
+                + "\n"
+            )
+            time.sleep(1)
 
             for cluster_id, cluster in enumerate(clusters):
                 sem_norms = {
@@ -393,43 +412,57 @@ class RootExtractionCrew:
                 }
                 overlap = sem_norms & index_norms
 
-                print(
-                    f"Now examining cluster #{cluster_id + 1} of {len(clusters)} by finding the intersection between",
-                    f"the {len(sem_norms)} semantic candidates and the {len(index_norms)} the words",
-                    f"(and their extended variations) that contain '{GOLD}{ngram.upper()}{RESET}' as one of its components.",
+                stream_text(
+                    f"Now examining cluster #{PINK}{cluster_id + 1}{RESET} of {PINK}{len(clusters)}{RESET} by finding the intersection between "
+                    f"the {GREEN}{len(sem_norms)}{RESET} semantic candidates and the {BLUE}{len(index_norms)}{RESET} the words "
+                    f"(and their extended variations) that contain '{GOLD}{ngram.upper()}{RESET}' as one of its components.\n"
                 )
+                time.sleep(0.7)
 
                 sem_formatted_list = [
                     f"{GREEN}{norm.upper()}{RESET}" for norm in list(sem_norms)[:5]
                 ]
-                print(
-                    f"Some words from the semantic candidates (up to 5):",
-                    ", ".join(sem_formatted_list),
-                    "..." if len(sem_norms) > 5 else "",
+                stream_text(
+                    f"Some words from the semantic candidates (up to 5): "
+                    + ", ".join(sem_formatted_list)
+                    + "..."
+                    if len(sem_norms) > 5
+                    else ""
                 )
+                time.sleep(0.3)
+                print()
 
                 idx_formatted_list = [
                     f"{BLUE}{norm.upper()}{RESET}" for norm in list(index_norms)[:5]
                 ]
                 random.shuffle(idx_formatted_list)
-                print(
-                    f"And some words/variants containing the ngram (up to 5):",
-                    ", ".join(idx_formatted_list),
-                    "..." if len(index_norms) > 5 else "",
+                stream_text(
+                    f"And some words/variants containing the ngram (up to 5): "
+                    + ", ".join(idx_formatted_list)
+                    + "..."
+                    if len(index_norms) > 5
+                    else ""
                 )
+                time.sleep(1.2)
+                print()
 
-                print(
-                    "... Now, the important question: is their sufficient overlap between the two groups?",
-                    (
-                        f"{YELLOW}Yes! There is!{RESET}"
-                        if len(overlap) >= 2
-                        else f"{PINK}Either only one shared item or none whatsoever.{RESET} 😢"
-                    ),
+                stream_text(
+                    "... Now, the important question: is their sufficient overlap between the two groups?\n"
                 )
+                time.sleep(1.5)
+                stream_text(
+                    f"{YELLOW}Yes! There is!{RESET}"
+                    if len(overlap) >= 2
+                    else f"{PINK}Either only one shared item or none whatsoever.{RESET} 😢"
+                    + "\n"
+                )
+                time.sleep(1)
+
                 if not overlap or len(overlap) < 2:
-                    print(
-                        f"We have skipped cluster #{cluster_id + 1} for {GOLD}{ngram.upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things."
+                    stream_text(
+                        f"We have skipped cluster #{cluster_id + 1} for {GOLD}{ngram.upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things.\n\n"
                     )
+                    time.sleep(2)
                     continue
                 else:
                     print("")
@@ -527,14 +560,16 @@ class RootExtractionCrew:
                     )
 
                 if len(merged_cluster) < 2:
-                    print(
-                        f"[⚠️] Merged cluster too small for {GOLD}{ngram.upper()}{RESET}. Skipping."
+                    stream_text(
+                        f"[⚠️] Merged cluster too small for {GOLD}{ngram.upper()}{RESET}. Skipping.\n"
                     )
+                    time.sleep(0.7)
                     continue
 
-                print(
-                    f"[→] Beginning {GOLD}{ngram.upper()}{RESET} via analysis of cluster #{cluster_id + 1} (of {len(clusters)})"
+                stream_text(
+                    f"[→] Beginning {GOLD}{ngram.upper()}{RESET} via analysis of cluster #{cluster_id + 1} (of {len(clusters)}).\n"
                 )
+                time.sleep(0.5)
 
                 evaluated = self.evaluate_ngram(
                     ngram, merged_cluster, stream_callback=stream_callback
@@ -572,7 +607,8 @@ class RootExtractionCrew:
             if max_words and seen_words >= max_words:
                 break
 
-        print("🎊 Clusters complete! ")
+        stream_text("🎊 Clusters complete! \n")
+        time.sleep(2)
 
         if self.ngram_db:
             self.ngram_db.close()
