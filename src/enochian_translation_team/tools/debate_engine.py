@@ -492,7 +492,7 @@ You must:
             agent_tool = tools[stage_name]
             for i in range(count):
                 print(
-                    f"\n\n>>>🥺\tOne of the junior researchers prepares to deliver their research on '{root.upper()}'...\n{GRAY}"
+                    f"\n\n>>>😳\tOne of the junior researchers prepares to deliver their research on '{root.upper()}'...\n{GRAY}"
                 )
                 variant = agent_tool._run(
                     prompt=tasks["propose"].description
@@ -500,7 +500,7 @@ You must:
                     + tasks["propose"].expected_output.lower(),
                     stream_callback=junior_cb,
                     print_chunks=True,
-                    role_name=f"🥺\tJunior Linguist #{i + 1}",
+                    role_name=f"😳\tJunior Linguist #{i + 1}",
                 )["response_text"]
                 linguist_variants.append(variant)
                 if check_convergence(linguist_variants):
