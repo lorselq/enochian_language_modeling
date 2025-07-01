@@ -188,4 +188,6 @@ src/enochian_translation_team/data/ngram_index.sqlite3.meta.json
 src/enochian_translation_team/data/root_word_insights.json
 src/enochian_translation_team/data/processed_ngrams.json
 src/enochian_translation_team/data/new_root_definitions.txt
-
+src/enochian_translation_team/data/new_definitions.sqlite3
+src/enochian_translation_team/data/new_definitions.sqlite3-shm
+src/enochian_translation_team/data/new_definitions.sqlite3-wal

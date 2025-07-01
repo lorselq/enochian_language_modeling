@@ -6,7 +6,7 @@ DB_PATH = os.path.abspath(os.path.join(
     "src",
     "enochian_translation_team",
     "data",
-    "new-definitions.sqlite3"
+    "new_definitions.sqlite3"
 ))
 
 SCHEMA = """
@@ -17,19 +17,14 @@ CREATE TABLE IF NOT EXISTS clusters (
   cluster_id       INTEGER PRIMARY KEY AUTOINCREMENT,
   ngram            TEXT      NOT NULL,
   cluster_index    INTEGER   NOT NULL,
+  count_clusters   INTEGER   NOT NULL,                -- might find some interesting relations between cluster_index and count_clusters and proportions
   sem_count        INTEGER   NOT NULL,
   idx_count        INTEGER   NOT NULL,
   overlap_count    INTEGER   NOT NULL,                -- NEW: how many in both sets
-  clustering_meta  JSON      NOT NULL,
-  model_name       TEXT,
-  model_params     JSON,
-  request_start    TEXT,
-  request_end      TEXT,
-  latency_s        REAL,
-  api_retries      INTEGER   NOT NULL DEFAULT 0,      -- default 0
-  did_fallback     INTEGER   NOT NULL DEFAULT 0,
-  accepted         INTEGER   NOT NULL DEFAULT 0,      -- 0 = rejected, 1 = accepted
-  glossator_def    TEXT,                               -- final gloss (or NULL)
+  clustering_meta  TEXT      NOT NULL,
+  model_used       TEXT      NOT NULL,  
+  prompt_given     TEXT      NOT NULL,
+  glossator_def    TEXT      NOT NULL,
   recorded_at      TEXT    NOT NULL DEFAULT (
     strftime('%Y-%m-%dT%H:%M:%fZ','now')
   )
@@ -40,7 +35,7 @@ CREATE TABLE IF NOT EXISTS raw_defs (
   def_id         INTEGER PRIMARY KEY AUTOINCREMENT,
   cluster_id     INTEGER  NOT NULL 
                      REFERENCES clusters(cluster_id) ON DELETE CASCADE,
-  source_word    TEXT     NOT NULL,
+  source_word    TEXT     NOT NULL,                     -- assumed to be normalized
   definition     TEXT     NOT NULL,
   enhanced_def   TEXT,
   citations      JSON,
