@@ -10,5 +10,5 @@ def get_config_paths():
         "ngram_index": root / "src" / "enochian_translation_team" / "data" / "ngram_index.sqlite3",
         "root_word_insights": root / "src" / "enochian_translation_team" / "data" / "root_word_insights.json",
         "processed_ngrams": root / "src" / "enochian_translation_team" / "data" / "processed_ngrams.json",
-        "new_definitions": root / "src" / "enochian_translation_team" / "data" / "new_root_definitions.txt"
+        "new_definitions": root / "src" / "enochian_translation_team" / "data" / "new_definitions.sqlite3"
     }

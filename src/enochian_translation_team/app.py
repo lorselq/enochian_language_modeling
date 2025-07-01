@@ -17,7 +17,7 @@ def stream_callback(role, message):
         "Glossator": "🧐",
         "Archivist": "📚",
         "Maestro": "🪄",
-    }.get(role, "👤")
+    }.get(role, "")
 
     is_first_token = not token_buffers[role]
 

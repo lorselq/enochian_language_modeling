@@ -1,4 +1,3 @@
-import datetime
 import re
 import sys
 import json
@@ -6,9 +5,7 @@ import sqlite3
 import random
 import time
 from typing import List
-from itertools import chain
-from tqdm import tqdm
-from collections import Counter, defaultdict
+from collections import defaultdict
 from gensim.models import FastText
 from sentence_transformers import SentenceTransformer
 from enochian_translation_team.utils.logger import save_log
@@ -49,6 +46,7 @@ class RootExtractionCrew:
         # Load everything
         self.entries = self.load_entries()
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
+        self.new_definitions_db = sqlite3.connect(paths["new_definitions"])
         self.subst_map = self.load_subst_map()
         self.fasttext = FastText.load(str(self.model_path))
         self.sentence_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
@@ -158,7 +156,15 @@ class RootExtractionCrew:
             return "index"
         return "unknown"
 
-    def evaluate_ngram(self, ngram: str, cluster, stream_callback=None):
+    def evaluate_ngram(
+        self,
+        ngram: str,
+        cluster,
+        cohesion_score,
+        semantic_hits,
+        semantic_coverage,
+        stream_callback=None,
+    ):
         GOLD = "\033[38;5;178m"
         RESET = "\033[0m"
 
@@ -170,21 +176,6 @@ class RootExtractionCrew:
                 return item.get(field, default)
             else:
                 return getattr(item, field, default)
-
-        definitions = []
-        for c in cluster:
-            # pull out the raw definition text, whether c is an Entry or a dict
-            if hasattr(c, "definition"):
-                def_text = c.definition
-            else:
-                def_text = c.get("definition", "")
-
-            # only keep non-empty definitions
-            if def_text:
-                definitions.append(def_text)
-        cohesion_score = compute_cluster_cohesion(definitions, self.sentence_model)
-        semantic_hits = sum(1 for c in cluster if c["source"] in ("semantic", "both"))
-        semantic_coverage = round(semantic_hits / len(cluster), 3) if cluster else 0.0
 
         # Build the full trimmed cluster and find anchor if it exists
         trimmed_cluster = []
@@ -306,7 +297,7 @@ class RootExtractionCrew:
         }
 
         # Include role-specific responses
-        for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator", "Archivist"]:
+        for role in ["Linguist", "Skeptic", "Defense", "Rebuttal", "Adjudicator", "Glossator", "Glossator_Prompt", "Glossator_Model", "Archivist", "summary"]:
             if role in raw:
                 result[role] = raw[role]
 
@@ -353,6 +344,9 @@ class RootExtractionCrew:
 
         skipped = 0
         for ngram, count in ngrams:
+            if not single_ngram and count > 0:
+                stream_text(f"Ngrams looked at so far: {GREEN}{count}{RESET}\n")
+            time.sleep(1)
             if ngram in self.processed_ngrams:
                 skipped += 1
                 continue
@@ -386,14 +380,16 @@ class RootExtractionCrew:
                 )
                 continue
 
-            clusters = cluster_definitions(semantic_candidates, self.sentence_model)
+            clusters_result = cluster_definitions(semantic_candidates, self.sentence_model)
+            clusters = clusters_result["clusters"]
+            best_config = clusters_result["config"]
             follow_phrase = (
                 "Should be fairly quick, all considered!\n"
                 if len(clusters) < 10
                 else "This could take a while if we're being honest...\n"
             )
             stream_text(
-                f"Beginning the evaluation of {len(clusters)} clusters. "
+                f"Beginning the evaluation of {PINK}{len(clusters)}{RESET} clusters. "
                 + follow_phrase
                 + "\n"
             )
@@ -422,7 +418,10 @@ class RootExtractionCrew:
                 sem_formatted_list = [
                     f"{GREEN}{norm.upper()}{RESET}" for norm in list(sem_norms)[:5]
                 ]
-                sem_formatted_list = f"Some words from the semantic candidates (up to 5): " + ", ".join(sem_formatted_list)
+                sem_formatted_list = (
+                    f"Some words from the semantic candidates (up to 5): "
+                    + ", ".join(sem_formatted_list)
+                )
                 sem_formatted_list += "..." if len(sem_norms) > 5 else ""
                 stream_text(sem_formatted_list)
                 time.sleep(0.3)
@@ -432,7 +431,10 @@ class RootExtractionCrew:
                     f"{BLUE}{norm.upper()}{RESET}" for norm in list(index_norms)[:5]
                 ]
                 random.shuffle(idx_formatted_list)
-                idx_formatted_list = f"And some words/variants containing the ngram (up to 5): " + ", ".join(idx_formatted_list)
+                idx_formatted_list = (
+                    f"And some words/variants containing the ngram (up to 5): "
+                    + ", ".join(idx_formatted_list)
+                )
                 idx_formatted_list += "..." if len(index_norms) > 5 else ""
                 stream_text(idx_formatted_list)
                 time.sleep(1.2)
@@ -518,9 +520,8 @@ class RootExtractionCrew:
                         definition = "; ".join(
                             s.definition for s in dict_entry.senses or []
                         )
-                        enhanced = f"{definition}. Possible uses: " + ", ".join(
-                            [f"`{c}`" for c in citations]
-                        )
+                        cits_for_enh =  "Possible uses: " + ", ".join([f"`{c}`" for c in citations]) + "."
+                        enhanced = f"{definition}." + cits_for_enh if citations and len(citations) > 0 else ""
 
                     merged_cluster.append(
                         {
@@ -563,8 +564,34 @@ class RootExtractionCrew:
                 )
                 time.sleep(0.5)
 
+                definitions = []
+                for c in cluster:
+                    # pull out the raw definition text, whether c is an Entry or a dict
+                    if hasattr(c, "definition"):
+                        def_text = c.definition
+                    else:
+                        def_text = c.get("definition", "")
+
+                    # only keep non-empty definitions
+                    if def_text:
+                        definitions.append(def_text)
+                cohesion_score = compute_cluster_cohesion(
+                    definitions, self.sentence_model
+                )
+                semantic_hits = sum(
+                    1 for c in merged_cluster if c["source"] in ("semantic", "both")
+                )
+                semantic_coverage = (
+                    round(semantic_hits / len(cluster), 3) if cluster else 0.0
+                )
+
                 evaluated = self.evaluate_ngram(
-                    ngram, merged_cluster, stream_callback=stream_callback
+                    ngram,
+                    cluster=merged_cluster,
+                    cohesion_score=cohesion_score,
+                    semantic_hits=semantic_hits,
+                    semantic_coverage=semantic_coverage,
+                    stream_callback=stream_callback,
                 )
                 evaluated["overlap_count"] = len(overlap)
                 evaluated["cluster_size"] = len(merged_cluster)
@@ -580,19 +607,74 @@ class RootExtractionCrew:
                 self.save_results(output)
 
                 if "Glossator" in evaluated:
-                    with open(self.new_definitions_path, "a", encoding="utf-8") as f:
-                        source_words_and_meanings = []
-                        for c in merged_cluster:
-                            source_words_and_meanings.append(f"{_get_field(c, 'word', '').upper()}: {_get_field(c, 'definition', '')}")
-                        if len(evaluated['Glossator'].strip()) > 0:
-                            f.write(
-                                f"=======recorded at {datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')} for cluster {cluster_id + 1}/{len(clusters)}=======\n{evaluated['Glossator'].strip()}\nNOTE: this was inferred from the following words: {source_words_and_meanings}.\n\n"
-                            )
+                    cursor = self.new_definitions_db.cursor()
+                    
+                    # cluster-level fields
+                    cluster_idx = cluster_id + 1
+                    cluster_count = len(clusters)
+                    prompt = evaluated["Glossator_Prompt"]
+                    model = evaluated["Glossator_Model"]
+                    sem_count = len(sem_norms)
+                    idx_count = len(index_norms)
+                    overlap_count = len(overlap)
+                    definition = evaluated["Glossator"].strip()
+                    clustering_meta = best_config
+                    
+                    
+                         # 2) Insert into `clusters`
+                    cursor.execute("""
+                    INSERT INTO clusters (
+                        ngram,
+                        cluster_index,
+                        count_clusters,
+                        sem_count,
+                        idx_count,
+                        overlap_count,
+                        clustering_meta,
+                        model_used,
+                        prompt_given,
+                        glossator_def
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                    """, (
+                        ngram.upper(),               # or ngram.lower(), up to you
+                        cluster_idx,              # human‐friendly 1-based index
+                        cluster_count,
+                        sem_count,
+                        idx_count,
+                        overlap_count,
+                        clustering_meta,
+                        model,
+                        prompt,
+                        definition
+                    ))
+                    cluster_rowid = cursor.lastrowid
 
-                # if stream_callback:
-                #     for role in ["Linguist", "Skeptic", "Adjudicator", "Glossator"]:
-                #         if role in evaluated:
-                #             stream_callback(role, evaluated[role])
+                    # 3) Insert each of the merged defs into `raw_defs`
+                    for entry in merged_cluster:
+                        cursor.execute("""
+                        INSERT INTO raw_defs (
+                            cluster_id,
+                            source_word,
+                            definition,
+                            enhanced_def,
+                            citations,
+                            fasttext,
+                            similarity,
+                            tier
+                        ) VALUES (?,?,?,?,?,?,?,?)
+                        """, (
+                            cluster_rowid,
+                            entry["normalized"],                       # the word form
+                            entry["definition"],
+                            entry["enhanced_definition"],
+                            json.dumps(entry.get("citations", [])),
+                            entry.get("fasttext", 0.0),
+                            entry.get("semantic", 0.0),
+                            entry.get("tier", "")
+                        ))
+
+                    # 4) commit once per cluster
+                    self.new_definitions_db.commit()
             self.processed_ngrams.add(ngram)
             self.save_processed_ngrams()
             seen_words += 1
@@ -605,6 +687,8 @@ class RootExtractionCrew:
 
         if self.ngram_db:
             self.ngram_db.close()
+        if self.new_definitions_db:
+            self.new_definitions_db.close()
 
     def save_results(self, new_data):
         # Load existing results if they exist

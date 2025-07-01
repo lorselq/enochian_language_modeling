@@ -180,7 +180,7 @@ def cluster_definitions(definitions, model):
             original_entries.append(item)
 
     if len(original_entries) < 2:
-        return [definitions]
+        return {"clusters": [definitions], "config": "[Error] original entries < 2; no config"}
 
     # get embeddings + distance matrix
     embeddings = (
@@ -334,14 +334,14 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
 
     # 6) Map back to entries and return
     best_clusters = [[original_entries[i] for i in cl] for cl in best_clusters_idx]
+    best_config = f"{best_meta[0]} {best_meta[1]} (sil={best_meta[2]:.3f}, db={best_meta[3]:.3f}, ch={best_meta[4]:.1f}, score={best_score:.3f})"
     stream_text(
-        f"🏆 Final best config: {best_meta[0]} {best_meta[1]} "
-        f"(sil={best_meta[2]:.3f}, db={best_meta[3]:.3f}, ch={best_meta[4]:.1f}, score={best_score:.3f})"
-        f"\n\n"
+        f"🏆 Final best config: {best_config}\n\n"
     )
     print()
     time.sleep(1)
-    return best_clusters
+    result = {"clusters": best_clusters, "config": best_config}
+    return result
 
 
 def find_semantically_similar_words(
