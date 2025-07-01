@@ -133,7 +133,7 @@ def build_and_save_ngram_index(
 
     # Filter by PMI to get high-salience substrings
     logger.info("Filtering ngrams by PMI threshold...")
-    salient_ngrams = set(filter_by_pmi(ngram_tf, ngram_df, total_docs, pmi_threshold))
+    salient_ngrams = set(ngram_tf.keys())
 
     # Build marisa trie of salient ngrams
     logger.info("Building Marisa Trie for salient ngrams...")
