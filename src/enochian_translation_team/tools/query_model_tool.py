@@ -200,7 +200,7 @@ class QueryModelTool(BaseTool):
             stream=True,
         )
 
-        print(f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next? we wait...\n")
+        print(f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next, you might ask? We wait...\n")
 
         with self._get_random_spinner() as sp:
             for chunk in completion:
