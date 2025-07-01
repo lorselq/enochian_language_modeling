@@ -1,9 +1,9 @@
 # Enochian Language Modeling: Experimental Computational Philology
 
 ## Overview
-This project explores computational approaches to modeling *Liber Loagaeth*, a 16th-century manuscript associated with John Dee and Edward Kelley. Rather than pursuing esoteric interpretations of the undeciphered corpus, this research treats it as a **synthetic, low-resource corpus**—an experimental ground for semantic structure discovery, root-word extraction, and agent-driven linguistic modeling.
+This project explores computational approaches to deciphering *Liber Loagaeth*, a 16th-century manuscript associated with John Dee and Edward Kelley. Rather than pursuing esoteric interpretations of the undeciphered corpus, this research treats it as a **synthetic, low-resource corpus**—an experimental ground for semantic structure discovery, root-word extraction, and agent-driven linguistic modeling.
 
-The broader goal is to investigate how AI systems can infer semantic relationships and construct speculative lexicons from anomalous, non-standardized text data, offering insights into language emergence, semantic clustering, and machine learning applications in historical and undeciphered language systems.
+It is unclear exactly what language *Liber Loagaeth* is, as the purported language of the text does not wholly resemble that which appears in the Enochian Keys. The majority of scholars believe it to be nonsense—likely an example of glossolalia or even simply an alphabet soup of the English language—and this project does not seek to prove them wrong. Rather, *Liber Loagaeth* serves as a white whale for the project and the inspiration towards a broader, more realistic goal: to investigate how AI systems can infer semantic relationships and construct speculative lexicons from anomalous, non-standardized text data, offering insights into language emergence, semantic clustering, and machine learning applications in historical and undeciphered language systems.
 
 ## Project Goals
 - **Semantic Structure Discovery**: Identify plausible root morphemes and semantic clusters within the linguistic corpus.
@@ -14,15 +14,15 @@ The broader goal is to investigate how AI systems can infer semantic relationshi
 ## Core Components
 
 ### Embedding and Semantic Modeling (Foundational Stage)
-- Development of FastText embeddings trained on a limited glossary (~800–1300 entries) compiled from an adjacent, partially deciphered corpus.
+- Development of FastText embeddings trained on a limited glossary (~800–1300 entries) compiled from an adjacent corpus that comes with rough translations for each word.
 - Semantic proximity analysis to generate hypotheses about potential morphemes.
 - Data preparation for agent-driven root extraction based on lexical clustering methodologies.
 
 ### Agent-Based Root Extraction (Root Inference and Validation)
 A simulated AI team, consisting of multiple agent roles:
-- **Adjudicator Agent**: Reviews debates and finalizes judgments on proposed root candidates.
 - **Linguist Agent**: Proposes candidate roots using FastText embeddings, heuristic analysis, and LLM-assisted reasoning.
 - **Skeptic Agent**: Challenges proposed roots by presenting counterexamples, alternate derivations, and uncertainty evaluations.
+- **Adjudicator Agent**: Reviews debates and finalizes judgments on proposed root candidates.
 - **Glossator Agent**: Synthesizes and records an official root definition if the Adjudicator approves the proposal.
 
 ### Methodology
@@ -31,17 +31,18 @@ A simulated AI team, consisting of multiple agent roles:
 - **Semantic Clustering**: Grouping lexical items based on model-inferred proximity to propose and validate candidate roots.
 
 ## Current Status
-- **Dictionary Construction**: Recently completed, but not yet implemented into the experiments.
+- **Starting Dictionary Construction**: Completed and integrated—words drawn from *Angelical Language Vol. II* by Aaron Leitch as a starting point.
+- **Ngram Generation**: Configured such that it generates ngrams based on words as they appear in the corpus and possible variants created from letter substitution rules derived Dee's irregular spellings.
 - **Embedding Infrastructure**: Initial FastText models functional and generating promising proximity data.
-- **Agent Design**: Logical structure of the multi-agent system outlined; implementation will proceed following dictionary stabilization.
+- **Semantic Clustering**: A variety of clustering methods and parameters are trialed and a final clustering selected based on the degree to which the clusters resemble an effective clustering.
+- **Agent Design**: Agents are not orchestrated by a supervisory agent presently; presently, prompts and their context follow a fixed pattern of stages, making the process more like prompt chaining.
+- **CLI Presentation**: UI implementation is console-based and tolerable.
 
 ## Future Work and Phased Development
 
 ### Near-Term Development Goals
-- Finalizing and validating the first-pass dictionary.
-- Continuing agentic evaluations to expand and refine the speculative root lexicon.
-- Examining current approaches to root-word definition and expanding the system to support multiple alternative meanings for individual n-grams, reflecting contextual variation.
-- Preparing sample retranslation exercises using the stabilized dictionary for validation testing.
+- Creating a process to record new definitions to a sqlite database with accompanying relevant data.
+- Running the program until all viable ngrams processed.
 
 ### Phase Two: Lexicon Refinement and Semantic Reconstruction
 Upon completing the speculative root-word lexicon, the next stage will involve standardizing and refining dictionary entries. Due to inconsistencies in AI-generated definitions (particularly from the Glossator agent), additional data wrangling and human-in-the-loop curation will be necessary to ensure semantic coherence across the lexicon.

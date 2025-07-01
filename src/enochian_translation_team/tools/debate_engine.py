@@ -415,6 +415,7 @@ You must:
 
     # === Direct Tool Access with Streaming ===
     GRAY = "\033[90m"
+    PINK = "\033[38;5;213m"
     RESET = "\033[0m"
 
     junior_cb = (
@@ -726,12 +727,12 @@ You must:
                 lines.append(f", which is understood to mean: {_get_field(root_entry, 'enhanced_definition', '')}" if root_entry and len(_get_field(root_entry, 'enhanced_definition', '')) > 0 else ".")
                 lines.append("\n")
 
-            print(f"\n\n🧙‍♂️ I humbly present to you the key takeaways of this discussion.\n")
+            print(f"\n\n{RESET}>>>🧙‍♂️\t{PINK}... and now, to close out on this particular cluster, I humbly present to you what I consider the key takeaways from this discussion.{RESET}")
             tldr_summary = tools["tldr"]._run(
                 prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{''.join(lines)}",
                 stream_callback=summarizer_cb,
             )
-
+            print("\n\n") # to give some space before the log saving print()...
             intro_lines.append("\n\n=== 📜 SUMMARY ===\n")
             intro_lines.append(tldr_summary.strip())
             intro_lines.append("\n\n\n========================\n====== TRANSCRIPT ======\n========================\n\n")

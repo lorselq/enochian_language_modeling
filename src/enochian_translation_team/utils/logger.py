@@ -20,6 +20,6 @@ def save_log(log_entries, label: Optional[str] = None, cluster_number: Optional[
             md = header_re.sub(lambda m: f"## {m.group(1)}", message, count=1)
             f.write(md.strip() + "\n\n")
 
-    print(f"\n📁 Log saved to `{log_path}`")
+    print(f"\n\n📁 Log saved to `{log_path}`\n\n")
 
     return str(log_path)

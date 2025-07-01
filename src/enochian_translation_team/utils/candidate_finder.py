@@ -78,7 +78,7 @@ class MorphemeCandidateFinder:
         return [canon for canon, _, _ in self.ngram_index.get(ngram, [])]
 
     @lru_cache(maxsize=512)
-    def get_fasttext_matches(self, ngram: str, top_n: int = 10) -> list[str]:
+    def get_fasttext_matches(self, ngram: str, top_n: int = 50) -> list[str]:
         """Return semantically similar canonicals via FastText."""
         results = []
         try:
