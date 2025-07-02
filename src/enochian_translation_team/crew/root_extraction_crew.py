@@ -345,27 +345,28 @@ class RootExtractionCrew:
                 time.sleep(1)
         else:
             ngrams = sorted(
-                self.stream_ngrams_from_sqlite(min_freq=2), key=lambda x: (-len(x[0]), -x[1], x[0])
+                self.stream_ngrams_from_sqlite(min_freq=2),
+                key=lambda x: (-len(x[0]), -x[1], x[0]),
             )
 
         output = []
         seen_words = 0
 
         stream_text("🪄 Initializing semantic tribunal...\n\n")
-        time.sleep(1.5)
+        time.sleep(0.5)
 
         for count, ngram in enumerate(ngrams):
-            if not single_ngram and count > 0:
-                seen_words_phrase = f" However, only {YELLOW}{seen_words}{RESET} of these {'count' if seen_words > 1 else 'counts'} though...\n" if seen_words > 1 else " We have yet to evaluate anything, though...\n"
-                stream_text(f"We have looked at {GREEN}{count}{RESET} words so far." + seen_words_phrase if not single_ngram else "", delay=0.005)
+            #            if not single_ngram and count > 0:
+            #                seen_words_phrase = f" However, only {YELLOW}{seen_words}{RESET} of these {'count' if seen_words > 1 else 'counts'} though...\n" if seen_words > 1 else " We have yet to evaluate anything, though...\n"
+            #                stream_text(f"We have looked at {GREEN}{count}{RESET} words so far." + seen_words_phrase if not single_ngram else "", delay=0.005)
 
             if ngram[0] in self.processed_ngrams:
-                stream_text(f"Already processed '{GOLD}{ngram[0].upper()}{RESET}'. Skipping...\n", delay=0.005)
+                #                stream_text(f"Already processed '{GOLD}{ngram[0].upper()}{RESET}'. Skipping...\n", delay=0.005)
                 continue
 
-            stream_text(
-                f"[✓] Beginning examination of root-word candidate {GOLD}{ngram[0].upper()}{RESET}.\n"
-            )
+            #            stream_text(
+            #                f"[✓] Beginning examination of root-word candidate {GOLD}{ngram[0].upper()}{RESET}.\n"
+            #            )
 
             semantic_candidates = find_semantically_similar_words(
                 ft_model=self.fasttext,
@@ -380,13 +381,19 @@ class RootExtractionCrew:
             # )
 
             index_candidates = self.candidate_finder.get_all_ngram_candidates(ngram[0])
+
             if not semantic_candidates or len(semantic_candidates) < 2:
-                stream_text(
-                    f"[⚠️] Too few semantic candidates for '{GOLD}{ngram[0].upper()}{RESET}' ({'zero candidates' if len(semantic_candidates) < 1 else 'only one candidate'}). Skipping.\n"
-                )
+                # stream_text(
+                #     f"[⚠️] Too few semantic candidates for '{GOLD}{ngram[0].upper()}{RESET}' ({'zero candidates' if len(semantic_candidates) < 1 else 'only one candidate'}). Skipping.\n", delay=0.005
+                # )
                 self.processed_ngrams.add(ngram[0])
                 self.save_processed_ngrams()
                 continue
+            else:
+                stream_text(
+                    f"[✓] Beginning examination of root-word candidate {GOLD}{ngram[0].upper()}{RESET}.\n",
+                    delay=0.005,
+                )
 
             clusters_result = cluster_definitions(
                 semantic_candidates, self.sentence_model
@@ -397,10 +404,12 @@ class RootExtractionCrew:
                 follow_phrase = ""
             elif len(clusters) < 10:
                 follow_phrase = "Should be fairly quick, all considered!\n"
-            else: 
+            else:
                 follow_phrase = "This could take a while if we're being honest...\n"
             stream_text(
-                f"Beginning the evaluation of {PINK}{len(clusters)}{RESET} clusters. " if len(clusters) > 0 else f"All possible definitions are too far apart to meaningfully cluster! Oh well..."
+                f"Beginning the evaluation of {PINK}{len(clusters)}{RESET} clusters. "
+                if len(clusters) > 0
+                else f"All possible definitions are too far apart to meaningfully cluster! Oh well..."
                 + follow_phrase
                 + "\n"
             )
@@ -496,7 +505,11 @@ class RootExtractionCrew:
                         None,
                     )
 
-                    if not sem_entry and index_entry and norm.lower() != ngram[0].lower():
+                    if (
+                        not sem_entry
+                        and index_entry
+                        and norm.lower() != ngram[0].lower()
+                    ):
                         continue
 
                     if not self.is_ngram_in_variants(ngram[0], norm):
@@ -603,7 +616,7 @@ class RootExtractionCrew:
                     1 for c in merged_cluster if c["source"] in ("semantic", "both")
                 )
                 semantic_coverage = (
-                    round(semantic_hits / len(cluster), 3) if cluster else 0.0
+                    round(semantic_hits / len(merged_cluster), 3) if merged_cluster else 0.0
                 )
 
                 evaluated = self.evaluate_ngram(
@@ -702,7 +715,7 @@ class RootExtractionCrew:
 
                     # 4) commit once per cluster
                     self.new_definitions_db.commit()
-            self.processed_ngrams.add(ngram[0].upper())
+            self.processed_ngrams.add(ngram[0])
             self.save_processed_ngrams()
             seen_words += 1
 

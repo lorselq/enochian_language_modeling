@@ -120,10 +120,10 @@ def build_enhanced_definition(def_entry):
 def score_cluster_array(
     clusters: list[list],
     *,
-    min_clusters: int = 6,
+    min_clusters: int = 3,
     max_clusters: int = 35,
-    target_avg_low: float = 11.0,
-    target_avg_high: float = 20.0,
+    target_avg_low: float = 6.0,
+    target_avg_high: float = 18.0,
     weight_count: float = 1.0,
     weight_avg: float = 1.3,
     weight_std: float = 0.4,
@@ -434,7 +434,9 @@ def find_semantically_similar_words(
                 default=0.0,
             )
 
-        def_score = enh_def_scores[i]
+        total_score = sum(enh_def_scores)
+        count_score = len(enh_def_scores)
+        def_score = min((total_score / count_score) * 100, 100)
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
 
         if cand_norm.startswith(normalized_query) or cand_norm.endswith(
