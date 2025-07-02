@@ -179,6 +179,7 @@ cython_debug/
 
 # giant fasttext models and similar
 logs/*
+scripts/fix_log_names.py
 src/enochian_translation_team/tools/models/*
 src/enochian_translation_team/logs/*
 src/enochian_translation_team/data/ngram_index.json

@@ -372,7 +372,7 @@ You must:
                 "Review the full exchange between your colleagues, the Linguist and the Skeptic. Your job is to make a clear and final determination:\n\n"
                 "**Should this proposed root be accepted as a meaningful candidate for future reverse-engineering of the Enochian language?**\n\n"
                 "While you love the idea of adding new root word candidates to the glossary and are excited for new possibilities it could bring in cutting-edge digital humanities research, "
-                "you temper this enthusiasm with scholarly professionalism and rational skepticism. Nevertheless, you are inclined to give grace when appropriate. "
+                "you temper this enthusiasm with scholarly professionalism and rational skepticism. Nevertheless, you are inclined to give grace when possible. "
                 "You must START your response with either:\n"
                 "✅ ACCEPTED\n"
                 "or\n"
@@ -760,6 +760,8 @@ You must:
             tldr_summary = tools["tldr"]._run(
                 prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{''.join(lines)}",
                 stream_callback=summarizer_cb,
+                print_chunks=True,
+                role_name="TLDR"
             )["response_text"]
             print("\n\n")  # to give some space before the log saving print()...
             intro_lines.append("\n\n=== 📜 SUMMARY ===\n")
