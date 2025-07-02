@@ -140,7 +140,9 @@ def build_and_save_ngram_index(
     trie = marisa_trie.Trie(sorted(salient_ngrams))
     trie.save(str(ngram_db_path) + ".trie")
 
-    # Save into SQLite: include TF and DF
+    # Save into SQLite: include Term Frequency (TF) and Document Frequency (DF)
+    # TF is the number of times an ngram occurs across all the words
+    # DF is the number of distinct entries it shows up in
     logger.info("Saving ngram index to SQLite...")
     conn = sqlite3.connect(ngram_db_path)
     cur = conn.cursor()

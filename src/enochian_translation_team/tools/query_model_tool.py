@@ -61,7 +61,7 @@ class QueryModelTool(BaseTool):
     def _log_retry_state(retry_state: RetryCallState):
         n = retry_state.attempt_number
         print(
-            f"{PINK}Connection attempt failed! ({n}/{QueryModelTool.MAX_ATTEMPTS} attempts made){RESET}\n"
+            f"{PINK}Connection attempt failed! ({n + 1}/5 attempts made){RESET}\n"
         )
 
     @staticmethod
@@ -129,7 +129,11 @@ class QueryModelTool(BaseTool):
             "BALL": yaspin(
                 ellipsis="...", text=chosen_ball_text
             ).bold.blink.magenta.bouncingBall.on_cyan,
-            "SHY": yaspin(Spinner(["👉    👈🥺", "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", " 👉  👈 🥺", " 👉  👈 🥺", "  👉👈  🥺", " 👉  👈 🥺", "  👉👈  🥺", "  👉👈  🥺", "  👉👈  🥺", " 👉  👈 🥺"], 150), text=chosen_shy_text, ellipsis="..."),  # type: ignore
+            "SHY": yaspin(Spinner([
+                "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", 
+                "👉    👈🥺", " 👉  👈 🥺", " 👉  👈 🥺", "  👉👈  🥺", " 👉  👈 🥺", 
+                "  👉👈  🥺", "  👉👈  🥺", "  👉👈  🥺", " 👉  👈 🥺"
+                ], 175), text=chosen_shy_text, ellipsis="..."),  # type: ignore
             "EARTH": yaspin(Spinners.earth, text=chosen_earth_text, ellipsis="..."),
             "MOON": yaspin(Spinners.moon, text=chosen_moon_text, ellipsis="..."),
         }
@@ -138,8 +142,8 @@ class QueryModelTool(BaseTool):
 
     @retry(
         reraise=True,
-        stop=stop_after_attempt(MAX_ATTEMPTS),
-        wait=wait_exponential(multiplier=1, min=1, max=30),
+        stop=stop_after_attempt(5), # max attempts
+        wait=wait_exponential(multiplier=1, min=2, max=62),
         before=_log_attempt,
         before_sleep=_log_retry_state,
     )
@@ -179,7 +183,7 @@ class QueryModelTool(BaseTool):
         client = OpenAI(
             base_url=os.getenv(api_base_env, ""),
             api_key=os.getenv(api_key_env, ""),
-            timeout=httpx.Timeout(120.0, read=120.0, write=10.0, connect=3.0),
+            timeout=httpx.Timeout(120.0, read=120.0, write=10.0, connect=5.0),
         )
         role_not_spoken_yet = True
         response_text = ""
@@ -218,7 +222,7 @@ class QueryModelTool(BaseTool):
                         f"{GREEN}Waiting complete! 😊 Let's see what they have to say!{RESET}\n"
                     )
                     role_not_spoken_yet = False
-                    print(f"{WHITE}>>>{role_name} speaking:{RESET}")
+                    print(f"{WHITE}>>>{role_name}{' speaking' if role_name != 'TLDR' else ''}:{RESET}")
 
                 buffer.append(content)
                 response_text += content
@@ -253,7 +257,7 @@ class QueryModelTool(BaseTool):
             )
         except Exception:
             # fallback to local
-            print(f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...{RESET}")
+            print(f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}")
             return self._llm_call(
                 api_base_env="LOCAL_OPENAI_API_BASE",
                 api_key_env="LOCAL_OPENAI_API_KEY",
