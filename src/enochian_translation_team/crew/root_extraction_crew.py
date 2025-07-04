@@ -326,9 +326,7 @@ class RootExtractionCrew:
         RESET = "\033[0m"
 
         def _get_field(item, field, default=""):
-            """
-            Unified accessor for Entry objects and dicts.
-            """
+            # Unified accessor for Entry objects and dicts.
             if isinstance(item, dict):
                 return item.get(field, default)
             else:
@@ -356,17 +354,8 @@ class RootExtractionCrew:
         time.sleep(0.5)
 
         for count, ngram in enumerate(ngrams):
-            #            if not single_ngram and count > 0:
-            #                seen_words_phrase = f" However, only {YELLOW}{seen_words}{RESET} of these {'count' if seen_words > 1 else 'counts'} though...\n" if seen_words > 1 else " We have yet to evaluate anything, though...\n"
-            #                stream_text(f"We have looked at {GREEN}{count}{RESET} words so far." + seen_words_phrase if not single_ngram else "", delay=0.005)
-
             if ngram[0] in self.processed_ngrams:
-                #                stream_text(f"Already processed '{GOLD}{ngram[0].upper()}{RESET}'. Skipping...\n", delay=0.005)
                 continue
-
-            #            stream_text(
-            #                f"[✓] Beginning examination of root-word candidate {GOLD}{ngram[0].upper()}{RESET}.\n"
-            #            )
 
             semantic_candidates = find_semantically_similar_words(
                 ft_model=self.fasttext,
@@ -376,16 +365,9 @@ class RootExtractionCrew:
                 subst_map=self.subst_map,
             )
 
-            # index_candidates = self.candidate_finder.find_candidates(
-            #     target=ngram, top_k=9999 # corpus is only ~1350 words long at most, so this will capture all candidates
-            # )
-
             index_candidates = self.candidate_finder.get_all_ngram_candidates(ngram[0])
 
             if not semantic_candidates or len(semantic_candidates) < 2:
-                # stream_text(
-                #     f"[⚠️] Too few semantic candidates for '{GOLD}{ngram[0].upper()}{RESET}' ({'zero candidates' if len(semantic_candidates) < 1 else 'only one candidate'}). Skipping.\n", delay=0.005
-                # )
                 self.processed_ngrams.add(ngram[0])
                 self.save_processed_ngrams()
                 continue
@@ -399,6 +381,22 @@ class RootExtractionCrew:
                 semantic_candidates, self.sentence_model
             )
             clusters = clusters_result["clusters"]
+            # dedupe any clusters that are identical up to ordering
+            unique, seen_sigs = [], set()
+            for cl in clusters:
+                # build a signature: sorted tuple of each member’s normalized form
+                sig = tuple(sorted(c["normalized"] for c in cl))
+                if sig not in seen_sigs:
+                    seen_sigs.add(sig)
+                    unique.append(cl)
+            count_deduped = len(clusters) - len(unique)
+            if count_deduped > 1:
+                deduped_clusters_text = (
+                    f"[⚠️] Skipping {PINK}{count_deduped}{RESET} duplicate cluster{'s' if count_deduped > 1 else ''}"
+                    f"for '{GOLD}{ngram[0].upper()}{RESET}'; no sense in evaluating if it's the same set of words."
+                )
+                stream_text(deduped_clusters_text)
+            clusters = unique
             best_config = clusters_result["config"]
             if len(clusters) == 0:
                 follow_phrase = ""
@@ -407,7 +405,7 @@ class RootExtractionCrew:
             else:
                 follow_phrase = "This could take a while if we're being honest...\n"
             stream_text(
-                f"Beginning the evaluation of {PINK}{len(clusters)}{RESET} clusters. "
+                f"Beginning the evaluation of {PINK}{len(clusters)}{RESET} cluster{'s' if len(clusters) > 1 else ''}. "
                 if len(clusters) > 0
                 else f"All possible definitions are too far apart to meaningfully cluster! Oh well..."
                 + follow_phrase
@@ -461,7 +459,7 @@ class RootExtractionCrew:
                 print()
 
                 stream_text(
-                    "... Now, the important question: is their sufficient overlap between the two groups?\n"
+                    "... Now, the important question: is there sufficient overlap between the two groups?\n"
                 )
                 time.sleep(1.5)
                 stream_text(
@@ -616,7 +614,9 @@ class RootExtractionCrew:
                     1 for c in merged_cluster if c["source"] in ("semantic", "both")
                 )
                 semantic_coverage = (
-                    round(semantic_hits / len(merged_cluster), 3) if merged_cluster else 0.0
+                    round(semantic_hits / len(merged_cluster), 3)
+                    if merged_cluster
+                    else 0.0
                 )
 
                 evaluated = self.evaluate_ngram(
