@@ -61,16 +61,25 @@ def main():
     else:
         load_dotenv(".env_remote", override=True)
         
-    debate_mode = None
-    while debate_mode not in ("1", "2"):
-        debate_mode = input("Do you want to eval a specific ngram (1) or evaluate a number of ngrams (2)? ")
+    mode = None
+    while mode not in ("1", "2"):
+        mode = input("Do you want to eval a specific ngram (1) or evaluate a number of ngrams (2)? ")
 
-    crew = RootExtractionCrew()
+    style = None
+    while style not in ("1", "2"):
+        style = input("Do you want each ngram to be debated (1) or analyzed in a single pass (2)? ")
+        
+    if style == "1":
+        style = "debate"
+    else:
+        style = "solo"
 
-    if debate_mode == "1":
+    crew = RootExtractionCrew(style)
+
+    if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip().lower()
         print(f"🔍 Evaluating single ngram: {GOLD}{ngram.upper()}{RESET}\n")
-        crew.run_with_streaming(single_ngram=ngram, stream_callback=stream_callback)
+        crew.run_with_streaming(single_ngram=ngram, stream_callback=stream_callback, style="debate")
 
     else:
         max_words = None
@@ -83,9 +92,12 @@ def main():
             except ValueError:
                 print("Invalid number. Please use a digit.")
         print(f"🔍 Evaluating {GOLD}{max_words}{RESET} ngrams...")
-        crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback)
+        crew.run_with_streaming(max_words=max_words, stream_callback=stream_callback, style=style)
 
-    print("\n\n🎉 The research team has completed their assigned task(s)!")
+    if style == "solo":
+        print("\n\n🎉 The researcher has completed their assigned task(s)!")        
+    else:    
+        print("\n\n🎉 The research team has completed their assigned task(s)!")
 
 
 

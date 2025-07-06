@@ -336,7 +336,7 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
     best_clusters = [[original_entries[i] for i in cl] for cl in best_clusters_idx]
     best_config = f"{best_meta[0]} {best_meta[1]} (sil={best_meta[2]:.3f}, db={best_meta[3]:.3f}, ch={best_meta[4]:.1f}, score={best_score:.3f})"
     stream_text(
-        f"🏆 Final best config: {best_config}\n\n"
+        f"🏆 Final best config: {best_config}\n"
     )
     print()
     time.sleep(1)

@@ -10,6 +10,7 @@ from gensim.models import FastText
 from sentence_transformers import SentenceTransformer
 from enochian_translation_team.utils.logger import save_log
 from enochian_translation_team.tools.debate_engine import debate_ngram, safe_output
+from enochian_translation_team.tools.solo_analysis_engine import solo_agent_ngram_analysis
 from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.semantic_search import (
     find_semantically_similar_words,
@@ -33,20 +34,20 @@ def stream_text(text: str, delay: float = 0.0125):
 
 
 class RootExtractionCrew:
-    def __init__(self):
+    def __init__(self, style):
         paths = get_config_paths()
         self.dictionary_path = paths["dictionary"]
         self.model_path = paths["model_output"]
         self.subst_map_path = paths["substitution_map"]
         self.output_path = paths["root_word_insights"]
         self.ngram_path = paths["ngram_index"]
-        self.processed_ngrams_path = paths["processed_ngrams"]
-        self.new_definitions_path = paths["new_definitions"]
+        self.processed_ngrams_path = paths[f"{style}_processed"]
+        self.new_definitions_path = paths[style]
 
         # Load everything
         self.entries = self.load_entries()
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
-        self.new_definitions_db = sqlite3.connect(paths["new_definitions"])
+        self.new_definitions_db = sqlite3.connect(paths[style])
         self.subst_map = self.load_subst_map()
         self.fasttext = FastText.load(str(self.model_path))
         self.sentence_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
@@ -77,8 +78,10 @@ class RootExtractionCrew:
 
         combined = existing | self.processed_ngrams
 
+        ordered = sorted(combined, key=lambda s: (-len(s), s))
+
         with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
-            json.dump(sorted(list(combined)), f, indent=2)
+            json.dump(ordered, f, indent=2)
 
     def load_entries(self) -> List[Entry]:
         return load_dictionary(str(self.dictionary_path))
@@ -168,6 +171,7 @@ class RootExtractionCrew:
         semantic_hits,
         semantic_coverage,
         stream_callback=None,
+        style="debate",
     ):
         def _get_field(item, field, default=""):
             """
@@ -273,19 +277,29 @@ class RootExtractionCrew:
                     unique.append(entry)
             tiered_groups[tier] = unique
 
-        # Let the agents have their nerd war
-        debate_result = debate_ngram(
-            root=ngram,
-            candidates=trimmed_cluster,
-            stats_summary=stats_summary,
-            stream_callback=stream_callback,
-            root_entry=root_entry,
-        )
+        the_result = {"raw_output": {}}
+        if style == "debate":
+            # Let the agents have their nerd war
+            the_result = debate_ngram(
+                root=ngram,
+                candidates=trimmed_cluster,
+                stats_summary=stats_summary,
+                stream_callback=stream_callback,
+                root_entry=root_entry,
+            )
+        elif style == "solo":
+            the_result = solo_agent_ngram_analysis(
+                root=ngram,
+                candidates=trimmed_cluster,
+                stats_summary=stats_summary,
+                stream_callback=stream_callback,
+                root_entry=root_entry,
+            )
 
-        if isinstance(debate_result, dict):
-            raw = debate_result.get("raw_output", {})
-        elif hasattr(debate_result, "raw_output"):
-            raw = safe_output(debate_result)
+        if isinstance(the_result, dict):
+            raw = the_result.get("raw_output", {})
+        elif hasattr(the_result, "raw_output"):
+            raw = safe_output(the_result)
         else:
             raw = {}
 
@@ -316,7 +330,7 @@ class RootExtractionCrew:
         return result
 
     def run_with_streaming(
-        self, max_words=None, stream_callback=None, single_ngram=None
+        self, max_words=None, stream_callback=None, single_ngram=None, style="debate"
     ):
         GOLD = "\033[38;5;178m"
         GREEN = "\033[38;5;120m"
@@ -350,7 +364,10 @@ class RootExtractionCrew:
         output = []
         seen_words = 0
 
-        stream_text("🪄 Initializing semantic tribunal...\n\n")
+        if style == "debate":
+            stream_text("🪄 Initializing semantic tribunal...\n\n")
+        elif style == "solo":
+            stream_text("⏰ Waking up the Enochiana scholar...\n\n")
         time.sleep(0.5)
 
         for count, ngram in enumerate(ngrams):
@@ -393,24 +410,26 @@ class RootExtractionCrew:
             if count_deduped > 1:
                 deduped_clusters_text = (
                     f"[⚠️] Skipping {PINK}{count_deduped}{RESET} duplicate cluster{'s' if count_deduped > 1 else ''}"
-                    f"for '{GOLD}{ngram[0].upper()}{RESET}'; no sense in evaluating if it's the same set of words."
+                    f" for '{GOLD}{ngram[0].upper()}{RESET}'; no sense in evaluating if it's the same set of words.\n\n"
                 )
                 stream_text(deduped_clusters_text)
             clusters = unique
             best_config = clusters_result["config"]
+
             if len(clusters) == 0:
                 follow_phrase = ""
             elif len(clusters) < 10:
-                follow_phrase = "Should be fairly quick, all considered!\n"
+                follow_phrase = "Should be fairly quick, all considered!\n\n"
             else:
-                follow_phrase = "This could take a while if we're being honest...\n"
-            stream_text(
-                f"Beginning the evaluation of {PINK}{len(clusters)}{RESET} cluster{'s' if len(clusters) > 1 else ''}. "
-                if len(clusters) > 0
-                else f"All possible definitions are too far apart to meaningfully cluster! Oh well..."
-                + follow_phrase
-                + "\n"
-            )
+                follow_phrase = "This could take a while if we're being honest...\n\n"
+            if len(clusters) > 0:
+                full_phrase = (
+                    f"Beginning the evaluation of {PINK}{len(clusters)}{RESET} cluster{'s' if len(clusters) > 1 else ''}.\n\n"
+                    + follow_phrase
+                )
+            else:
+                full_phrase = f"All possible definitions are too far apart to meaningfully cluster! Oh well...\n\n"
+            stream_text(full_phrase)
             time.sleep(1)
 
             for cluster_id, cluster in enumerate(clusters):
@@ -626,21 +645,39 @@ class RootExtractionCrew:
                     semantic_hits=semantic_hits,
                     semantic_coverage=semantic_coverage,
                     stream_callback=stream_callback,
+                    style=style,
                 )
                 evaluated["overlap_count"] = len(overlap)
                 evaluated["cluster_size"] = len(merged_cluster)
 
                 output.append(evaluated)
 
-                save_log(
-                    evaluated["Archivist"] or evaluated["raw_output"].get("Archivist"),
-                    label=ngram[0],
-                    cluster_number=str(cluster_id + 1),
-                    cluster_total=str(len(clusters)),
-                    accepted=len(evaluated["Glossator"]) > 0,
-                )
+                if style == "debate":
+                    save_log(
+                        evaluated["Archivist"] or evaluated["raw_output"].get("Archivist"),
+                        label=ngram[0],
+                        cluster_number=str(cluster_id + 1),
+                        cluster_total=str(len(clusters)),
+                        accepted=len(evaluated["Glossator"]) > 0,
+                        style=style
+                    )
+                elif style == "solo":
+                    txt = evaluated["Glossator"].strip().lower()
+                    verdict = (
+                        txt.startswith("✅ accepted")
+                        or txt.startswith("accepted")
+                        or "✅" in txt
+                    )
+                    save_log(
+                        evaluated["Archivist"] or evaluated["raw_output"].get("Archivist"),
+                        label=ngram[0],
+                        cluster_number=str(cluster_id + 1),
+                        cluster_total=str(len(clusters)),
+                        accepted=verdict,
+                        style=style
+                    )
                 #                self.save_results(output)
-
+                
                 if "Glossator" in evaluated:
                     cursor = self.new_definitions_db.cursor()
 

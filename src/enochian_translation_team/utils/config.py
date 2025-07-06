@@ -10,5 +10,9 @@ def get_config_paths():
         "ngram_index": root / "src" / "enochian_translation_team" / "data" / "ngram_index.sqlite3",
         "root_word_insights": root / "src" / "enochian_translation_team" / "data" / "root_word_insights.json",
         "processed_ngrams": root / "src" / "enochian_translation_team" / "data" / "processed_ngrams.json",
-        "new_definitions": root / "src" / "enochian_translation_team" / "data" / "new_definitions.sqlite3"
+        "solo_processed": root / "src" / "enochian_translation_team" / "data" / "solo_processed_ngrams.json",
+        "debate_processed": root / "src" / "enochian_translation_team" / "data" / "debate_processed_ngrams.json",
+        "new_definitions": root / "src" / "enochian_translation_team" / "data" / "new_definitions.sqlite3",
+        "debate": root / "src" / "enochian_translation_team" / "data" / "debate_derived_definitions.sqlite3",
+        "solo": root / "src" / "enochian_translation_team" / "data" / "solo_analysis_derived_definitions.sqlite3"
     }
