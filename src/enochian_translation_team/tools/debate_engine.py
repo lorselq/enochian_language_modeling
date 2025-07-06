@@ -285,9 +285,10 @@ Your task:
 - **Avoid listing all contributions**—this is not a recap, but a distillation
 
 Focus your analysis on:
-- Morphological structure (prefixes, suffixes, repeated substrings)
 - Semantic overlap across definitions
 - Contextual or citational consistency
+
+Give support via morphology only when it acts as foundational support.
 
 This report will be delivered to the Adjudicator, so your tone must be **scholarly, confident, and definitive**. This is the authoritative linguistic argument.
 
@@ -311,9 +312,10 @@ You have received a synthesized proposal from the Lead Linguist. Your role is to
 
 Focus on the following:
 - Do the cited words **genuinely share meaning or structure**, or is the overlap superficial?
-- Are the **morphological patterns** consistent and non-coincidental?
 - Is **semantic similarity** supported by actual definitions and usage, not just rhetorical association?
 - Are the **tiers** of relevance justified using empirical metrics (FastText similarity, semantic alignment)?
+
+Do not focus on whether **morphological patterns** are consistent and non-coincidental unless clearly relevant.
 
 🧠 You are permitted to accept that some Enochian root meanings may be abstract or metaphorical—many accepted roots display this. However, **you must remain vigilant against overreach, cherry-picked evidence, or unjustified speculation.**
 
@@ -334,7 +336,7 @@ You are the **Lead Linguist** defending a proposed Enochian root candidate after
 
 Your task:
 - **Directly address the Skeptic's objections** with clear, evidence-based rebuttals.
-- Reaffirm the **morphological and semantic rationale** that supports the root's candidacy.
+- Reaffirm the **semantic and morphological rationale** that supports the root's candidacy, emphasizing semantic relevance.
 - Identify any misinterpretations or overly narrow assumptions in the Skeptic's argument.
 - Examine whether any **alternative interpretations** the Skeptic raised have basis and adopt them if they do (the Skeptic may or may not provide any).
 - Justify abstract or metaphorical readings **if grounded in evidence provided in this prompt**.
@@ -367,28 +369,31 @@ You must:
             expected_output="A conclusive rebuttal that either challenges unresolved flaws in the Linguist's defense or concedes that the root candidate now appears valid.",
         ),
         "ruling": Task(
-            description=(
-                "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is). "
-                "Review the full exchange between your colleagues, the Linguist and the Skeptic. Your job is to make a clear and final determination:\n\n"
-                "**Should this proposed root be accepted as a meaningful candidate for future reverse-engineering of the Enochian language?**\n\n"
-                "While you love the idea of adding new root word candidates to the glossary and are excited for new possibilities it could bring in cutting-edge digital humanities research, "
-                "you temper this enthusiasm with scholarly professionalism and rational skepticism. Nevertheless, you are inclined to give grace when possible. "
-                "You must START your response with either:\n"
-                "✅ ACCEPTED\n"
-                "or\n"
-                "❌ REJECTED\n"
-                "— Nothing else may come before this line. This format is **mandatory**.\n\n"
-                "Your ruling must weigh the core arguments on both sides, focusing on:\n"
-                "- Linguistic plausibility\n"
-                "- Semantic cohesion across definitions\n"
-                "- Whether the proposal is vague or lacking substance\n"
-                "- Whether the defense meaningfully addressed the skeptic’s objections\n"
-                "Assume the data provided is all that is available, and that metric thresholds are valid and statistically derived.\n"
-                "Abstract or metaphorical meanings are acceptable if supported by internal consistency.\n\n"
-                "Be concise, definitive, and analytical. No hedging.\n\n"
-                "Begin with the ruling, then follow with a 1–3 sentence justification.\n\n"
-                "+++\n\n"
-            ),
+        description=(
+            "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages. "
+            "Review the Linguist-Skeptic debate and determine:\n\n"
+            "**Should this root be accepted as meaningful for Enochian reverse-engineering?**\n\n"
+            "While maintaining rigorous standards, apply **maximum grace** for micro-corpus constraints by accepting roots that:\n"
+            "- Form a highly cohesive semantic field (e.g., governance hierarchy)\n"
+            "- Exhibit *any* consistent derivational patterns **even if confined to this root family**\n"
+            "\n"
+            "**Mandatory starting response:**\n"
+            "✅ ACCEPTED\n"
+            "or\n"
+            "❌ REJECTED\n\n"
+            "**Key evaluation criteria (ordered by priority):**\n"
+            "1. **Semantic Cohesion**: Does >80% of the root family relate to a unified concept? "
+            "Accept abstract/metaphorical links if internally consistent\n"
+            "2. **Minimal Derivational Validity**: Does the root demonstrate ≥2 productive affixations "
+            "(e.g., TABA-AM/TABA-ORI) regardless of cross-root attestation?\n"
+            "3. **Counterargument Resilience**: Did objections reveal *fatal contradictions* "
+            "(e.g., antipodal meanings in same form), not just methodological limitations?\n\n"
+            "Reject **only** if:\n"
+            "- Semantic scatter exceeds grace threshold (>30% unrelated meanings)\n"
+            "- Affixes fail basic combinatorics (e.g., identical suffix yielding antonymic meanings)\n"
+            "- Defense ignored substantive contradictory evidence\n\n"
+            "Be decisive and analytical. Begin with ruling, then 1-3 sentence justification.\n\n"
+        ),
             expected_output="A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a concise rationale addressing both arguments.",
         ),
         "gloss": Task(

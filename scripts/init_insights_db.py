@@ -1,13 +1,16 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.abspath(os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),  # Go up from scripts directory
-    "src",
-    "enochian_translation_team",
-    "data",
-    "new_definitions.sqlite3"
-))
+def DB_PATH(file_name: str = "new_definitions.sqlite3"):
+  return os.path.abspath(
+    os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),  # Go up from scripts directory
+        "src",
+        "enochian_translation_team",
+        "data",
+        file_name,
+    )
+)
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -60,7 +63,8 @@ CREATE TABLE IF NOT EXISTS synth_defs (
 );
 """
 
-def init_db(path=DB_PATH):
+
+def init_db(path: str=DB_PATH()):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
     except OSError as e:
@@ -81,5 +85,11 @@ def init_db(path=DB_PATH):
 
     print(f"Initialized insights DB at {path}")
 
+
 if __name__ == "__main__":
-    init_db()
+    dbs = [
+        "debate_derived_definitions.sqlite3",
+        "solo_analysis_derived_definitions.sqlite3",
+    ]
+    for db in dbs:
+        init_db(DB_PATH(db))

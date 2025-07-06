@@ -60,9 +60,7 @@ class QueryModelTool(BaseTool):
     @staticmethod
     def _log_retry_state(retry_state: RetryCallState):
         n = retry_state.attempt_number
-        print(
-            f"{PINK}Connection attempt failed! ({n + 1}/5 attempts made){RESET}\n"
-        )
+        print(f"{PINK}Connection attempt failed! ({n + 1}/5 attempts made){RESET}\n")
 
     @staticmethod
     def _get_random_spinner():
@@ -114,7 +112,7 @@ class QueryModelTool(BaseTool):
             "Waiting is just phase; it'll pass soon enough. ",
             "Even the moon takes 27 days to orbit; good things come with time. ",
             "The AI will happily wax eloquent about Enochian for us in a moment. ",
-            "You wane some, you lose some—and it's how we respond that matters."
+            "You wane some, you lose some—and it's how we respond that matters.",
         ]
         chosen_shark_text = random.choice(SHARK_TEXT)
         chosen_ball_text = random.choice(BALL_TEXT)
@@ -129,11 +127,29 @@ class QueryModelTool(BaseTool):
             "BALL": yaspin(
                 ellipsis="...", text=chosen_ball_text
             ).bold.blink.magenta.bouncingBall.on_cyan,
-            "SHY": yaspin(Spinner([
-                "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", "👉    👈🥺", 
-                "👉    👈🥺", " 👉  👈 🥺", " 👉  👈 🥺", "  👉👈  🥺", " 👉  👈 🥺", 
-                "  👉👈  🥺", "  👉👈  🥺", "  👉👈  🥺", " 👉  👈 🥺"
-                ], 175), text=chosen_shy_text, ellipsis="..."),  # type: ignore
+            "SHY": yaspin(
+                Spinner(
+                    [
+                        "👉    👈🥺",
+                        "👉    👈🥺",
+                        "👉    👈🥺",
+                        "👉    👈🥺",
+                        "👉    👈🥺",
+                        "👉    👈🥺",
+                        " 👉  👈 🥺",
+                        " 👉  👈 🥺",
+                        "  👉👈  🥺",
+                        " 👉  👈 🥺",
+                        "  👉👈  🥺",
+                        "  👉👈  🥺",
+                        "  👉👈  🥺",
+                        " 👉  👈 🥺",
+                    ], # type: ignore
+                    175,
+                ),
+                text=chosen_shy_text,
+                ellipsis="...",
+            ), 
             "EARTH": yaspin(Spinners.earth, text=chosen_earth_text, ellipsis="..."),
             "MOON": yaspin(Spinners.moon, text=chosen_moon_text, ellipsis="..."),
         }
@@ -142,7 +158,7 @@ class QueryModelTool(BaseTool):
 
     @retry(
         reraise=True,
-        stop=stop_after_attempt(5), # max attempts
+        stop=stop_after_attempt(5),  # max attempts
         wait=wait_exponential(multiplier=1, min=2, max=62),
         before=_log_attempt,
         before_sleep=_log_retry_state,
@@ -185,9 +201,7 @@ class QueryModelTool(BaseTool):
             api_key=os.getenv(api_key_env, ""),
             timeout=httpx.Timeout(120.0, read=120.0, write=10.0, connect=5.0),
         )
-        role_not_spoken_yet = True
         response_text = ""
-        buffer: list[str] = []
         role = role_name or self.name
         if "Glossator" in role:
             self.gloss_model = os.getenv(
@@ -204,42 +218,72 @@ class QueryModelTool(BaseTool):
             stream=True,
         )
 
-        print(f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next, you might ask? We wait...\n")
+        print(
+            f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next, you might ask? We wait...\n"
+        )
 
+        response_text = ""
+
+        # 4) Spinner until the first real chunk arrives
         with self._get_random_spinner() as sp:
-            for chunk in completion:
-                delta = chunk.choices[0].delta
-                content = getattr(delta, "content", "")
+            while True:
+                try:
+                    chunk = next(completion)
+                except StopIteration:
+                    # no data at all
+                    break
+
+                content = getattr(chunk.choices[0].delta, "content", "") or ""
                 if not content:
                     continue
 
-                if role_name and role_not_spoken_yet:
-                    sp.hide()
-                    sys.stdout.write("\r\033[2K")
-                    sys.stdout.write(RESET)
-                    sys.stdout.flush()
-                    print(
-                        f"{GREEN}Waiting complete! 😊 Let's see what they have to say!{RESET}\n"
-                    )
-                    role_not_spoken_yet = False
-                    print(f"{WHITE}>>>{role_name}{' speaking' if role_name != 'TLDR' else ''}:{RESET}")
-
-                buffer.append(content)
-                response_text += content
-
-                self._emit(
-                    print_chunks, stream_callback, role, f"{GRAY}{content}{RESET}"
+                # first real token → clear spinner and print header
+                sp.hide()
+                sys.stdout.write("\r\033[2K")  # Erase line
+                sys.stdout.write(RESET)  # Reset styling
+                sys.stdout.flush()
+                print(
+                    f"{GREEN}Waiting complete! 😊 Let's see what they have to say!{RESET}\n"
                 )
-                if chunk.choices[0].finish_reason is not None:
-                    break
+                if role_name:
+                    role_label = f">>>{role_name}"
+                    if role_name != "TLDR":
+                        role_label += " speaking"
+                    print(f"{WHITE}{role_label}:{RESET}")
 
-            return {
-                "response_text": response_text,
-                "gloss_model": self.gloss_model,
-            } or {
-                "response_text": "[ERROR] No content returned.",
-                "gloss_model": self.gloss_model,
-            }
+                # emit that first bit
+                response_text += content
+                self._emit(
+                    print_chunks,
+                    stream_callback,
+                    role_name or self.name,
+                    f"{GRAY}{content}{RESET}",
+                )
+                break
+
+        # 5) Consume the rest of the stream
+        for chunk in completion:
+            content = getattr(chunk.choices[0].delta, "content", "") or ""
+            if not content:
+                continue
+            response_text += content
+            self._emit(
+                print_chunks,
+                stream_callback,
+                role_name or self.name,
+                f"{GRAY}{content}{RESET}",
+            )
+            if chunk.choices[0].finish_reason is not None:
+                break
+
+        # 6) Final fallback if nothing arrived
+        if not response_text:
+            response_text = "[ERROR] No content returned."
+
+        return {
+            "response_text": response_text,
+            "gloss_model": getattr(self, "gloss_model", "<unset>"),
+        }
 
     def _run(
         self,
@@ -257,7 +301,11 @@ class QueryModelTool(BaseTool):
             )
         except Exception:
             # fallback to local
-            print(f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}")
+            # print("⚠️ {YELLOW}Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡")
+            # sys.exit()
+            print(
+                f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}"
+            )
             return self._llm_call(
                 api_base_env="LOCAL_OPENAI_API_BASE",
                 api_key_env="LOCAL_OPENAI_API_KEY",
@@ -267,3 +315,20 @@ class QueryModelTool(BaseTool):
                 print_chunks=print_chunks,
                 role_name=role_name,
             )
+
+    async def _arun(
+        self,
+        prompt: str,
+        stream_callback: Optional[Callable[[str, str], None]] = None,
+        print_chunks: bool = False,
+        role_name: Optional[str] = None,
+    ) -> dict[str, str]:
+        """
+        Async entrypoint. Delegate straight to the sync _run.
+        """
+        return self._run(
+            prompt,
+            stream_callback=stream_callback,
+            print_chunks=print_chunks,
+            role_name=role_name,
+        )
