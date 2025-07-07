@@ -301,11 +301,11 @@ class QueryModelTool(BaseTool):
             )
         except Exception:
             # fallback to local
-            # print("⚠️ {YELLOW}Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡")
-            # sys.exit()
-            print(
-                f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}"
-            )
+            print("⚠️ {YELLOW}Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡")
+            sys.exit()
+            # print(
+            #     f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}"
+            # )
             return self._llm_call(
                 api_base_env="LOCAL_OPENAI_API_BASE",
                 api_key_env="LOCAL_OPENAI_API_KEY",

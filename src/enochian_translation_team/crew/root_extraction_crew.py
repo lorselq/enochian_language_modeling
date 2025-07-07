@@ -558,21 +558,26 @@ class RootExtractionCrew:
                         enhanced = sem_entry["enhanced_definition"]
                     else:
                         dict_entry = next(
-                            e for e in self.entries if e.normalized == norm
+                            (e for e in self.entries if e.normalized == norm),
+                            None
                         )
-                        definition = "; ".join(
-                            s.definition for s in dict_entry.senses or []
-                        )
-                        cits_for_enh = (
-                            "Possible uses: "
-                            + ", ".join([f"`{c}`" for c in citations])
-                            + "."
-                        )
-                        enhanced = (
-                            f"{definition}." + cits_for_enh
-                            if citations and len(citations) > 0
-                            else ""
-                        )
+                        if not dict_entry:
+                            definition = _get_field(word, "definition", "")
+                            enhanced   = _get_field(word, "enhanced_definition", "")
+                        else:
+                            definition = "; ".join(
+                                s.definition for s in dict_entry.senses or []
+                            )
+                            cits_for_enh = (
+                                "Possible uses: "
+                                + ", ".join([f"`{cit}`" for cit in citations])
+                                + "."
+                            )
+                            enhanced = (
+                                f"{definition}." + cits_for_enh
+                                if citations and len(citations) > 0
+                                else ""
+                            )
 
                     merged_cluster.append(
                         {
