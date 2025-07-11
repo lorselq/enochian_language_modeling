@@ -21,7 +21,7 @@ def _get_field(item, field, default=""):
     return getattr(item, field, default)
 
 
-def stream_text(text: str, delay: float = 0.006):
+def stream_text(text: str, delay: float = 0.00005):
     for c in text:
         sys.stdout.write(c)
         sys.stdout.flush()
@@ -219,10 +219,10 @@ Semantic core: [Cohesive concept, e.g., "hierarchical control"]
     print(
         f"==={(len('Now examining the possible root word ') + len(f'<{root.upper()}>')) * '='}==="
     )
-    time.sleep(2)
+    # time.sleep(2)
 
     print(f"{GRAY}Starting prompt for research team:", end=" ")
-    time.sleep(0.7)
+    # time.sleep(0.7)
     stream_text(do_it_all.description)
     print(f"\n{RESET}\n")
 

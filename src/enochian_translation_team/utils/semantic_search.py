@@ -216,12 +216,12 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
     for nc in range(3, 20):
         configs.append(("fuzzy", {"n_clusters": nc, "m": 2.0}))
 
-    print()
-    stream_text(
-        f"We are about to evaluate {N} entries using {len(configs)} method/param combinations to identify the way to cluster them."
-    )
-    print()
-    time.sleep(0.6)
+    # print()
+    # stream_text(
+    #     f"We are about to evaluate {N} entries using {len(configs)} method/param combinations to identify the way to cluster them."
+    # )
+    # print()
+    # time.sleep(0.6)
 
     best_score = float("inf")
     best_clusters_idx = []
@@ -339,7 +339,7 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
         f"🏆 Final best config: {best_config}\n"
     )
     print()
-    time.sleep(1)
+    # time.sleep(1)
     result = {"clusters": best_clusters, "config": best_config}
     return result
 
