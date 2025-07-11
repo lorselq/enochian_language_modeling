@@ -22,7 +22,7 @@ from enochian_translation_team.utils.build_ngram_index import build_and_save_ngr
 from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
 
 
-def stream_text(text: str, delay: float = 0.0125):
+def stream_text(text: str, delay: float = 0.00025):
     for c in text:
         sys.stdout.write(c)
         sys.stdout.flush()
@@ -354,7 +354,7 @@ class RootExtractionCrew:
                 stream_text(
                     f"[Warning] The ngram {GOLD}{single_ngram.upper()}{RESET} has already been processed, so our work is already done.\n"
                 )
-                time.sleep(1)
+                # time.sleep(1)
         else:
             ngrams = sorted(
                 self.stream_ngrams_from_sqlite(min_freq=2),
@@ -368,7 +368,7 @@ class RootExtractionCrew:
             stream_text("🪄 Initializing semantic tribunal...\n\n")
         elif style == "solo":
             stream_text("⏰ Waking up the Enochiana scholar...\n\n")
-        time.sleep(0.5)
+        # time.sleep(0.5)
 
         for count, ngram in enumerate(ngrams):
             if ngram[0] in self.processed_ngrams:
@@ -430,7 +430,7 @@ class RootExtractionCrew:
             else:
                 full_phrase = f"All possible definitions are too far apart to meaningfully cluster! Oh well...\n\n"
             stream_text(full_phrase)
-            time.sleep(1)
+            # time.sleep(1)
 
             for cluster_id, cluster in enumerate(clusters):
                 sem_norms = {
@@ -450,7 +450,7 @@ class RootExtractionCrew:
                     f"the {GREEN}{len(sem_norms)}{RESET} semantic candidates and the {BLUE}{len(index_norms)}{RESET} the words "
                     f"(and their extended variations) that contain '{GOLD}{ngram[0].upper()}{RESET}' as one of its components.\n"
                 )
-                time.sleep(0.7)
+                # time.sleep(0.7)
 
                 sem_formatted_list = [
                     f"{GREEN}{norm.upper()}{RESET}" for norm in list(sem_norms)[:5]
@@ -461,7 +461,7 @@ class RootExtractionCrew:
                 )
                 sem_formatted_list += "..." if len(sem_norms) > 5 else ""
                 stream_text(sem_formatted_list)
-                time.sleep(0.3)
+                # time.sleep(0.3)
                 print()
 
                 idx_formatted_list = [
@@ -474,20 +474,20 @@ class RootExtractionCrew:
                 )
                 idx_formatted_list += "..." if len(index_norms) > 5 else ""
                 stream_text(idx_formatted_list)
-                time.sleep(1.2)
+                # time.sleep(1.2)
                 print()
 
                 stream_text(
                     "... Now, the important question: is there sufficient overlap between the two groups?\n"
                 )
-                time.sleep(1.5)
+                # time.sleep(1.5)
                 stream_text(
                     f"{YELLOW}Yes! There is!{RESET}"
                     if len(overlap) >= 2
                     else f"{PINK}Either only one shared item or none whatsoever.{RESET} 😢"
                     + "\n"
                 )
-                time.sleep(1)
+                # time.sleep(1)
 
                 if not overlap or len(overlap) < 2:
                     self.processed_ngrams.add(ngram[0])
@@ -495,7 +495,7 @@ class RootExtractionCrew:
                     stream_text(
                         f"We have skipped cluster #{cluster_id + 1} for {GOLD}{ngram[0].upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things.\n\n"
                     )
-                    time.sleep(2)
+                    # time.sleep(2)
                     continue
                 else:
                     print("")
@@ -612,13 +612,13 @@ class RootExtractionCrew:
                     stream_text(
                         f"[⚠️] Merged cluster too small for {GOLD}{ngram[0].upper()}{RESET}. Skipping.\n"
                     )
-                    time.sleep(0.7)
+                    # time.sleep(0.7)
                     continue
 
                 stream_text(
                     f"\n[→] Beginning {GOLD}{ngram[0].upper()}{RESET} via analysis of cluster #{cluster_id + 1} (of {len(clusters)}).\n"
                 )
-                time.sleep(0.5)
+                # time.sleep(0.5)
 
                 definitions = []
                 for c in cluster:
@@ -765,7 +765,7 @@ class RootExtractionCrew:
                 break
 
         stream_text("🎊 Clusters complete! \n")
-        time.sleep(2)
+        # time.sleep(2)
 
         if self.ngram_db:
             self.ngram_db.close()
