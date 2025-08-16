@@ -178,6 +178,7 @@ cython_debug/
 .vscode/
 
 # giant fasttext models and similar
+experiments/
 logs/*
 scripts/fix_log_names.py
 src/enochian_translation_team/tools/models/*
@@ -200,3 +201,4 @@ src/enochian_translation_team/data/debate_derived_definitions.sqlite3-wal
 src/enochian_translation_team/data/solo_analysis_derived_definitions.sqlite3
 src/enochian_translation_team/data/solo_analysis_derived_definitions.sqlite3-shm
 src/enochian_translation_team/data/solo_analysis_derived_definitions.sqlite3-wal
+suggestions.md

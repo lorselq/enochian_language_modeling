@@ -13,7 +13,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
-AGREEMENT_THRESHOLD = 0.85
+AGREEMENT_THRESHOLD = 0.815
 
 
 def _get_field(item, field, default=""):
@@ -99,6 +99,8 @@ def debate_ngram(
     stats_summary: str,
     stream_callback=None,
     root_entry: Optional[Entry] = None,
+    blind_evaluation: bool = True,
+    debate_lite: bool = True,
 ):
     joined_defs = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
@@ -210,7 +212,7 @@ Your tone is incisive, precise, and intellectually honest.""",
         ),
     }
 
-    about_enochiana = "As a bit of context about the Enochian language: the root words are derived from Enochian, the language Adam spoke (from the Biblical Adam and Eve), and is allegedly used as a form of celestial speech by angels and other divine entities; there are many Christian (and Gnostic) undertones in the language, and the known words' main focus is divine cosmology, theology, and human action and government."
+    no_outside_speculation = "Use only the items provided in this prompt. Do **not** assume any extra-textual theology, mythology, or etymology."
     about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
 
     tasks = {
@@ -239,14 +241,19 @@ With this in mind, examine the following definitions and citations (contained wi
 
 Use these to **propose a coherent explanation of the root** based on morphological structure and shared semantics.
 
-{about_enochiana}
+{no_outside_speculation}
 {about_metrics}
 {extra_prompt}
 
 Your tone must be scholarly and confident. Avoid vague generalizations. Use examples, and support your claims with specific patterns or semantic signals.
 """,
-            expected_output="A strong case for the root, citing semantic and morphological evidence.",
-        ),
+            expected_output=f"""
+**Return exactly**:
+HYPOTHESIS: <one-sentence candidate meaning>
+EVIDENCE: <up to 5 bullets; each bullet names {root.upper()} and provides an argument, citing relevant fasttext, semantic, or tier>
+COUNTEREVIDENCE: <up to 2 bullets; optional>
+CONFIDENCE: <0.00–1.00>
+"""),
         "initial_ruling": Task(
             description=(
                 "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is). "
@@ -270,8 +277,11 @@ Your tone must be scholarly and confident. Avoid vague generalizations. Use exam
                 "Be concise, definitive, and analytical. No hedging.\n\n"
                 "Begin with the ruling, then follow with a 1–3 sentence justification.\n\n"
             ),
-            expected_output="A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a concise rationale for this verdict.",
-        ),
+            expected_output=f"""**Follow this required format exactly:**
+<✅ ACCEPTED | ❌ REJECTED>
+SCORES: semantic_cohesion=<0.0–1.0>; derivational_validity=<0.0–1.0>; rebuttal_resilience=<0.0–1.0>
+RATIONALE: <1–2 sentences max>
+"""),
         "synthesize": Task(
             description=f"""
 You are the **Lead Linguist** in a collaborative reverse-engineering initiative focused on the Enochian language—a constructed system with obscure morphology, irregular derivation, and no known linguistic relatives. You specialize in low-corpora constructed languages, making you perfect for this task.
@@ -298,12 +308,17 @@ The junior research team used the following definitions and citations as part of
 
 {root_def_summary}
 
-{about_enochiana}
+{no_outside_speculation}
 {about_metrics}
 {extra_prompt}
 """,
-            expected_output="A definitive and well-argued proposal for the root, based on internal semantic and morphological evidence, synthesizing the strongest arguments from the junior linguists.",
-        ),
+            expected_output=f"""
+**Return exactly**:
+HYPOTHESIS: <one-sentence candidate meaning>
+EVIDENCE: <up to 6 bullets, synthesizing the strongest arguments from the junior linguists>
+COUNTEREVIDENCE: <up to 4 bullets; optional>
+CONFIDENCE: <0.00–1.00>
+"""),
         "counter": Task(
             description=f"""
 You are a **skeptical linguist** evaluating a proposed root analysis in the Enochian language—a system with opaque morphology and metaphysical entanglements.
@@ -315,7 +330,7 @@ Focus on the following:
 - Is **semantic similarity** supported by actual definitions and usage, not just rhetorical association?
 - Are the **tiers** of relevance justified using empirical metrics (FastText similarity, semantic alignment)?
 
-Do not focus on whether **morphological patterns** are consistent and non-coincidental unless clearly relevant.
+Evaluate morphological claims when they **change the conclusion** (e.g., same suffix yielding antonyms).
 
 🧠 You are permitted to accept that some Enochian root meanings may be abstract or metaphorical—many accepted roots display this. However, **you must remain vigilant against overreach, cherry-picked evidence, or unjustified speculation.**
 
@@ -328,8 +343,11 @@ If there are any Enochian words used to justify the root's possible meaning, the
 {skeptic_hint}
 Your tone must be **sharp, disciplined, and logically rigorous**. You are not here to sabotage, but to **safeguard the integrity** of the linguistic record.
 """,
-            expected_output="A focused, evidence-based rebuttal to the proposed root word—highlighting flawed logic, semantic gaps, or alternative interpretations, when supported.",
-        ),
+            expected_output=f"""**Return exactly**:
+CRITIQUE: <an indication whether or not {root.upper()} has a valid proposed definition>
+EVIDENCE: <up to 5 bullets; each bullet names {root.upper()} and directly addresses evidence supporting the definition>
+ALTERNATIVE: <up to 2 bullets; optional>
+CONFIDENCE: <0.00–1.00>"""),
         "defend": Task(
             description="""
 You are the **Lead Linguist** defending a proposed Enochian root candidate after receiving a skeptical counter-analysis.
@@ -348,8 +366,11 @@ Your tone must be:
 
 🎯 Your goal is not just to *respond*, but to **reassert the legitimacy** of the proposed root and demonstrate that the original analysis withstands scrutiny.
 """,
-            expected_output="A confident, evidence-driven defense of the root hypothesis that refutes the Skeptic's critique and re-establishes the root as a serious candidate for inclusion.",
-        ),
+            expected_output=f"""**Return exactly**:
+DEFENSE: <a defense that addresses the skeptic's criticisms>
+EVIDENCE: <up to 5 bullets; each bullet provides defense against a different criticism the skeptic made and provides additional support for the lexical inclusion of your definition for {root.upper()}>
+CONFIDENCE: <0.00–1.00>
+"""),
         "rebuttal": Task(
             description="""
 You are the **Skeptical Linguist**, issuing your **final response** after reviewing the Lead Linguist's defense of a proposed Enochian root.
@@ -366,35 +387,43 @@ You must:
 
 🎯 This is your last chance to weigh in before the adjudication. Be precise, fair, and intellectually rigorous.
 """,
-            expected_output="A conclusive rebuttal that either challenges unresolved flaws in the Linguist's defense or concedes that the root candidate now appears valid.",
-        ),
+            expected_output=f"""**Return exactly**:
+REBUTTAL: <a final critique of the linguist's supporting arguments>
+EVIDENCE: <up to 5 bullets expounding the rebuttal>
+CONFIDENCE: <0.00–1.00>
+"""),
         "ruling": Task(
-        description=(
-            "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages. "
-            "Review the Linguist-Skeptic debate and determine:\n\n"
-            "**Should this root be accepted as meaningful for Enochian reverse-engineering?**\n\n"
-            "While maintaining rigorous standards, apply **maximum grace** for micro-corpus constraints by accepting roots that:\n"
-            "- Form a highly cohesive semantic field (e.g., governance hierarchy)\n"
-            "- Exhibit *any* consistent derivational patterns **even if confined to this root family**\n"
-            "\n"
-            "**Mandatory starting response:**\n"
-            "✅ ACCEPTED\n"
-            "or\n"
-            "❌ REJECTED\n\n"
-            "**Key evaluation criteria (ordered by priority):**\n"
-            "1. **Semantic Cohesion**: Does >80% of the root family relate to a unified concept? "
-            "Accept abstract/metaphorical links if internally consistent\n"
-            "2. **Minimal Derivational Validity**: Does the root demonstrate ≥2 productive affixations "
-            "(e.g., TABA-AM/TABA-ORI) regardless of cross-root attestation?\n"
-            "3. **Counterargument Resilience**: Did objections reveal *fatal contradictions* "
-            "(e.g., antipodal meanings in same form), not just methodological limitations?\n\n"
-            "Reject **only** if:\n"
-            "- Semantic scatter exceeds grace threshold (>30% unrelated meanings)\n"
-            "- Affixes fail basic combinatorics (e.g., identical suffix yielding antonymic meanings)\n"
-            "- Defense ignored substantive contradictory evidence\n\n"
-            "Be decisive and analytical. Begin with ruling, then 1-3 sentence justification.\n\n"
-        ),
-            expected_output="A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a concise rationale addressing both arguments.",
+            description=(
+                "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages. "
+                "Review the Linguist-Skeptic debate and determine:\n\n"
+                "**Should this root be accepted as meaningful for Enochian reverse-engineering?**\n\n"
+                "While maintaining rigorous standards, apply **maximum grace** for micro-corpus constraints by accepting roots that:\n"
+                "- Form a highly cohesive semantic field (e.g., governance hierarchy)\n"
+                "- Exhibit *any* consistent derivational patterns **even if confined to this root family**\n"
+                "\n"
+                "**Mandatory starting response:**\n"
+                "✅ ACCEPTED\n"
+                "or\n"
+                "❌ REJECTED\n\n"
+                "**Key evaluation criteria (ordered by priority):**\n"
+                "1. **Semantic Cohesion**: Does >80% of the root family relate to a unified concept? "
+                "Accept abstract/metaphorical links if internally consistent\n"
+                "2. **Minimal Derivational Validity**: Does the root demonstrate ≥2 productive affixations "
+                "(e.g., TABA-AM/TABA-ORI) regardless of cross-root attestation?\n"
+                "3. **Counterargument Resilience**: Did objections reveal *fatal contradictions* "
+                "(e.g., antipodal meanings in same form), not just methodological limitations?\n\n"
+                "Reject **only** if:\n"
+                "- Semantic scatter exceeds grace threshold (>30% unrelated meanings)\n"
+                "- Affixes fail basic combinatorics (e.g., identical suffix yielding antonymic meanings)\n"
+                "- Defense ignored substantive contradictory evidence\n\n"
+                "Be decisive and analytical. Begin with ruling, then 1-3 sentence justification.\n\n"
+            ),
+            #            expected_output="A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a concise rationale addressing both arguments.",
+            expected_output=f"""**Follow this required format exactly:**
+<✅ ACCEPTED | ❌ REJECTED>
+SCORES: semantic_cohesion=<0.0–1.0>; derivational_validity=<0.0–1.0>; rebuttal_resilience=<0.0–1.0>
+RATIONALE: <1–2 sentences max>
+""",
         ),
         "gloss": Task(
             description=(
@@ -410,7 +439,11 @@ You must:
                 "Below is a summary of the debate and root data. Use it to guide your construction of the definition:\n\n"
             ),
             expected_output=(
-                f"{root.upper()} - A linguistically precise and practically useful definition that reflects both the semantic meaning and usage potential of the root in compound forms."
+                f"""**Return exactly**:
+ROOT: **{root.upper()}**
+DEFINITION: <dictionary-style definition, as thorough as necessary to communicate the concepts and ideas present in {root.upper()}>  
+DECODING_GUIDE: <how it modifies the semantics of a word, e.g., "indicates locational positioning inside">
+SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, burning">"""
             ),
         ),
     }
@@ -466,17 +499,27 @@ You must:
     stream_text(tasks["propose"].description)
     print(f"\n{RESET}\n")
 
-    STAGES = [
-        ("linguist", 5),
-        ("initial_ruling", 1),
-        ("synthesis", 1),
-        ("skeptic", 1),
-        ("defend", 1),
-        ("rebuttal", 1),
-        ("adjudicator", 1),
-        ("glossator", 1),
-        ("summarizer", 1),
-    ]
+    if debate_lite:
+        STAGES = [
+            ("linguist", 3),
+            ("synthesis", 1),
+            ("skeptic", 1),
+            ("adjudicator", 1),
+            ("glossator", 1),
+            ("summarizer", 1),
+        ]
+    else:
+        STAGES = [
+            ("linguist", 3),
+            ("initial_ruling", 1),
+            ("synthesis", 1),
+            ("skeptic", 1),
+            ("defend", 1),
+            ("rebuttal", 1),
+            ("adjudicator", 1),
+            ("glossator", 1),
+            ("summarizer", 1),
+        ]
 
     linguist_variants = []
     initial_ruling = ""
@@ -523,7 +566,7 @@ You must:
             stream_text(tasks["initial_ruling"].description)
             print(f"\n{RESET}\n")
 
-            if is_canon:
+            if is_canon and blind_evaluation:
                 initial_ruling = (
                     f"✅ ACCEPTED\n"
                     f"The proposed root '{root.upper()}' is already a canon entry defined as '{root_def_text}'. "
@@ -556,7 +599,7 @@ You must:
                     continue
                 else:
                     print("\n\n")
-                    print(initial_rejection)
+                    stream_text(initial_rejection)
                     break
         elif stage_name == "synthesis":
             agent_tool = tools[stage_name]
@@ -766,7 +809,7 @@ You must:
                 prompt=f"Summarize the following root word debate in 1-2 sentences; your focus should be summarizing the strongest, key arguments, and very briefly indicating whether or not the adjudicator accepted the root word proposal:\n\n{''.join(lines)}",
                 stream_callback=summarizer_cb,
                 print_chunks=True,
-                role_name="TLDR"
+                role_name="TLDR",
             )["response_text"]
             print("\n\n")  # to give some space before the log saving print()...
             intro_lines.append("\n\n=== 📜 SUMMARY ===\n")

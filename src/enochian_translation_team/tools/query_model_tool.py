@@ -300,9 +300,10 @@ class QueryModelTool(BaseTool):
                 role_name=role_name,
             )
         except Exception:
-            # fallback to local
+            # exit if out of OpenRouter calls
             print("⚠️ {YELLOW}Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡")
             sys.exit()
+            # fallback to local
             # print(
             #     f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}"
             # )
