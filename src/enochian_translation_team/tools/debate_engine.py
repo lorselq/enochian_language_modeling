@@ -344,10 +344,10 @@ If there are any Enochian words used to justify the root's possible meaning, the
 Your tone must be **sharp, disciplined, and logically rigorous**. You are not here to sabotage, but to **safeguard the integrity** of the linguistic record.
 """,
             expected_output=f"""**Return exactly**:
-CRITIQUE: <an indication whether or not {root.upper()} has a valid proposed definition>
-EVIDENCE: <up to 5 bullets; each bullet names {root.upper()} and directly addresses evidence supporting the definition>
-ALTERNATIVE: <up to 2 bullets; optional>
-CONFIDENCE: <0.00–1.00>"""),
+**CRITIQUE**: <an indication whether or not {root.upper()} has a valid proposed definition>
+**EVIDENCE**: <up to 5 bullets; each bullet names {root.upper()} and directly addresses evidence supporting the definition>
+**ALTERNATIVE**: <up to 2 bullets; optional>
+**CONFIDENCE**: <0.00–1.00>"""),
         "defend": Task(
             description="""
 You are the **Lead Linguist** defending a proposed Enochian root candidate after receiving a skeptical counter-analysis.
@@ -528,6 +528,7 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
     skeptic_response = ""
     linguist_defense = ""
     skeptic_rebuttal = ""
+    adjudicator_prompt = ""
     adjudicator_ruling = ""
     gloss = ""
     tldr_summary = ""
@@ -553,7 +554,7 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
                 linguist_variants.append(variant)
                 if check_convergence(linguist_variants):
                     print(
-                        "Linguists have converged on similar analyses, passing research to the Lead Linguist..."
+                        "\n\n‼️ Linguists have converged on similar analyses, passing research to the Lead Linguist..."
                     )
                     time.sleep(0.7)
                     # jump to the “synthesis” stage index
@@ -642,7 +643,7 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
             else:
                 print("[Error] linguist_proposal defined as ''")
                 break
-        elif stage_name == "defend":
+        elif stage_name == "defend" and debate_lite:
             agent_tool = tools["linguist"]
             print(
                 f"\n\n{RESET}>>>🥸\tThe Lead Linguist's considers what the Skeptic has said and prepares a defense...\n{GRAY}",
@@ -665,7 +666,7 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
             else:
                 print("[Error] skeptic_response defined as ''")
                 break
-        elif stage_name == "rebuttal":
+        elif stage_name == "rebuttal" and debate_lite:
             if linguist_defense and len(linguist_defense) > 0:
                 agent_tool = tools["skeptic"]
                 print(
@@ -693,7 +694,7 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
                 break
         elif stage_name == "adjudicator":
             agent_tool = tools[stage_name]
-            if skeptic_rebuttal and len(skeptic_rebuttal) > 0:
+            if (not debate_lite and skeptic_rebuttal and len(skeptic_rebuttal) > 0) or (debate_lite and skeptic_response and len(skeptic_response) > 0):
                 print(
                     f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}"
                 )
@@ -711,17 +712,19 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
                     print()
 
                 else:
-                    adjudicator_ruling = agent_tool._run(
-                        prompt="\n".join(
+                    adjudicator_prompt = "\n".join(
                             [
                                 tasks["ruling"].description,
                                 f"Linguist proposed: {linguist_proposal}",
-                                f"Skeptic replied: {skeptic_response}",
-                                f"Linguist defended by arguing for: {linguist_defense}",
-                                f"Skeptic made their final argument against: {skeptic_rebuttal}"
-                                f"Your goal: {tasks['ruling'].expected_output.lower()}",
+                                f"Skeptic replied: {skeptic_response}"
                             ]
-                        ),
+                    )
+                    if not debate_lite:
+                        adjudicator_prompt += f"Linguist defended by arguing: {linguist_defense}\n"
+                        adjudicator_prompt += f"Skeptic made their final argument against: {skeptic_rebuttal}\n"
+                        adjudicator_prompt += f"Your goal: {tasks['ruling'].expected_output.lower()}\n"
+                    adjudicator_ruling = agent_tool._run(
+                        prompt=adjudicator_prompt,
                         stream_callback=adjudicator_cb,
                         print_chunks=True,
                         role_name="👩‍⚖️\tAdjudicator",
@@ -747,11 +750,12 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
                         tasks["gloss"].description,
                         f"Linguist proposed: {linguist_proposal}",
                         f"Skeptic replied: {skeptic_response}",
-                        f"Linguist defended by arguing for: {linguist_defense}",
-                        f"Skeptic made their final argument against: {skeptic_rebuttal}"
-                        f"Adjudicator decided: {adjudicator_ruling}",
                     ]
                 )
+                if not debate_lite:
+                    glossator_prompt += f"Linguist defended by arguing for: {linguist_defense}\n"
+                    glossator_prompt += f"Skeptic made their final argument against: {skeptic_rebuttal}"
+                    glossator_prompt += f"Adjudicator decided: {adjudicator_ruling}"
                 gloss_dict = agent_tool._run(
                     prompt=glossator_prompt,
                     stream_callback=glossator_cb,
@@ -828,6 +832,7 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
         "Defense": linguist_defense,
         "Rebuttal": skeptic_rebuttal,
         "Adjudicator": adjudicator_ruling,
+        "Adjudicator_Prompt": adjudicator_prompt,
         "Glossator": gloss,
         "Glossator_Prompt": glossator_prompt,
         "Glossator_Model": gloss_model,
@@ -839,6 +844,7 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
             "Defense": linguist_defense,
             "Rebuttal": skeptic_rebuttal,
             "Adjudicator": adjudicator_ruling,
+            "Adjudicator_Prompt": adjudicator_prompt,
             "Glossator": gloss,
             "Glossator_Prompt": glossator_prompt,
             "Glossator_Model": gloss_model,

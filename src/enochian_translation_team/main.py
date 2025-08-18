@@ -1,3 +1,4 @@
+import os
 from dotenv import load_dotenv, find_dotenv
 from collections import defaultdict
 from enochian_translation_team.utils.local_env_refresher import refresh_local_env
@@ -79,7 +80,7 @@ def main():
     if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip().lower()
         print(f"🔍 Evaluating single ngram: {GOLD}{ngram.upper()}{RESET}\n")
-        crew.process_ngrams(single_ngram=ngram, stream_callback=stream_callback, style=style, local_model=os.getenv("LOCAL_MODEL_NAME", "[local_model]"), remote_model=os.getenv("REMOTE_MODEL_NAME", "remote_model"))
+        crew.process_ngrams(single_ngram=ngram, stream_callback=stream_callback, style=style)
 
     else:
         max_words = None
@@ -92,7 +93,7 @@ def main():
             except ValueError:
                 print("Invalid number. Please use a digit.")
         print(f"🔍 Evaluating {GOLD}{max_words}{RESET} ngrams...")
-        crew.process_ngrams(max_words=max_words, stream_callback=stream_callback, style=style, local_model=os.getenv("LOCAL_MODEL_NAME", "[local_model]"), remote_model=os.getenv("REMOTE_MODEL_NAME", "remote_model"))
+        crew.process_ngrams(max_words=max_words, stream_callback=stream_callback, style=style)
 
     if style == "solo":
         print("\n\n🎉 The researcher has completed their assigned task(s)!")        
