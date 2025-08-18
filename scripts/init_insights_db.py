@@ -136,7 +136,8 @@ CREATE TABLE IF NOT EXISTS clusters (
   adjudicator_model     TEXT,
   -- glossator / adjudicator outcomes
   glossator_def         TEXT,                   -- short synthesized gloss
-  adjudicator_verdict   TEXT CHECK (adjudicator_verdict IN ('ACCEPTED','REJECTED','HOLD')),
+  adjudicator_output    TEXT,                   -- just output of the adjudicator
+  adjudicator_verdict   TEXT,                   -- extracted verdict
   semantic_cohesion     REAL,                   -- adjudicator subscore
   derivational_validity REAL,                   -- adjudicator subscore
   rebuttal_resilience   REAL,                   -- adjudicator subscore
@@ -177,6 +178,7 @@ CREATE TABLE IF NOT EXISTS synth_defs (
   ngram         TEXT    NOT NULL,
   cluster_id    INTEGER REFERENCES clusters(cluster_id) ON DELETE SET NULL,
   synth_def     TEXT    NOT NULL,               -- short gloss used for reconstruction
+  notes         TEXT,                           -- any kind of commentary necessary
   members       TEXT    NOT NULL,               -- JSON: [def_id, ...]
   method_meta   TEXT,                           -- JSON of best_config/method commentary
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -214,7 +216,15 @@ CREATE INDEX IF NOT EXISTS idx_raw_defs_cluster     ON raw_defs(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_raw_defs_source      ON raw_defs(source_word);
 CREATE INDEX IF NOT EXISTS idx_citations_def        ON citations(def_id);
 CREATE INDEX IF NOT EXISTS idx_skips_run_ngram      ON skips(run_id, ngram);
+CREATE INDEX IF NOT EXISTS idx_clusters_ngram_has_gloss
+ON clusters(ngram, cluster_id)
+WHERE TRIM(COALESCE(glossator_def, '')) <> '';
 
+-- Convenience view because why not
+CREATE VIEW IF NOT EXISTS accepted_clusters AS
+SELECT cluster_id, ngram, glossator_def
+FROM clusters
+WHERE TRIM(COALESCE(glossator_def, '')) <> '';
 """
 
 # -------------------------

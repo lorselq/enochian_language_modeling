@@ -4,7 +4,7 @@ import sqlite3
 import random
 import time
 import uuid, json, sys, platform, datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from collections import defaultdict
 from gensim.models import FastText
 from sentence_transformers import SentenceTransformer
@@ -21,6 +21,7 @@ from enochian_translation_team.utils.semantic_search import (
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index
+from enochian_translation_team.utils.def_reducer import consolidate_ngram_senses
 from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
 
 GOLD = "\033[38;5;178m"
@@ -29,6 +30,46 @@ YELLOW = "\033[38;5;190m"
 BLUE = "\033[38;5;153m"
 PINK = "\033[38;5;213m"
 RESET = "\033[0m"
+
+MAX_WORDS, MAX_CHARS = 5, 48
+STOPWORDS = {
+    "a",
+    "an",
+    "the",
+    "of",
+    "for",
+    "as",
+    "to",
+    "that",
+    "this",
+    "these",
+    "those",
+    "with",
+    "by",
+    "in",
+    "into",
+    "on",
+    "root",
+    "prefix",
+    "prefixal",
+    "morphological",
+    "compound",
+    "compounds",
+    "term",
+    "terms",
+    "serving",
+    "functions",
+    "denoting",
+    "indicating",
+    "conveys",
+    "modifies",
+    "role",
+    "providing",
+    "derived",
+    "describing",
+    "context",
+    "guidance",
+}
 
 
 def stream_text(text: str, delay: float = 0.001):
@@ -58,19 +99,18 @@ class RootExtractionCrew:
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.new_definitions_db = sqlite3.connect(paths[style])
         self._prepare_db(self.new_definitions_db)
-        self.run_id = self._begin_run(engine=style)
-
         self.subst_map = self.load_subst_map()
         self.fasttext = FastText.load(str(self.model_path))
-        self.sentence_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+        self.sentence_model_name = "paraphrase-MiniLM-L6-v2"
+        self.sentence_model = SentenceTransformer(self.sentence_model_name)
+        self.processed_ngrams = self.load_processed_ngrams()
         self.candidate_finder = MorphemeCandidateFinder(
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=self.model_path,
             dictionary_entries=self.entries,
         )
 
-        # Keep track of processed roots
-        self.processed_ngrams = self.load_processed_ngrams()
+        self.run_id = self._begin_run(engine=style)
 
     def _prepare_db(self, conn: sqlite3.Connection) -> None:
         """Set pragmatic SQLite settings for long runs."""
@@ -81,31 +121,16 @@ class RootExtractionCrew:
             conn.execute("PRAGMA temp_store=MEMORY;")
             conn.execute("PRAGMA mmap_size=268435456;")  # 256MB
 
-    def _begin_run(
-        self,
-        *,
-        engine: str,
-        run_name: str | None = None,
-        model_roles: dict | None = None,
-        params: dict | None = None,
-    ) -> str:
+    def _begin_run(self, *, engine: str) -> str:
         """Create a row in `runs` and store the id on `self.run_id`."""
         run_id = uuid.uuid4().hex
         # Try to recover a readable embedder name
-        embedder = getattr(self, "embedder_name", None)
-        if not embedder:
-            embedder = (
-                getattr(self.sentence_model, "name_or_path", None)
-                or getattr(
-                    getattr(self.sentence_model, "model_card_data", {}), "modelId", None
-                )
-                or "unknown"
-            )
+        embedder = self.sentence_model_name
 
         env_json = {
             "python": sys.version.split()[0],
             "platform": platform.platform(),
-            "sentence_transformers": self.sentence_model,
+            "sentence_transformers": self.sentence_model_name,
             "fasttext_model_path": str(getattr(self, "model_path", "")),
         }
 
@@ -113,16 +138,13 @@ class RootExtractionCrew:
             self.new_definitions_db.execute(
                 """
                 INSERT INTO runs (run_id, run_name, engine, embedder, env_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
-                    run_name
-                    or f"{engine}-{datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}Z",
+                    f"{engine}-{datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}Z",
                     engine,  # 'debate' or 'solo'
                     embedder,
-                    json.dumps(model_roles or {}),
-                    json.dumps(params or {}),
                     json.dumps(env_json),
                 ),
             )
@@ -158,7 +180,7 @@ class RootExtractionCrew:
                     overlap_count,
                 ),
             )
-            
+
     def _normalize_citation(self, c):
         """Return (location, context) from a variety of citation shapes."""
         if c is None:
@@ -167,12 +189,17 @@ class RootExtractionCrew:
         if isinstance(c, dict):
             loc = c.get("location") or c.get("folio") or c.get("page") or c.get("loc")
             ctx = c.get("context") or c.get("snippet") or c.get("text")
-            return (str(loc) if loc is not None else None, str(ctx) if ctx is not None else None)
+            return (
+                str(loc) if loc is not None else None,
+                str(ctx) if ctx is not None else None,
+            )
         # tuple/list
         if isinstance(c, (list, tuple)):
             if len(c) == 2:
-                return (str(c[0]) if c[0] is not None else None,
-                        str(c[1]) if c[1] is not None else None)
+                return (
+                    str(c[0]) if c[0] is not None else None,
+                    str(c[1]) if c[1] is not None else None,
+                )
             if len(c) == 1:
                 return (str(c[0]) if c[0] is not None else None, None)
         # plain string
@@ -180,7 +207,6 @@ class RootExtractionCrew:
             return (c, None)
         # fallback
         return (None, None)
-
 
     def load_processed_ngrams(self):
         try:
@@ -336,6 +362,7 @@ class RootExtractionCrew:
                 return item.get(field, default)
             else:
                 return getattr(item, field, default)
+
         trimmed_cluster = []
         anchor_entry = None
         ngram_lower = ngram.lower()
@@ -448,20 +475,19 @@ class RootExtractionCrew:
         the_result = {"raw_output": {}}
         if style == "debate":
             the_result = debate_ngram(
-                root=ngram[0],
-                candidates=trimmed_cluster,  # your cluster/candidate list
-                stats_summary=stats_summary,  # <-- required
+                root=ngram.upper(),
+                candidates=trimmed_cluster,
+                stats_summary=stats_summary,
                 stream_callback=stream_callback,
                 root_entry=None,  # can be None; debate engine will handle
-                # keep other keyword args if you’re using them:
                 # blind_evaluation=True,
                 # debate_lite=True,
             )
         else:
             the_result = solo_agent_ngram_analysis(
-                root=ngram[0],
+                root=ngram.upper(),
                 candidates=trimmed_cluster,
-                stats_summary=stats_summary,  # <-- required
+                stats_summary=stats_summary,
                 stream_callback=stream_callback,
                 root_entry=None,
             )
@@ -469,10 +495,10 @@ class RootExtractionCrew:
         # Normalize expected keys (be defensive)
         normalized = {
             "Glossator": the_result.get("Glossator", "") or "",
-            "Glossator_Model": the_result.get("Glossator_Model", "")
-            or the_result.get("model", ""),
-            "Glossator_Prompt": the_result.get("Glossator_Prompt", "")
-            or the_result.get("prompt", ""),
+            "Glossator_Model": the_result.get("Glossator_Model", ""),
+            "Glossator_Prompt": the_result.get("Glossator_Prompt", ""),
+            "Adjudicator": the_result.get("Adjudicator", ""),
+            "Adjudicator_Prompt": the_result.get("Adjudicator_Prompt", ""),
             "Archivist": the_result.get("Archivist", "") or "",
             "raw_output": the_result,
         }
@@ -485,8 +511,6 @@ class RootExtractionCrew:
         single_ngram=None,
         style="debate",
         min_semantic_similarity: float = 0.60,
-        local_model="[local_model]",
-        remote_model="[remote_model]",
     ):
         def _get_field(item, field, default=""):
             # Unified accessor for Entry objects and dicts.
@@ -507,7 +531,7 @@ class RootExtractionCrew:
         else:
             ngrams = sorted(
                 self.stream_ngrams_from_sqlite(min_freq=2),
-                key=lambda x: (-len(x[0]), -x[1], x[0]),
+                key=lambda x: (len(x[0]), -x[1], x[0]),
             )
 
         output = []
@@ -540,7 +564,7 @@ class RootExtractionCrew:
                 continue
             else:
                 stream_text(
-                    f"[✓] Beginning examination of root-word candidate {GOLD}{ngram[0].upper()}{RESET}.\n",
+                    f"[{GREEN}✓{RESET}] Beginning examination of root-word candidate {GOLD}{ngram[0].upper()}{RESET}.\n",
                     delay=0.005,
                 )
 
@@ -563,7 +587,7 @@ class RootExtractionCrew:
                     f" for '{GOLD}{ngram[0].upper()}{RESET}'; no sense in evaluating if it's the same set of words.\n\n"
                 )
                 stream_text(deduped_clusters_text)
-                
+
             clusters = unique
             best_config = clusters_result["config"]
 
@@ -660,10 +684,12 @@ class RootExtractionCrew:
 
                 merged_items = list(cluster) + index_candidates
 
+                seen_norms = set()
                 for word in merged_items:
                     norm = _get_field(word, "normalized", "").lower()
-                    if not norm:
+                    if not norm or norm in seen_norms:
                         continue
+                    seen_norms.add(norm)
 
                     sem_entry = next(
                         (c for c in cluster if _get_field(c, "normalized", "") == norm),
@@ -703,11 +729,17 @@ class RootExtractionCrew:
                         safe_list(index_entry.get("citations")) if index_entry else []
                     )
 
-                    citations = [
-                        c["context"].strip()
-                        for c in sem_cits + idx_cits
-                        if c["context"]
-                    ]
+                    citations = []
+                    #     c["context"].strip()
+                    #     for c in sem_cits + idx_cits
+                    #     if c["context"]
+                    # ]
+                    for cit in sem_cits + idx_cits:
+                        if isinstance(cit, dict):
+                            loc = cit.get("location") or None
+                            ctx = (cit.get("context") or "").strip() or None
+                            if loc or ctx:
+                                citations.append({"location": loc, "context": ctx})
 
                     if sem_entry:
                         definition = sem_entry["definition"]
@@ -738,7 +770,9 @@ class RootExtractionCrew:
                         {
                             "word": (
                                 f"{variant_used.upper()}"
-                                if variant_used and variant_used.lower() != word.lower() # .lower() for word might be redundant but oh well
+                                if variant_used
+                                and variant_used.lower()
+                                != norm.lower()  # .lower() for word might be redundant but oh well
                                 else f"{norm.upper()}"
                             ),
                             "normalized": norm.upper(),
@@ -804,14 +838,20 @@ class RootExtractionCrew:
                 )
 
                 sem_count = sum(
-                    1 for c in merged_cluster if _get_field(c, "source", "") in ("semantic", "both")
+                    1
+                    for c in merged_cluster
+                    if _get_field(c, "source", "") in ("semantic", "both")
                 )
                 idx_count = sum(
-                    1 for c in merged_cluster if _get_field(c, "source", "") in ("index", "both")
+                    1
+                    for c in merged_cluster
+                    if _get_field(c, "source", "") in ("index", "both")
                 )
-                overlap_count = sum(1 for c in cluster if _get_field(c, "source", "") == "both")
+                overlap_count = sum(
+                    1 for c in cluster if _get_field(c, "source", "") == "both"
+                )
                 clustering_meta_json = json.dumps(best_config)
-                
+
                 evaluated = self.evaluate_ngram(
                     ngram[0],
                     cluster=merged_cluster,
@@ -867,7 +907,6 @@ class RootExtractionCrew:
                     )
                 #                self.save_results(output)
 
-                
                 cursor = self.new_definitions_db.cursor()
 
                 cursor.execute(
@@ -888,7 +927,7 @@ class RootExtractionCrew:
                         cohesion,
                         semantic_coverage,
                         best_config
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         self.run_id,
@@ -897,15 +936,21 @@ class RootExtractionCrew:
                         sem_count,
                         idx_count,
                         overlap_count,
-                        evaluated["Glossator_Prompt"] or evaluated["raw_output"].get("Glossator_Prompt"),
-                        evaluated["Glossator_Model"] or evaluated["raw_output"].get("Glossator_Model"),
-                        evaluated["Adjudicator_Prompt"] or evaluated["raw_output"].get("Adjudicator_Prompt"),
-                        evaluated["Glossator_Model"] or evaluated["raw_output"].get("Glossator_Model"),
-                        evaluated["Glossator"] or evaluated["raw_output"].get("Glossator"),
-                        evaluated["Adjudicator"] or evaluated["raw_output"].get("Adjudicator"),
+                        evaluated["Glossator_Prompt"]
+                        or evaluated["raw_output"].get("Glossator_Prompt"),
+                        evaluated["Glossator_Model"]
+                        or evaluated["raw_output"].get("Glossator_Model"),
+                        evaluated["Adjudicator_Prompt"]
+                        or evaluated["raw_output"].get("Adjudicator_Prompt"),
+                        evaluated["Glossator_Model"]
+                        or evaluated["raw_output"].get("Glossator_Model"),
+                        evaluated["Glossator"]
+                        or evaluated["raw_output"].get("Glossator"),
+                        evaluated["Adjudicator"]
+                        or evaluated["raw_output"].get("Adjudicator"),
                         cohesion_score,
                         semantic_coverage,
-                        clustering_meta_json
+                        clustering_meta_json,
                     ),
                 )
 
@@ -918,6 +963,7 @@ class RootExtractionCrew:
                         INSERT INTO raw_defs (
                             cluster_id,
                             source_word,
+                            variant,
                             definition,
                             enhanced_def,
                             fasttext,
@@ -927,27 +973,31 @@ class RootExtractionCrew:
                         """,
                         (
                             cluster_rowid,
-                            entry["normalized"].upper(), # canonical appearance
-                            entry["word"].upper(), # variant, if applicable
-                            entry["definition"],
-                            entry["enhanced_definition"],
-                            entry.get("fasttext", 0.0),
-                            entry.get("semantic", 0.0),
-                            entry.get("tier", ""),
+                            entry["normalized"].upper(),  # canonical appearance
+                            (
+                                entry["word"].upper()
+                                if entry["normalized"].upper() == entry["word"].upper()
+                                else ""
+                            ),  # variant if applicable
+                            entry.get("definition", "") or "",
+                            entry.get("enhanced_definition", "") or "",
+                            float(entry.get("fasttext", 0.0)),
+                            float(
+                                max(entry.get("semantic", 0.0), entry.get("score", 0.0))
+                            ),
+                            entry.get("tier", "[no tiering given]"),
                         ),
                     )
 
                     raw_def_id = cursor.lastrowid
 
                     # Insert this entry's citations → citations(def_id, location, context)
-                    cits = entry.get("citations") or []
                     rows = []
-                    for c in cits:
-                        loc, ctx = self._normalize_citation(c)
-                        if loc is None and ctx is None:
-                            continue
-                        rows.append((raw_def_id, loc, ctx))
-
+                    for c in entry.get("citations") or []:
+                        loc = c.get("location") if isinstance(c, dict) else None
+                        ctx = c.get("context") if isinstance(c, dict) else None
+                        if loc or ctx:
+                            rows.append((raw_def_id, loc, ctx))
                     if rows:
                         cursor.executemany(
                             "INSERT INTO citations (def_id, location, context) VALUES (?,?,?)",
@@ -959,6 +1009,12 @@ class RootExtractionCrew:
             self.processed_ngrams.add(ngram[0])
             self.save_processed_ngrams()
             seen_words += 1
+
+            # consolidate definitions into synth_defs
+            # MAYBE IMPLEMENT LATER AS PART OF A CLEANUP PROCESS ONCE DB IS FINISHED??
+            # consolidate_ngram_senses(
+            #     self.new_definitions_db, ngram[0], sentence_model=self.sentence_model
+            # )
 
             if max_words and seen_words >= max_words:
                 break
