@@ -3,6 +3,7 @@ import sys
 import logging
 import httpx
 import random
+import time
 from yaspin import yaspin, Spinner
 from yaspin.spinners import Spinners
 from tenacity import retry, stop_after_attempt, wait_exponential, RetryCallState
@@ -301,7 +302,7 @@ class QueryModelTool(BaseTool):
             )
         except Exception:
             # exit if out of OpenRouter calls
-            print("⚠️ {YELLOW}Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡")
+            print(f"⚠️ [{time.ctime()}] Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡")
             sys.exit()
             # fallback to local
             # print(
