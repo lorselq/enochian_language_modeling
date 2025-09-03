@@ -217,6 +217,7 @@ class QueryModelTool(BaseTool):
             ],
             temperature=0.0,
             stream=True,
+            reasoning_effort="high" if role == "Glossator" else "medium",
         )
 
         print(
