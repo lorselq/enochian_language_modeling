@@ -462,7 +462,7 @@ class RootExtractionCrew:
         )
 
         stats_summary = self._build_stats_summary(
-            ngram[0],  # or ngram if iterating strings
+            ngram,  # or ngram if iterating strings
             cluster_size=len(cluster),
             cohesion_score=cohesion_score,
             semantic_hits=semantic_hits,

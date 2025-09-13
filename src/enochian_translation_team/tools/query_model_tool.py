@@ -145,12 +145,12 @@ class QueryModelTool(BaseTool):
                         "  👉👈  🥺",
                         "  👉👈  🥺",
                         " 👉  👈 🥺",
-                    ], # type: ignore
+                    ],  # type: ignore
                     175,
                 ),
                 text=chosen_shy_text,
                 ellipsis="...",
-            ), 
+            ),
             "EARTH": yaspin(Spinners.earth, text=chosen_earth_text, ellipsis="..."),
             "MOON": yaspin(Spinners.moon, text=chosen_moon_text, ellipsis="..."),
         }
@@ -217,7 +217,9 @@ class QueryModelTool(BaseTool):
             ],
             temperature=0.0,
             stream=True,
-            reasoning_effort="high" if role == "Glossator" else "medium",
+            reasoning_effort=(
+                "high" if (role == "Glossator" or role == "Adjudicator") else "medium"
+            ),
         )
 
         print(
@@ -303,7 +305,9 @@ class QueryModelTool(BaseTool):
             )
         except Exception:
             # exit if out of OpenRouter calls
-            print(f"⚠️ [{time.ctime()}] Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡")
+            print(
+                f"⚠️ [{time.ctime()}] Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡"
+            )
             sys.exit()
             # fallback to local
             # print(
