@@ -1,22 +1,34 @@
 # Enochian Language Modeling: Experimental Computational Philology
 
 ## Overview
-This project explores computational approaches to deciphering *Liber Loagaeth*, a 16th-century manuscript associated with John Dee and Edward Kelley. Rather than pursuing esoteric interpretations of the undeciphered corpus, this research treats it as a **synthetic, low-resource linguistic corpus**—an experimental setting for semantic structure discovery, root-word extraction, and agent-driven linguistic modeling.
+This project explores computational approaches to deciphering *Liber Loagaeth*, a 16th-century manuscript associated with John Dee and Edward Kelley. Rather than pursuing esoteric interpretations of the undeciphered corpus, this research treats it as a **synthetic, low-resource linguistic corpus**—an experimental setting for semantic structure discovery, root-word extraction, and AI-driven linguistic modeling.
 
-The precise linguistic status of *Liber Loagaeth* remains uncertain. Its language differs markedly from the better-known Enochian Keys, and scholarly consensus generally regards the text as nonsensical or glossolalic—possibly a deliberate linguistic artifice. This project does not seek to contest this interpretation. Instead, *Liber Loagaeth* provides a challenging, bounded dataset for exploring how AI systems can infer meaningful semantic relationships and construct speculative lexicons from irregular, anomalous text data. Such experiments offer methodological insights into computational semantic analysis, low-resource language modeling, and broader digital humanities applications.
+The precise linguistic status of *Liber Loagaeth* remains uncertain. Its linguistic flavor differs from that of the better-known Enochian Keys, and scholarly consensus generally regards the *Liber Loagaeth* as either impossible cryptography or nonsensical glossolalia. 
+
+This project does not seek to contest this interpretation. Instead, *Liber Loagaeth* provides a challenging, bounded dataset for exploring how AI systems can infer meaningful semantic relationships and construct speculative lexicons from irregular, anomalous text data. Such experiments offer methodological insights into computational semantic analysis, low-resource language modeling, and broader digital humanities applications.
 
 ## Project Goals
-- **Semantic Structure Discovery:** Identify plausible root morphemes and semantic clusters within the linguistic corpus.
-- **Experimental Lexicon Building:** Construct an AI-assisted speculative lexicon through pattern recognition, semantic proximity, and agentic validation.
-- **Agent-Based Linguistic Modeling:** Simulate multi-agent debates (and compare with single-agent "Solo Mode") to propose, validate, and refine candidate root structures.
-- **Low-Resource Language Methods:** Develop and evaluate computational methods suitable for texts with limited ground-truth data, irregular morphological patterns, and historical ambiguity.
+**Current phase**:
+- Identify plausible root morphemes via examination of semantic clusters within the linguistic corpus.
+- Evaluate whether single-agent analysis or multi-agent debates yields better proposals for candidate root structures.
+- Construct an AI-assisted speculative lexicon through pattern recognition, semantic proximity, and agentic validation.
+- Develop and evaluate computational methods suitable for texts with limited ground-truth data, irregular morphological patterns, and historical ambiguity.
+
+Goals in the current phase are mostly complete, e.g., solo analysis has finished (but requires data wrangling), but analysis via debate is still underway and may take a while due to resource constraints.
+
+**Future phases**:
+- Construct an expanded dictionary of Enochian morphemes and words.
+- Use the expanded dictionary as part of an AI-driven attempt to provide a "blind" translation of the Enochian Keys.
+- Upon successful translation, aim the translation program at Liber Loagaeth to see if translation of any amount cannot be performed.
+
+Goals in the future phases section are covered in more detail later in this document.
 
 ## Core Components
 
 ### Embedding and Semantic Modeling (Foundational Stage)
-- **FastText Embeddings:** Generated from a limited glossary (~800–1300 entries) based on *Angelical Language Vol. II* by Aaron Leitch, an adjacent corpus with rough translations.
-- **Semantic Proximity Analysis:** Calculation of semantic similarities via dynamic clustering methods—including k-nearest neighbors (kNN), agglomerative clustering, fuzzy clustering, and others—selected through automatic parameter tuning.
-- **Data Preparation for Agent-Driven Extraction:** Clustering of potential morphemes to serve as input for agentic debates and validations.
+- FastText embeddings generated from a limited glossary (~800–1300 entries) based on *Angelical Language Vol. II* by Aaron Leitch, an adjacent corpus with rough translations.
+- Calculation of semantic similarities via dynamic clustering methods—including k-nearest neighbors (kNN), agglomerative clustering, fuzzy clustering, and others—selected through automatic parameter tuning.
+- Clustering of potential morphemes to serve as input for agentic debates and solo analysis.
 
 ### Agent-Based Root Extraction (Root Inference and Validation)
 A simulated AI team operates in two distinct modes:
@@ -30,21 +42,19 @@ A simulated AI team operates in two distinct modes:
 **Solo Mode:**  
 - A single-agent configuration where a designated linguistic expert reviews and directly adjudicates root candidates without debate, intended as a methodological contrast to the Debate Mode.
 
-Comparative studies between Solo and Debate modes are anticipated as future research avenues, exploring efficiency, quality of definitions, and methodological robustness.
-
 ## Methodology
-- **Bottom-Up Semantic Modeling:** Inferring semantic structures from recurring substrings (n-grams) and semantic proximity metrics without presupposing fixed linguistic rules.
-- **Pattern Recognition and Morphological Analysis:** Identifying stems, derivatives, and root candidates by analyzing morphological and semantic regularities across clusters.
+- **Bottom-Up Semantic Modeling**, where semantic structures are inferred from recurring substrings (n-grams) and semantic proximity metrics without presupposing fixed linguistic rules.
+- **Pattern Recognition and Morphological Analysis** through identifying stems, derivatives, and root candidates by analyzing morphological and semantic regularities across clusters.
 - **Semantic Clustering (Dynamic Tuning):** Dynamically adjusting and selecting clustering methods (kNN, agglomerative, fuzzy) to propose robust candidate root groups.
 - **SQLite Database for Data Recording:** Systematic logging of agent deliberations, accepted/rejected definitions, and clustering metadata for reproducibility and further analysis.
 
-## Current Status
+## Current Accomplishments
 - **Dictionary Foundation:** Established initial lexicon from Aaron Leitch's *Angelical Language Vol. II*.
 - **Ngram Generation:** Robust n-gram indexing including morphological variants derived from John Dee's irregular spellings.
 - **Embedding Infrastructure:** Functional FastText embedding pipelines producing promising initial semantic analyses.
 - **Dynamic Clustering:** Implementation and testing of multiple clustering methods with automatic parameter tuning, selecting optimal methods based on internal cluster consistency metrics.
 - **Agent Modes:** Both Debate and Solo modes fully implemented; comparative analyses planned as future research.
-- **CLI Enhancements:** Improved terminal interface for smoother operation, enhancing readability and significantly reducing unnecessary remote API calls to external LLM services.
+- **CLI Enhancements:** Improved terminal interface for smoother operation and enhanced readability.
 
 ## Future Work and Phased Development
 
@@ -55,7 +65,7 @@ Comparative studies between Solo and Debate modes are anticipated as future rese
 ### Phase Two: Lexicon Refinement and Semantic Reconstruction
 With a complete speculative root-word lexicon in place, subsequent efforts will focus on refining and standardizing dictionary entries. Human-in-the-loop semantic validation and curation will ensure consistent lexical quality and facilitate practical linguistic reconstruction tasks.
 
-A central methodological validation will involve a "blind retranslation" exercise, reinterpreting the previously translated *Enochian Keys* exclusively using newly derived root meanings, without recourse to historical translations. This test case aims to empirically validate the semantic viability and internal consistency of the speculative lexicon.
+A central methodological validation will involve a "blind retranslation" exercise, reinterpreting the previously translated Enochian Keys exclusively using newly derived root meanings, without recourse to historical translations. This test case aims to empirically validate the viability and internal consistency of the speculative lexicon.
 
 #### Anticipated Side-Projects and Additional Experiments
 - **Solo vs. Debate Comparative Analysis:** Investigate whether multi-agent debates yield superior semantic quality compared to single-agent evaluations.
