@@ -33,6 +33,7 @@ from typing import Dict, Iterable, Tuple
 # Paths
 # -------------------------
 
+
 def DB_PATH(file_name: str = "debate_derived_definitions.sqlite3") -> str:
     """
     Build an absolute path into your repo's data/ directory.
@@ -50,9 +51,11 @@ def DB_PATH(file_name: str = "debate_derived_definitions.sqlite3") -> str:
         )
     )
 
+
 # -------------------------
 # Helpers
 # -------------------------
+
 
 def _open(db_path: str) -> sqlite3.Connection:
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -62,12 +65,14 @@ def _open(db_path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous = NORMAL;")
     return conn
 
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     cur = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ? LIMIT 1;",
         (table,),
     )
     return cur.fetchone() is not None
+
 
 def _index_exists(conn: sqlite3.Connection, name: str) -> bool:
     cur = conn.execute(
@@ -76,35 +81,101 @@ def _index_exists(conn: sqlite3.Connection, name: str) -> bool:
     )
     return cur.fetchone() is not None
 
-def _columns(conn: sqlite3.Connection, table: str) -> Dict[str, Tuple[int,str,int,int,str]]:
+
+def _columns(
+    conn: sqlite3.Connection, table: str
+) -> Dict[str, Tuple[int, str, int, int, str]]:
     """
     Return PRAGMA table_info columns mapping: {name: (cid, name, type, notnull, dflt_value, pk)}
     """
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
     return {r[1]: r for r in rows}
 
-def _add_column_if_missing(conn: sqlite3.Connection, table: str, col: str, decl: str) -> None:
+
+def _add_column_if_missing(
+    conn: sqlite3.Connection, table: str, col: str, decl: str
+) -> None:
     cols = _columns(conn, table)
     if col not in cols:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl};")
+
 
 def _create_index_if_missing(conn: sqlite3.Connection, name: str, ddl: str) -> None:
     if not _index_exists(conn, name):
         conn.execute(ddl)
 
+
 def _fts5_available(conn: sqlite3.Connection) -> bool:
     try:
-        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS __fts5_smoketest USING fts5(x);")
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS __fts5_smoketest USING fts5(x);"
+        )
         conn.execute("DROP TABLE __fts5_smoketest;")
         return True
     except sqlite3.DatabaseError:
         return False
 
+
+def _infer_variant_from_path(path: str) -> str:
+    if "solo" in path.lower():
+        return "solo"
+    return "debate"
+
+
 # -------------------------
 # Schema DDL (fresh create)
 # -------------------------
 
-SCHEMA_CREATE = """
+CLUSTERS_DEBATE = """
+CREATE TABLE IF NOT EXISTS clusters (
+  cluster_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id                TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  ngram                 TEXT NOT NULL,
+  cluster_index         INTEGER NOT NULL,
+  sem_count             INTEGER,
+  idx_count             INTEGER,
+  overlap_count         INTEGER,
+  glossator_prompt      TEXT,
+  glossator_model       TEXT,
+  adjudicator_prompt    TEXT,
+  adjudicator_model     TEXT,
+  glossator_def         TEXT,
+  adjudicator_output    TEXT,
+  adjudicator_verdict   TEXT,
+  semantic_cohesion     REAL,
+  derivational_validity REAL,
+  rebuttal_resilience   REAL,
+  cohesion              REAL,
+  semantic_coverage     REAL,
+  best_config           TEXT,
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (run_id, ngram, cluster_index)
+);
+"""
+
+CLUSTERS_SOLO = """
+CREATE TABLE IF NOT EXISTS clusters (
+  cluster_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id                TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  ngram                 TEXT NOT NULL,
+  cluster_index         INTEGER NOT NULL,
+  sem_count             INTEGER,
+  idx_count             INTEGER,
+  overlap_count         INTEGER,
+  glossator_prompt      TEXT,
+  glossator_model       TEXT,
+  glossator_def         TEXT,
+  semantic_cohesion     REAL,
+  derivational_validity REAL,
+  cohesion              REAL,
+  semantic_coverage     REAL,
+  best_config           TEXT,
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (run_id, ngram, cluster_index)
+);
+"""
+
+SCHEMA_CREATE = f"""
 -- Ensure foreign keys
 PRAGMA foreign_keys = ON;
 
@@ -120,34 +191,7 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 
 -- 1) Clusters: one row per evaluated cluster of an n-gram
-CREATE TABLE IF NOT EXISTS clusters (
-  cluster_id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id                TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-  ngram                 TEXT NOT NULL,
-  cluster_index         INTEGER NOT NULL,       -- ordinal within ngram
-  -- evidence size metrics (for gate logging & later filtering)
-  sem_count             INTEGER,                -- semantic cluster size
-  idx_count             INTEGER,                -- index cluster size
-  overlap_count         INTEGER,                -- intersection size
-  -- prompt/model echoes (optional but handy)
-  glossator_prompt      TEXT,
-  glossator_model       TEXT,
-  adjudicator_prompt    TEXT,
-  adjudicator_model     TEXT,
-  -- glossator / adjudicator outcomes
-  glossator_def         TEXT,                   -- short synthesized gloss
-  adjudicator_output    TEXT,                   -- just output of the adjudicator
-  adjudicator_verdict   TEXT,                   -- extracted verdict
-  semantic_cohesion     REAL,                   -- adjudicator subscore
-  derivational_validity REAL,                   -- adjudicator subscore
-  rebuttal_resilience   REAL,                   -- adjudicator subscore
-  -- your own pre-adjudication signals
-  cohesion              REAL,                   -- mean cosine (upper triangle)
-  semantic_coverage     REAL,                   -- fraction of members covered
-  best_config           TEXT,                   -- JSON blob or string repr
-  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (run_id, ngram, cluster_index)
-);
+[[[CLUSTERS_BLOCK]]]
 
 -- 2) Raw definitions: never mix judgments here
 CREATE TABLE IF NOT EXISTS raw_defs (
@@ -261,6 +305,7 @@ END;
 # Migration helpers
 # -------------------------
 
+
 def _migrate_add_missing_columns(conn: sqlite3.Connection) -> None:
     """
     For existing databases, add new columns that did not exist previously.
@@ -299,6 +344,7 @@ def _migrate_add_missing_columns(conn: sqlite3.Connection) -> None:
         for col, decl in raw_defs_new_cols.items():
             _add_column_if_missing(conn, "raw_defs", col, decl)
 
+
 def _ensure_fts5(conn: sqlite3.Connection) -> None:
     if _fts5_available(conn):
         conn.executescript(SCHEMA_FTS5)
@@ -306,9 +352,11 @@ def _ensure_fts5(conn: sqlite3.Connection) -> None:
         # FTS5 not available; we just skip without failing.
         pass
 
+
 # -------------------------
 # Public API
 # -------------------------
+
 
 def init_db(path: str) -> None:
     """
@@ -316,13 +364,22 @@ def init_db(path: str) -> None:
     """
     with _open(path) as conn:
         try:
-            conn.executescript(SCHEMA_CREATE)
+            schema = SCHEMA_CREATE.replace(
+                "[[[CLUSTERS_BLOCK]]]",
+                (
+                    CLUSTERS_SOLO
+                    if _infer_variant_from_path(path) == "solo"
+                    else CLUSTERS_DEBATE
+                ),
+            )
+            conn.executescript(schema)
             _migrate_add_missing_columns(conn)
             _ensure_fts5(conn)
         except sqlite3.Error as e:
             raise RuntimeError(f"Database initialization failed: {e}") from e
 
     print(f"Initialized insights DB at {path}")
+
 
 # -------------------------
 # CLI

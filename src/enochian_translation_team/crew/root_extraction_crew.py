@@ -31,46 +31,6 @@ BLUE = "\033[38;5;153m"
 PINK = "\033[38;5;213m"
 RESET = "\033[0m"
 
-MAX_WORDS, MAX_CHARS = 5, 48
-STOPWORDS = {
-    "a",
-    "an",
-    "the",
-    "of",
-    "for",
-    "as",
-    "to",
-    "that",
-    "this",
-    "these",
-    "those",
-    "with",
-    "by",
-    "in",
-    "into",
-    "on",
-    "root",
-    "prefix",
-    "prefixal",
-    "morphological",
-    "compound",
-    "compounds",
-    "term",
-    "terms",
-    "serving",
-    "functions",
-    "denoting",
-    "indicating",
-    "conveys",
-    "modifies",
-    "role",
-    "providing",
-    "derived",
-    "describing",
-    "context",
-    "guidance",
-}
-
 
 def stream_text(text: str, delay: float = 0.001):
     for c in text:
@@ -247,6 +207,18 @@ class RootExtractionCrew:
                 if ngram not in self.processed_ngrams and not re.search(r"\d", ngram):
                     ngrams.add(ngram)
         return ngrams
+
+    def _extract_evaluation(self, s: str) -> str | None:
+        # 1) Try strict JSON first
+        try:
+            obj = json.loads(s)
+            return obj.get("EVALUATION") or obj.get("evaluation")
+        except json.JSONDecodeError:
+            pass
+
+        # 2) Fallback: pull it directly from text (case-insensitive)
+        m = re.search(r'"(?i:evaluation)"\s*:\s*"([^"]+)"', s)
+        return m.group(1) if m else None
 
     def stream_ngrams_from_sqlite(self, min_freq=2):
         cursor = self.ngram_db.cursor()
@@ -890,12 +862,9 @@ class RootExtractionCrew:
                         style=style,
                     )
                 elif style == "solo":
-                    txt = evaluated["Glossator"].strip().lower()
-                    verdict = (
-                        txt.startswith("✅ accepted")
-                        or txt.startswith("accepted")
-                        or "✅" in txt
-                    )
+                    txt = self._extract_evaluation(evaluated["Glossator"].strip().lower())
+                    print(f"\n\n[Debug] Just so you know: {txt}\n\n")
+                    verdict = "accept" in txt.lower() if txt else False
                     save_log(
                         evaluated["Archivist"]
                         or evaluated["raw_output"].get("Archivist"),
@@ -909,50 +878,87 @@ class RootExtractionCrew:
 
                 cursor = self.new_definitions_db.cursor()
 
-                cursor.execute(
-                    """
-                    INSERT INTO clusters (
-                        run_id,
-                        ngram,
-                        cluster_index,
-                        sem_count,
-                        idx_count,
-                        overlap_count,
-                        glossator_prompt,
-                        glossator_model,
-                        adjudicator_prompt,
-                        adjudicator_model,
-                        glossator_def,
-                        adjudicator_verdict,
-                        cohesion,
-                        semantic_coverage,
-                        best_config
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        self.run_id,
-                        ngram[0].upper(),
-                        cluster_id,
-                        sem_count,
-                        idx_count,
-                        overlap_count,
-                        evaluated["Glossator_Prompt"]
-                        or evaluated["raw_output"].get("Glossator_Prompt"),
-                        evaluated["Glossator_Model"]
-                        or evaluated["raw_output"].get("Glossator_Model"),
-                        evaluated["Adjudicator_Prompt"]
-                        or evaluated["raw_output"].get("Adjudicator_Prompt"),
-                        evaluated["Glossator_Model"]
-                        or evaluated["raw_output"].get("Glossator_Model"),
-                        evaluated["Glossator"]
-                        or evaluated["raw_output"].get("Glossator"),
-                        evaluated["Adjudicator"]
-                        or evaluated["raw_output"].get("Adjudicator"),
-                        cohesion_score,
-                        semantic_coverage,
-                        clustering_meta_json,
-                    ),
-                )
+                if style == "debate":
+                    cursor.execute(
+                        """
+                        INSERT INTO clusters (
+                            run_id,
+                            ngram,
+                            cluster_index,
+                            sem_count,
+                            idx_count,
+                            overlap_count,
+                            glossator_prompt,
+                            glossator_model,
+                            adjudicator_prompt,
+                            adjudicator_model,
+                            glossator_def,
+                            adjudicator_verdict,
+                            cohesion,
+                            semantic_coverage,
+                            best_config
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            self.run_id,
+                            ngram[0].upper(),
+                            cluster_id,
+                            sem_count,
+                            idx_count,
+                            overlap_count,
+                            evaluated["Glossator_Prompt"]
+                            or evaluated["raw_output"].get("Glossator_Prompt"),
+                            evaluated["Glossator_Model"]
+                            or evaluated["raw_output"].get("Glossator_Model"),
+                            evaluated["Adjudicator_Prompt"]
+                            or evaluated["raw_output"].get("Adjudicator_Prompt"),
+                            evaluated["Glossator_Model"]
+                            or evaluated["raw_output"].get("Glossator_Model"),
+                            evaluated["Glossator"]
+                            or evaluated["raw_output"].get("Glossator"),
+                            evaluated["Adjudicator"]
+                            or evaluated["raw_output"].get("Adjudicator"),
+                            cohesion_score,
+                            semantic_coverage,
+                            clustering_meta_json,
+                        ),
+                    )
+                elif style == "solo":
+                    cursor.execute(
+                        """
+                        INSERT INTO clusters (
+                            run_id,
+                            ngram,
+                            cluster_index,
+                            sem_count,
+                            idx_count,
+                            overlap_count,
+                            glossator_prompt,
+                            glossator_model,
+                            glossator_def,
+                            cohesion,
+                            semantic_coverage,
+                            best_config
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            self.run_id,
+                            ngram[0].upper(),
+                            cluster_id,
+                            sem_count,
+                            idx_count,
+                            overlap_count,
+                            evaluated["Glossator_Prompt"]
+                            or evaluated["raw_output"].get("Glossator_Prompt"),
+                            evaluated["Glossator_Model"]
+                            or evaluated["raw_output"].get("Glossator_Model"),
+                            evaluated["Glossator"]
+                            or evaluated["raw_output"].get("Glossator"),
+                            cohesion_score,
+                            semantic_coverage,
+                            clustering_meta_json,
+                        ),
+                    )
 
                 cluster_rowid = cursor.lastrowid
 

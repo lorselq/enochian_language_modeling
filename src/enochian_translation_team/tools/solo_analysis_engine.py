@@ -131,74 +131,99 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
     # === TASK ===
     do_it_all = Task(
         description=(
-            f"""
-### Role
-You are the Chief Enochian Lexicographer—a scholar with final authority over root word validation and definition. Your decisions shape the future of Enochian linguistic research.
+            f"""Respond with one JSON object only—no prose, no Markdown, no comments.
+If uncertain or any constraint cannot be met, set "evaluation": "rejected".
 
-### Task
-Evaluate the proposed root **{root.upper()}** using **strict-but-gracious standards** for micro-corpus constructed languages. Choose **ONE** action:
+You are the Chief Enochian Lexicographer and GLOSSATOR. Use only internal Enochian evidence provided below. Apply strict-but-gracious micro-corpus standards.
 
-❌ **REJECT**  |  If core semantic/language issues exist (see rules)
-✅ **DEFINE**  |  If root clears validation: Write compact dictionary entry for '{root.upper()}'
+INPUT
 
-### Validation Rules
-**MUST ACCEPT IF ALL ARE TRUE:**
-1. 🟢 **Semantic Core** - At least 70% of the related words form coherent concept (abstract OK)
-2. 🟢 **Minimal Morphology** - Existence of ≥1 derivational pattern (suffix/prefix/infix)  
-3. 🟢 **No Contradictions** - No incompatible meanings (e.g., "light" vs "dark" in same root)
+Root: {root.upper()}
 
-**IMMEDIATE REJECTION ONLY IF:**
-1. 🔴 >30% words show irreconcilable meaning scatter
-2. 🔴 0 derivational patterns
-3. 🔴 Abundance of counter-evidence present to accept the root's meaning
+Special notes: {extra_prompt if extra_prompt else 'none'}
 
-**IGNORE THESE PERMANENTLY:**
-- Morphological consistency with other roots
-- Absence of cross-language cognates
-- Unusual infixation (e.g., a pattern like AR-__-S)
+Candidates (contain {root.upper()}): {candidate_list}
 
-### Input Data
-**Root:** {root.upper()}
-**Special notes:** {extra_prompt if extra_prompt else 'none'}
-**Words containing {root.upper()}:** {candidate_list}
-**Related Definitions & Citations:**
-{root_def_summary}
+Related definitions & citations: {root_def_summary}
 
-### Metrics and Historical Linguistic Context
+Metrics & context: {about_enochiana} {about_metrics}
 
-{about_enochiana}
-{about_metrics}
+VALIDATION RULES
 
+MUST ACCEPT IF ALL TRUE
 
-### Output Format
-<<<
-[ACTION]  # ❌ REJECT or ✅ DEFINE
+≥70% of related words cohere semantically (abstract OK)
 
-// IF REJECTED:
-[1-sentence reason per rejection trigger]
+≥1 derivational pattern (prefix/suffix/infix)
 
-// IF DEFINED:
-**{root.upper()}** - [Core meaning]. 
-Function: [Morph role: root/infix/etc.] 
-Guides decoding by: [How it modifies compounds, e.g., "denotes governance concepts"] 
-Patterns: [Affixes like -AM/-ORI with functions]
-Semantic core: [Cohesive concept, e.g., "hierarchical control"]
->>>
+No incompatible meanings (e.g., “light” vs “dark”)
+
+IMMEDIATE REJECTION IF ANY TRUE
+
+30% irreconcilable meaning scatter
+
+0 derivational patterns
+
+Abundant counter-evidence against proposed core meaning
+
+IGNORE PERMANENTLY
+
+Cross-root morphological consistency
+
+External cognates/etymologies
+
+Unusual infixation patterns
+
+OUTPUT (JSON ONLY; use double quotes; no trailing commas)
+
+If "evaluation":"rejected" → populate "reason" with the reason for the rejection. Fill remaining fields as either "" or [] as appropriate
+
+If "evaluation":"accepted" → populate "reason" with the reason for acceptance. Fill remaining fields per the schema
+
+Numeric scores are floats 0.00–1.00.
 """
+            "{\n"
+            f'  "ROOT": "{root.upper()}",'
+            """
+  "EVALUATION": "<accepted/rejected>",
+  "REASON": "<1-3 sentences explaining the reason for the evaluation selected>",
+  "DEFINITION": "<1-3 sentences of core semantics; no negatives>",  
+  "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
+  "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
+  "SIGNATURE": {
+    "position": "prefix|infix|suffix|root|particle|variable",
+    "boundness": "bound|clitic|free|unknown",
+    "slot": "initial|medial|final|mixed",
+    "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
+    "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
+  },
+  "NEGATIVE_CONTRAST": ["max 2 phrases (e.g., 'non-temporal', 'non-agentive')"]
+}
+
+CONSTRAINTS
+- Use only data in INPUT; no external etymologies or languages.
+- Do not cite or invent Enochian items beyond {candidate_list}.
+- Be concise; no hedging. If any required field cannot be confidently filled, set "evaluation":"rejected"."""
         ),
-        expected_output="""
-[ACTION]  # ❌ REJECT or ✅ DEFINE
-
-// IF REJECTED:
-[1-sentence reason per rejection trigger]
-
-// IF DEFINED:
-**{root.upper()}** - [Core meaning]. 
-Function: [Morph role: root/infix/etc.] 
-Guides decoding by: [How it modifies compounds, e.g., "denotes governance concepts"] 
-Patterns: [Affixes like -AM/-ORI with functions]
-Semantic core: [Cohesive concept, e.g., "hierarchical control"]
-""",
+        expected_output=(
+            "{\n"
+            f'  "ROOT": "{root.upper()}",'
+            """
+  "EVALUATION": "<accepted/rejected>",
+  "REASON": "<1-3 sentences explaining the reason for the evaluation selected>",
+  "DEFINITION": "<1-3 sentences of core semantics; no negatives>",  
+  "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
+  "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
+  "SIGNATURE": {
+    "position": "prefix|infix|suffix|root|particle|variable",
+    "boundness": "bound|clitic|free|unknown",
+    "slot": "initial|medial|final|mixed",
+    "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
+    "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
+  },
+  "NEGATIVE_CONTRAST": ["max 2 phrases (e.g., 'non-temporal', 'non-agentive')"]
+}"""
+        ),
     )
 
     # === Direct Tool Access with Streaming ===
