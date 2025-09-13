@@ -253,7 +253,8 @@ HYPOTHESIS: <one-sentence candidate meaning>
 EVIDENCE: <up to 5 bullets; each bullet names {root.upper()} and provides an argument, citing relevant fasttext, semantic, or tier>
 COUNTEREVIDENCE: <up to 2 bullets; optional>
 CONFIDENCE: <0.00–1.00>
-"""),
+""",
+        ),
         "initial_ruling": Task(
             description=(
                 "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is). "
@@ -281,7 +282,8 @@ CONFIDENCE: <0.00–1.00>
 <✅ ACCEPTED | ❌ REJECTED>
 SCORES: semantic_cohesion=<0.0–1.0>; derivational_validity=<0.0–1.0>; rebuttal_resilience=<0.0–1.0>
 RATIONALE: <1–2 sentences max>
-"""),
+""",
+        ),
         "synthesize": Task(
             description=f"""
 You are the **Lead Linguist** in a collaborative reverse-engineering initiative focused on the Enochian language—a constructed system with obscure morphology, irregular derivation, and no known linguistic relatives. You specialize in low-corpora constructed languages, making you perfect for this task.
@@ -318,7 +320,8 @@ HYPOTHESIS: <one-sentence candidate meaning>
 EVIDENCE: <up to 6 bullets, synthesizing the strongest arguments from the junior linguists>
 COUNTEREVIDENCE: <up to 4 bullets; optional>
 CONFIDENCE: <0.00–1.00>
-"""),
+""",
+        ),
         "counter": Task(
             description=f"""
 You are a **skeptical linguist** evaluating a proposed root analysis in the Enochian language—a system with opaque morphology and metaphysical entanglements.
@@ -347,7 +350,8 @@ Your tone must be **sharp, disciplined, and logically rigorous**. You are not he
 **CRITIQUE**: <an indication whether or not {root.upper()} has a valid proposed definition>
 **EVIDENCE**: <up to 5 bullets; each bullet names {root.upper()} and directly addresses evidence supporting the definition>
 **ALTERNATIVE**: <up to 2 bullets; optional>
-**CONFIDENCE**: <0.00–1.00>"""),
+**CONFIDENCE**: <0.00–1.00>""",
+        ),
         "defend": Task(
             description="""
 You are the **Lead Linguist** defending a proposed Enochian root candidate after receiving a skeptical counter-analysis.
@@ -370,7 +374,8 @@ Your tone must be:
 DEFENSE: <a defense that addresses the skeptic's criticisms>
 EVIDENCE: <up to 5 bullets; each bullet provides defense against a different criticism the skeptic made and provides additional support for the lexical inclusion of your definition for {root.upper()}>
 CONFIDENCE: <0.00–1.00>
-"""),
+""",
+        ),
         "rebuttal": Task(
             description="""
 You are the **Skeptical Linguist**, issuing your **final response** after reviewing the Lead Linguist's defense of a proposed Enochian root.
@@ -391,7 +396,8 @@ You must:
 REBUTTAL: <a final critique of the linguist's supporting arguments>
 EVIDENCE: <up to 5 bullets expounding the rebuttal>
 CONFIDENCE: <0.00–1.00>
-"""),
+""",
+        ),
         "ruling": Task(
             description=(
                 "You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages. "
@@ -427,23 +433,45 @@ RATIONALE: <1–2 sentences max>
         ),
         "gloss": Task(
             description=(
-                f'The adjudicator has approved the root "{root.upper()}". Your responsibility is to respond with a precise and practical dictionary-style entry.\n\n'
-                "Your definition must:\n"
-                "- Describe the **core semantic meaning** of the root\n"
-                "- Indicate how it functions **morphologically** (e.g., prefix, infix, suffix)\n"
-                "- Explain its **role** in compound or derived words (e.g., what kind of meaning it adds and how it functions)\n"
-                "- Provide **guidance** on how this root could help decode other, currently unknown words\n\n"
-                "Format your output as:\n"
-                f"[Definition including both meaning and morphological/functional guidance, especially its possible semantic contribution to compound words.]\n\n"
-                "Focus entirely on internal linguistic evidence and patterns observed across related Enochian words. DO NOT reference English, Greek, Latin, or Hebrew etymologies.\n"
-                "Below is a summary of the debate and root data. Use it to guide your construction of the definition:\n\n"
+                "You are GLOSSATOR. Analyze the debate summary using EXCLUSIVELY internal Enochian linguistic evidence.\n"
+                "Output **ONLY** a JSON object adhering to this schema—no preface, explanations, or markdown:\n\n"
+                "{\n"
+                f'  "ROOT": "{root.upper()}",'
+                """
+  "DEFINITION": "<1-3 sentences of core semantics; no negatives>",  
+  "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
+  "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
+  "SIGNATURE": {
+    "position": "prefix|infix|suffix|root|particle|variable",
+    "boundness": "bound|clitic|free|unknown",
+    "slot": "initial|medial|final|mixed",
+    "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
+    "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
+  },
+  "NEGATIVE_CONTRAST": ["max 2 phrases (e.g., 'non-temporal', 'non-agentive')"]
+}
+
+// Constraints:
+- Omit etymologies: NEVER cite English/Greek/Latin/Hebrew
+- Debate summary is the SOLE input
+"""
             ),
             expected_output=(
-                f"""**Return exactly**:
-ROOT: **{root.upper()}**
-DEFINITION: <dictionary-style definition, as thorough as necessary to communicate the concepts and ideas present in {root.upper()}>  
-DECODING_GUIDE: <how it modifies the semantics of a word, e.g., "indicates locational positioning inside">
-SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, burning">"""
+                "{\n"
+                f'  "ROOT": "{root.upper()}",'
+                """
+  "DEFINITION": "<1-3 sentences of core semantics; no negatives>",  
+  "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
+  "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
+  "SIGNATURE": {
+    "position": "prefix|infix|suffix|root|particle|variable",
+    "boundness": "bound|clitic|free|unknown",
+    "slot": "initial|medial|final|mixed",
+    "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
+    "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
+  },
+  "NEGATIVE_CONTRAST": ["max 2 phrases (e.g., 'non-temporal', 'non-agentive')"]
+}"""
             ),
         ),
     }
@@ -594,6 +622,7 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
                     txt.startswith("✅ accepted")
                     or txt.startswith("accepted")
                     or "✅" in initial_ruling
+                    or ("accepted" in txt and "not accepted" not in txt)
                 )
 
                 if initial_ruling and initial_ruling_verdict:
@@ -694,7 +723,9 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
                 break
         elif stage_name == "adjudicator":
             agent_tool = tools[stage_name]
-            if (not debate_lite and skeptic_rebuttal and len(skeptic_rebuttal) > 0) or (debate_lite and skeptic_response and len(skeptic_response) > 0):
+            if (not debate_lite and skeptic_rebuttal and len(skeptic_rebuttal) > 0) or (
+                debate_lite and skeptic_response and len(skeptic_response) > 0
+            ):
                 print(
                     f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}"
                 )
@@ -713,16 +744,20 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
 
                 else:
                     adjudicator_prompt = "\n".join(
-                            [
-                                tasks["ruling"].description,
-                                f"Linguist proposed: {linguist_proposal}",
-                                f"Skeptic replied: {skeptic_response}"
-                            ]
+                        [
+                            tasks["ruling"].description,
+                            f"Linguist proposed: {linguist_proposal}",
+                            f"Skeptic replied: {skeptic_response}",
+                        ]
                     )
                     if not debate_lite:
-                        adjudicator_prompt += f"Linguist defended by arguing: {linguist_defense}\n"
+                        adjudicator_prompt += (
+                            f"Linguist defended by arguing: {linguist_defense}\n"
+                        )
                         adjudicator_prompt += f"Skeptic made their final argument against: {skeptic_rebuttal}\n"
-                        adjudicator_prompt += f"Your goal: {tasks['ruling'].expected_output.lower()}\n"
+                        adjudicator_prompt += (
+                            f"Your goal: {tasks['ruling'].expected_output.lower()}\n"
+                        )
                     adjudicator_ruling = agent_tool._run(
                         prompt=adjudicator_prompt,
                         stream_callback=adjudicator_cb,
@@ -741,6 +776,10 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
                 and adjudicator_ruling.strip().lower().startswith("✅ accepted")
                 or adjudicator_ruling.strip().lower().startswith("accepted")
                 or "✅" in adjudicator_ruling
+                or (
+                    "accepted" in adjudicator_ruling.strip().lower()
+                    and "not accepted" not in adjudicator_ruling.strip().lower()
+                )
             ):
                 print(
                     f"\n\n{RESET}>>>🧐\tA resident Glossator reads the research and discussion and begins putting together a meaningful definition...\n"
@@ -748,13 +787,18 @@ SEMANTIC_core: <1–3 nouns (including gerunds), comma-separated e.g., "fire, bu
                 glossator_prompt = "\n".join(
                     [
                         tasks["gloss"].description,
-                        f"Linguist proposed: {linguist_proposal}",
-                        f"Skeptic replied: {skeptic_response}",
+                        f"\n\n## Original prompt for the linguist's team:\n{tasks['propose'].description}",
+                        f"## Linguist proposed:\n{linguist_proposal}",
+                        f"## Skeptic replied:\n{skeptic_response}",
                     ]
                 )
                 if not debate_lite:
-                    glossator_prompt += f"Linguist defended by arguing for: {linguist_defense}\n"
-                    glossator_prompt += f"Skeptic made their final argument against: {skeptic_rebuttal}"
+                    glossator_prompt += (
+                        f"Linguist defended by arguing for: {linguist_defense}\n"
+                    )
+                    glossator_prompt += (
+                        f"Skeptic made their final argument against: {skeptic_rebuttal}"
+                    )
                     glossator_prompt += f"Adjudicator decided: {adjudicator_ruling}"
                 gloss_dict = agent_tool._run(
                     prompt=glossator_prompt,

@@ -24,6 +24,7 @@
   "d": {
     "canonical": "d",
     "alternates": [
+      { "value": "t", "confidence": "high", "direction": "both" },
       { "value": "de", "confidence": "medium", "direction": "both" },
       { "value": "di", "confidence": "medium", "direction": "both" },
       { "value": "gal", "confidence": "low", "direction": "to" }
@@ -120,6 +121,7 @@
   "t": {
     "canonical": "t",
     "alternates": [
+      { "value": "d", "confidence": "high", "direction": "both" },
       { "value": "c", "confidence": "high", "direction": "both" },
       { "value": "gisg", "confidence": "low", "direction": "to" }
     ]
