@@ -2,6 +2,7 @@ import re
 import json
 import sqlite3
 import random
+import statistics as st
 import time
 import uuid, json, sys, platform, datetime
 from typing import List, Optional, Dict, Any, Tuple
@@ -309,6 +310,106 @@ class RootExtractionCrew:
             f"coverage={semantic_coverage:.3f} | "
             f"sem={sem_count} | idx={idx_count} | overlap={overlap_count}"
         )
+
+    def _dynamic_coh_floor(self, n: int | None, gram_len: int | None) -> float:
+        """
+        Cohesion floor increases for smaller clusters and (slightly) for long n-grams.
+        Heuristic (tunable):
+        n ≤ 3  → 0.40
+        n ≤ 5  → 0.30
+        n ≤ 10 → 0.25
+        n > 10 → 0.18
+        Adjust by n-gram length:
+        gram_len ≤ 2  → -0.05  (permit lower cohesion for huge 1–2g clusters)
+        gram_len ≥ 5  → +0.05  (expect tighter coherence for tiny 5–6g clusters)
+        """
+        if not n or n <= 0:
+            base = 0.25
+        elif n <= 3:
+            base = 0.40
+        elif n <= 5:
+            base = 0.30
+        elif n <= 10:
+            base = 0.25
+        else:
+            base = 0.18
+        if gram_len is not None:
+            if gram_len <= 2:
+                base -= 0.05
+            elif gram_len >= 5:
+                base += 0.05
+        return max(0.05, min(0.95, base))
+
+    def prejudge_cluster(
+        self, stats: dict, rules: dict | None = None, *, force_model: bool = False
+    ) -> dict:
+        """
+        Pruning-only triage:
+        returns {"action":"skip","needs_llm":False,"reason":str,"tags":[...]}
+            or {"action":"escalate","needs_llm":True,"reason":str,"tags":[...]}
+
+        stats (all optional): n, coh/cohesion (0..1), deriv_patterns (int),
+                            incompatible (0..1), scatter (0..1), gram_len (int)
+
+        rules (optional overrides):
+        reject_scatter: float = 0.30
+        reject_incompatible: float = 0.30
+        min_deriv_patterns_for_small_n: int = 1   # NEW: used for n ≤ 3
+        """
+        rules = rules or {}
+        n = int(stats.get("n", 0) or 0)
+        coh = stats.get("coh", stats.get("cohesion", None))
+        coh = float(coh) if coh is not None else None
+        dp = int(stats.get("deriv_patterns", 0) or 0)
+        inc = float(stats.get("incompatible", 0.0) or 0.0)
+        scat = float(stats.get("scatter", 0.0) or 0.0)
+        gram_len = stats.get("gram_len", None)
+        gram_len = int(gram_len) if gram_len is not None else None
+
+        rej_scat = float(rules.get("reject_scatter", 0.30))
+        rej_inc = float(rules.get("reject_incompatible", 0.30))
+        min_dp_sm = int(rules.get("min_deriv_patterns_for_small_n", 1))
+
+        reasons, tags = [], []
+        floor = self._dynamic_coh_floor(n=n, gram_len=gram_len)
+
+        # 1) Immediate rejects on quality pathologies
+        if scat >= rej_scat:
+            reasons.append("scatter≥threshold(=0.30)")
+            tags.append("SCATTER")
+        if inc >= rej_inc:
+            reasons.append("incompatible≥threshold(=0.30)")
+            tags.append("INCOMPAT")
+
+        # 2) Cohesion-based screens (when available)
+        if coh is not None:
+            if coh < floor and dp == 0:
+                reasons.append(f"cohesion<{floor:.2f} with dp=0")
+                tags.append("LOW_COH_NO_DERIV")
+            elif coh < (floor - 0.05) and n >= 5:
+                reasons.append(f"cohesion<<{floor:.2f} with n≥5")
+                tags.append("LOW_COH")
+
+        # 3) Small clusters: require at least min_dp_sm patterns, otherwise prune if cohesion weak/unknown
+        if n <= 3 and dp < min_dp_sm and (coh is None or coh < floor):
+            reasons.append(f"small_n & dp<{min_dp_sm} & weak/unknown cohesion")
+            tags.append("FRAGILE_LOW_DERIV")
+
+        if reasons and not force_model:
+            return {
+                "action": "skip",
+                "needs_llm": False,
+                "reason": "; ".join(reasons),
+                "tags": tags,
+            }
+
+        # Everything else proceeds to the LLM for definition/JSON.
+        return {
+            "action": "escalate",
+            "needs_llm": True,
+            "reason": "not an obvious reject → send to model",
+            "tags": tags,
+        }
 
     def evaluate_ngram(
         self,
@@ -823,195 +924,330 @@ class RootExtractionCrew:
                     1 for c in cluster if _get_field(c, "source", "") == "both"
                 )
                 clustering_meta_json = json.dumps(best_config)
-
-                evaluated = self.evaluate_ngram(
-                    ngram[0],
-                    cluster=merged_cluster,
+                stats_summary = self._build_stats_summary(
+                    root="asdf",
+                    cluster_size=len(merged_cluster),
                     cohesion_score=cohesion_score,
                     semantic_hits=semantic_hits,
                     semantic_coverage=semantic_coverage,
-                    stream_callback=stream_callback,
-                    stats_summary=self._build_stats_summary(
-                        root="asdf",
-                        cluster_size=len(merged_cluster),
-                        cohesion_score=cohesion_score,
-                        semantic_hits=semantic_hits,
-                        semantic_coverage=semantic_coverage,
-                        sem_count=sem_count,
-                        idx_count=idx_count,
-                        overlap_count=overlap_count,
-                    ),
                     sem_count=sem_count,
                     idx_count=idx_count,
                     overlap_count=overlap_count,
-                    style=style,
                 )
-                evaluated["overlap_count"] = len(overlap)
-                evaluated["cluster_size"] = len(merged_cluster)
 
-                output.append(evaluated)
+                prefix_count = sum(
+                    e["normalized"].startswith(ngram[0].lower()) for e in merged_cluster
+                )
+                suffix_count = sum(
+                    e["normalized"].endswith(ngram[0].lower()) for e in merged_cluster
+                )
+                deriv_patterns = int(prefix_count > 0) + int(suffix_count > 0)
 
-                if style == "debate":
-                    save_log(
-                        evaluated["Archivist"]
-                        or evaluated["raw_output"].get("Archivist"),
-                        label=ngram[0],
-                        cluster_number=str(cluster_id + 1),
-                        cluster_total=str(len(clusters)),
-                        accepted=len(evaluated["Glossator"]) > 0,
+                sims = [c.get("cluster_similarity", 0.0) for c in merged_cluster]
+
+                stats = {
+                    "n": len(merged_cluster),  # cluster size
+                    "coh": cohesion_score,  # 0..1
+                    "semantic_hits": semantic_hits,  # raw count
+                    "semantic_coverage": semantic_coverage,  # 0..1
+                    "gram_len": len(ngram[0]),  # char length of the n-gram
+                    # Optional signals derived from entries:
+                    "scatter": st.pstdev(sims) if len(sims) > 1 else 0.0,
+                    "deriv_patterns": deriv_patterns,
+                }
+
+                prevaluate = self.prejudge_cluster(stats)
+
+                if prevaluate["needs_llm"]:
+                    evaluated = self.evaluate_ngram(
+                        ngram[0],
+                        cluster=merged_cluster,
+                        cohesion_score=cohesion_score,
+                        semantic_hits=semantic_hits,
+                        semantic_coverage=semantic_coverage,
+                        stream_callback=stream_callback,
+                        stats_summary=stats_summary,
+                        sem_count=sem_count,
+                        idx_count=idx_count,
+                        overlap_count=overlap_count,
                         style=style,
                     )
-                elif style == "solo":
-                    txt = self._extract_evaluation(evaluated["Glossator"].strip().lower())
-                    print(f"\n\n[Debug] Just so you know: {txt}\n\n")
-                    verdict = "accept" in txt.lower() if txt else False
-                    save_log(
-                        evaluated["Archivist"]
-                        or evaluated["raw_output"].get("Archivist"),
-                        label=ngram[0],
-                        cluster_number=str(cluster_id + 1),
-                        cluster_total=str(len(clusters)),
-                        accepted=verdict,
-                        style=style,
-                    )
-                #                self.save_results(output)
+                    evaluated["overlap_count"] = len(overlap)
+                    evaluated["cluster_size"] = len(merged_cluster)
 
-                cursor = self.new_definitions_db.cursor()
+                    output.append(evaluated)
 
-                if style == "debate":
-                    cursor.execute(
-                        """
-                        INSERT INTO clusters (
-                            run_id,
-                            ngram,
-                            cluster_index,
-                            sem_count,
-                            idx_count,
-                            overlap_count,
-                            glossator_prompt,
-                            glossator_model,
-                            adjudicator_prompt,
-                            adjudicator_model,
-                            glossator_def,
-                            adjudicator_verdict,
-                            cohesion,
-                            semantic_coverage,
-                            best_config
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            self.run_id,
-                            ngram[0].upper(),
-                            cluster_id,
-                            sem_count,
-                            idx_count,
-                            overlap_count,
-                            evaluated["Glossator_Prompt"]
-                            or evaluated["raw_output"].get("Glossator_Prompt"),
-                            evaluated["Glossator_Model"]
-                            or evaluated["raw_output"].get("Glossator_Model"),
-                            evaluated["Adjudicator_Prompt"]
-                            or evaluated["raw_output"].get("Adjudicator_Prompt"),
-                            evaluated["Glossator_Model"]
-                            or evaluated["raw_output"].get("Glossator_Model"),
-                            evaluated["Glossator"]
-                            or evaluated["raw_output"].get("Glossator"),
-                            evaluated["Adjudicator"]
-                            or evaluated["raw_output"].get("Adjudicator"),
-                            cohesion_score,
-                            semantic_coverage,
-                            clustering_meta_json,
-                        ),
-                    )
-                elif style == "solo":
-                    cursor.execute(
-                        """
-                        INSERT INTO clusters (
-                            run_id,
-                            ngram,
-                            cluster_index,
-                            sem_count,
-                            idx_count,
-                            overlap_count,
-                            glossator_prompt,
-                            glossator_model,
-                            glossator_def,
-                            cohesion,
-                            semantic_coverage,
-                            best_config
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            self.run_id,
-                            ngram[0].upper(),
-                            cluster_id,
-                            sem_count,
-                            idx_count,
-                            overlap_count,
-                            evaluated["Glossator_Prompt"]
-                            or evaluated["raw_output"].get("Glossator_Prompt"),
-                            evaluated["Glossator_Model"]
-                            or evaluated["raw_output"].get("Glossator_Model"),
-                            evaluated["Glossator"]
-                            or evaluated["raw_output"].get("Glossator"),
-                            cohesion_score,
-                            semantic_coverage,
-                            clustering_meta_json,
-                        ),
-                    )
+                    # 1) Save the log
+                    if style == "debate":
+                        save_log(
+                            evaluated["Archivist"]
+                            or evaluated["raw_output"].get("Archivist"),
+                            label=ngram[0],
+                            cluster_number=str(cluster_id + 1),
+                            cluster_total=str(len(clusters)),
+                            accepted=len(evaluated["Glossator"]) > 0,
+                            style=style,
+                        )
+                    elif style == "solo":
+                        txt = self._extract_evaluation(
+                            evaluated["Glossator"].strip().lower()
+                        )
+                        print(f"\n\n[Debug] Just so you know: {txt}\n\n")
+                        verdict = "accept" in txt.lower() if txt else False
+                        save_log(
+                            evaluated["Archivist"]
+                            or evaluated["raw_output"].get("Archivist"),
+                            label=ngram[0],
+                            cluster_number=str(cluster_id + 1),
+                            cluster_total=str(len(clusters)),
+                            accepted=verdict,
+                            style=style,
+                        )
+                    #                self.save_results(output)
 
-                cluster_rowid = cursor.lastrowid
+                    cursor = self.new_definitions_db.cursor()
 
-                # 3) Insert each of the merged defs into `raw_defs`
-                for entry in merged_cluster:
-                    cursor.execute(
-                        """
-                        INSERT INTO raw_defs (
-                            cluster_id,
-                            source_word,
-                            variant,
-                            definition,
-                            enhanced_def,
-                            fasttext,
-                            similarity,
-                            tier
-                        ) VALUES (?,?,?,?,?,?,?,?)
-                        """,
-                        (
-                            cluster_rowid,
-                            entry["normalized"].upper(),  # canonical appearance
+                    # 2) insert cluster and llm records into sqlite
+                    if style == "debate":
+                        cursor.execute(
+                            """
+                            INSERT INTO clusters (
+                                run_id,
+                                ngram,
+                                cluster_index,
+                                sem_count,
+                                idx_count,
+                                overlap_count,
+                                glossator_prompt,
+                                glossator_model,
+                                adjudicator_prompt,
+                                adjudicator_model,
+                                glossator_def,
+                                adjudicator_verdict,
+                                cohesion,
+                                semantic_coverage,
+                                best_config
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
                             (
-                                entry["word"].upper()
-                                if entry["normalized"].upper() == entry["word"].upper()
-                                else ""
-                            ),  # variant if applicable
-                            entry.get("definition", "") or "",
-                            entry.get("enhanced_definition", "") or "",
-                            float(entry.get("fasttext", 0.0)),
-                            float(
-                                max(entry.get("semantic", 0.0), entry.get("score", 0.0))
+                                self.run_id,
+                                ngram[0].upper(),
+                                cluster_id,
+                                sem_count,
+                                idx_count,
+                                overlap_count,
+                                evaluated["Glossator_Prompt"]
+                                or evaluated["raw_output"].get("Glossator_Prompt"),
+                                evaluated["Glossator_Model"]
+                                or evaluated["raw_output"].get("Glossator_Model"),
+                                evaluated["Adjudicator_Prompt"]
+                                or evaluated["raw_output"].get("Adjudicator_Prompt"),
+                                evaluated["Glossator_Model"]
+                                or evaluated["raw_output"].get("Glossator_Model"),
+                                evaluated["Glossator"]
+                                or evaluated["raw_output"].get("Glossator"),
+                                evaluated["Adjudicator"]
+                                or evaluated["raw_output"].get("Adjudicator"),
+                                cohesion_score,
+                                semantic_coverage,
+                                clustering_meta_json,
                             ),
-                            entry.get("tier", "[no tiering given]"),
-                        ),
-                    )
-
-                    raw_def_id = cursor.lastrowid
-
-                    # Insert this entry's citations → citations(def_id, location, context)
-                    rows = []
-                    for c in entry.get("citations") or []:
-                        loc = c.get("location") if isinstance(c, dict) else None
-                        ctx = c.get("context") if isinstance(c, dict) else None
-                        if loc or ctx:
-                            rows.append((raw_def_id, loc, ctx))
-                    if rows:
-                        cursor.executemany(
-                            "INSERT INTO citations (def_id, location, context) VALUES (?,?,?)",
-                            rows,
+                        )
+                    elif style == "solo":
+                        cursor.execute(
+                            """
+                            INSERT INTO clusters (
+                                run_id,
+                                ngram,
+                                cluster_index,
+                                sem_count,
+                                idx_count,
+                                overlap_count,
+                                glossator_prompt,
+                                glossator_model,
+                                glossator_def,
+                                cohesion,
+                                semantic_coverage,
+                                best_config
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                self.run_id,
+                                ngram[0].upper(),
+                                cluster_id,
+                                sem_count,
+                                idx_count,
+                                overlap_count,
+                                evaluated["Glossator_Prompt"]
+                                or evaluated["raw_output"].get("Glossator_Prompt"),
+                                evaluated["Glossator_Model"]
+                                or evaluated["raw_output"].get("Glossator_Model"),
+                                evaluated["Glossator"]
+                                or evaluated["raw_output"].get("Glossator"),
+                                cohesion_score,
+                                semantic_coverage,
+                                clustering_meta_json,
+                            ),
                         )
 
-                    # 4) commit once per cluster-member
-                    self.new_definitions_db.commit()
+                    cluster_rowid = cursor.lastrowid
+
+                    # 3) Insert each of the merged defs into `raw_defs`
+                    for entry in merged_cluster:
+                        cursor.execute(
+                            """
+                            INSERT INTO raw_defs (
+                                cluster_id,
+                                source_word,
+                                variant,
+                                definition,
+                                enhanced_def,
+                                fasttext,
+                                similarity,
+                                tier
+                            ) VALUES (?,?,?,?,?,?,?,?)
+                            """,
+                            (
+                                cluster_rowid,
+                                entry["normalized"].upper(),  # canonical appearance
+                                (
+                                    entry["word"].upper()
+                                    if entry["normalized"].upper()
+                                    == entry["word"].upper()
+                                    else ""
+                                ),  # variant if applicable
+                                entry.get("definition", "") or "",
+                                entry.get("enhanced_definition", "") or "",
+                                float(entry.get("fasttext", 0.0)),
+                                float(
+                                    max(
+                                        entry.get("semantic", 0.0),
+                                        entry.get("score", 0.0),
+                                    )
+                                ),
+                                entry.get("tier", "[no tiering given]"),
+                            ),
+                        )
+
+                        raw_def_id = cursor.lastrowid
+
+                        # Insert this entry's citations → citations(def_id, location, context)
+                        rows = []
+                        for c in entry.get("citations") or []:
+                            loc = c.get("location") if isinstance(c, dict) else None
+                            ctx = c.get("context") if isinstance(c, dict) else None
+                            if loc or ctx:
+                                rows.append((raw_def_id, loc, ctx))
+                        if rows:
+                            cursor.executemany(
+                                "INSERT INTO citations (def_id, location, context) VALUES (?,?,?)",
+                                rows,
+                            )
+
+                        # 4) commit once per cluster-member
+                        self.new_definitions_db.commit()
+                else:
+                    # 1) notify about the skip
+                    stream_text(
+                        f"❗\t{PINK}A sudden plot twist!{RESET} 😮\n"
+                        "The pre-screening denies the cluster from even being evaluated!\n"
+                    )
+                    stream_text(
+                        f"These are the {BLUE}reasons{RESET}..."
+                        if len(prevaluate["reason"].split("; ")) > 1
+                        else f"This is the {BLUE}reason{RESET}..."
+                    )
+                    stream_text(prevaluate["reason"])
+                    
+                    # 2) insert record of skip into sqlite
+                    cursor.execute(
+                        """
+                        INSERT INTO clusters (
+                            run_id,
+                            ngram,
+                            cluster_index,
+                            sem_count,
+                            idx_count,
+                            overlap_count,
+                            action,
+                            reason,
+                            cohesion,
+                            semantic_coverage,
+                            best_config
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            self.run_id,
+                            ngram[0].upper(),
+                            cluster_id,
+                            sem_count,
+                            idx_count,
+                            overlap_count,
+                            prevaluate["action"],
+                            prevaluate["reason"],
+                            cohesion_score,
+                            semantic_coverage,
+                            clustering_meta_json,
+                        ),
+                    )
+                    
+                    cluster_rowid = cursor.lastrowid
+
+                    # 3) Insert each of the merged defs into `raw_defs`
+                    for entry in merged_cluster:
+                        cursor.execute(
+                            """
+                            INSERT INTO raw_defs (
+                                cluster_id,
+                                source_word,
+                                variant,
+                                definition,
+                                enhanced_def,
+                                fasttext,
+                                similarity,
+                                tier
+                            ) VALUES (?,?,?,?,?,?,?,?)
+                            """,
+                            (
+                                cluster_rowid,
+                                entry["normalized"].upper(),  # canonical appearance
+                                (
+                                    entry["word"].upper()
+                                    if entry["normalized"].upper()
+                                    == entry["word"].upper()
+                                    else ""
+                                ),  # variant if applicable
+                                entry.get("definition", "") or "",
+                                entry.get("enhanced_definition", "") or "",
+                                float(entry.get("fasttext", 0.0)),
+                                float(
+                                    max(
+                                        entry.get("semantic", 0.0),
+                                        entry.get("score", 0.0),
+                                    )
+                                ),
+                                entry.get("tier", "[no tiering given]"),
+                            ),
+                        )
+
+                        raw_def_id = cursor.lastrowid
+
+                        # Insert this entry's citations → citations(def_id, location, context)
+                        rows = []
+                        for c in entry.get("citations") or []:
+                            loc = c.get("location") if isinstance(c, dict) else None
+                            ctx = c.get("context") if isinstance(c, dict) else None
+                            if loc or ctx:
+                                rows.append((raw_def_id, loc, ctx))
+                        if rows:
+                            cursor.executemany(
+                                "INSERT INTO citations (def_id, location, context) VALUES (?,?,?)",
+                                rows,
+                            )
+
+                        # 4) commit once per cluster-member
+                        self.new_definitions_db.commit()
+                    
             self.processed_ngrams.add(ngram[0])
             self.save_processed_ngrams()
             seen_words += 1
