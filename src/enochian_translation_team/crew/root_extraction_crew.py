@@ -313,24 +313,23 @@ class RootExtractionCrew:
 
     def _dynamic_coh_floor(self, n: int | None, gram_len: int | None) -> float:
         """
-        Cohesion floor increases for smaller clusters and (slightly) for long n-grams.
-        Heuristic (tunable):
-        n ≤ 3  → 0.40
-        n ≤ 5  → 0.30
-        n ≤ 10 → 0.25
+        Lenient cohesion floor:
+        n ≤ 3  → 0.30   (down from 0.40)
+        n ≤ 5  → 0.27
+        n ≤ 10 → 0.23
         n > 10 → 0.18
-        Adjust by n-gram length:
-        gram_len ≤ 2  → -0.05  (permit lower cohesion for huge 1–2g clusters)
-        gram_len ≥ 5  → +0.05  (expect tighter coherence for tiny 5–6g clusters)
+        N-gram adjustment:
+        gram_len ≤ 2  → -0.05
+        gram_len ≥ 5  → +0.05
         """
         if not n or n <= 0:
-            base = 0.25
+            base = 0.23
         elif n <= 3:
-            base = 0.40
-        elif n <= 5:
             base = 0.30
+        elif n <= 5:
+            base = 0.27
         elif n <= 10:
-            base = 0.25
+            base = 0.23
         else:
             base = 0.18
         if gram_len is not None:
@@ -344,17 +343,10 @@ class RootExtractionCrew:
         self, stats: dict, rules: dict | None = None, *, force_model: bool = False
     ) -> dict:
         """
-        Pruning-only triage:
-        returns {"action":"skip","needs_llm":False,"reason":str,"tags":[...]}
-            or {"action":"escalate","needs_llm":True,"reason":str,"tags":[...]}
-
-        stats (all optional): n, coh/cohesion (0..1), deriv_patterns (int),
-                            incompatible (0..1), scatter (0..1), gram_len (int)
-
-        rules (optional overrides):
-        reject_scatter: float = 0.30
-        reject_incompatible: float = 0.30
-        min_deriv_patterns_for_small_n: int = 1   # NEW: used for n ≤ 3
+        Pruning-only triage (more lenient):
+        - Skips ONLY 'extra-bad' clusters.
+        - Requires TWO independent red flags for most skips.
+        - Small clusters (n≤3) are NEVER pruned on dp==0 alone.
         """
         rules = rules or {}
         n = int(stats.get("n", 0) or 0)
@@ -366,34 +358,72 @@ class RootExtractionCrew:
         gram_len = stats.get("gram_len", None)
         gram_len = int(gram_len) if gram_len is not None else None
 
-        rej_scat = float(rules.get("reject_scatter", 0.30))
-        rej_inc = float(rules.get("reject_incompatible", 0.30))
-        min_dp_sm = int(rules.get("min_deriv_patterns_for_small_n", 1))
+        # More tolerant thresholds (override via rules if you like)
+        rej_scat = float(rules.get("reject_scatter", 0.45))  # was 0.30
+        rej_inc = float(rules.get("reject_incompatible", 0.45))  # was 0.30
+        mild_scat = float(rules.get("mild_scatter", 0.35))
+        mild_inc = float(rules.get("mild_incompatible", 0.20))
+        coh_margin = float(
+            rules.get("coh_margin", 0.10)
+        )  # how far below floor counts as "very low"
 
         reasons, tags = [], []
         floor = self._dynamic_coh_floor(n=n, gram_len=gram_len)
 
-        # 1) Immediate rejects on quality pathologies
+        # 1) EXTREME pathologies → immediate skip
+        extreme = False
         if scat >= rej_scat:
-            reasons.append("scatter≥threshold(=0.30)")
-            tags.append("SCATTER")
+            reasons.append(f"scatter≥{rej_scat:.2f}")
+            tags.append("SCATTER_HIGH")
+            extreme = True
         if inc >= rej_inc:
-            reasons.append("incompatible≥threshold(=0.30)")
-            tags.append("INCOMPAT")
+            reasons.append(f"incompatible≥{rej_inc:.2f}")
+            tags.append("INCOMPAT_HIGH")
+            extreme = True
+        if extreme and not force_model:
+            return {
+                "action": "skip",
+                "needs_llm": False,
+                "reason": "; ".join(reasons),
+                "tags": tags,
+            }
 
-        # 2) Cohesion-based screens (when available)
-        if coh is not None:
-            if coh < floor and dp == 0:
-                reasons.append(f"cohesion<{floor:.2f} with dp=0")
-                tags.append("LOW_COH_NO_DERIV")
-            elif coh < (floor - 0.05) and n >= 5:
-                reasons.append(f"cohesion<<{floor:.2f} with n≥5")
-                tags.append("LOW_COH")
+        # 2) TWO-STRIKE rule for non-extreme cases
+        strikes = 0
+        details = []
 
-        # 3) Small clusters: require at least min_dp_sm patterns, otherwise prune if cohesion weak/unknown
-        if n <= 3 and dp < min_dp_sm and (coh is None or coh < floor):
-            reasons.append(f"small_n & dp<{min_dp_sm} & weak/unknown cohesion")
-            tags.append("FRAGILE_LOW_DERIV")
+        if coh is not None and coh < (floor - coh_margin):
+            strikes += 1
+            details.append(f"cohesion<{floor - coh_margin:.2f}")
+            tags.append("LOW_COH_STRONG")
+
+        if dp == 0 and n >= 5:  # dp=0 only matters with ample evidence
+            strikes += 1
+            details.append("dp=0 with n≥5")
+            tags.append("NO_DERIV_AMPLY")
+
+        if inc >= mild_inc:
+            strikes += 1
+            details.append(f"incompatible≥{mild_inc:.2f}")
+            tags.append("INCOMPAT_MILD")
+
+        if scat >= mild_scat:
+            strikes += 1
+            details.append(f"scatter≥{mild_scat:.2f}")
+            tags.append("SCATTER_MILD")
+
+        # Small clusters (n≤3): do NOT prune on dp=0; require BOTH low cohesion (strong) AND (inc or scat mild)
+        if n <= 3:
+            if (coh is not None and coh < (floor - coh_margin)) and (
+                inc >= mild_inc or scat >= mild_scat
+            ):
+                reasons.append(
+                    "small_n two-strike (very low coh + conflict/dispersion)"
+                )
+            # else: never skip—let the model decide
+        else:
+            if strikes >= 2:
+                reasons.append("two-strike prune: " + ", ".join(details))
 
         if reasons and not force_model:
             return {
@@ -403,12 +433,12 @@ class RootExtractionCrew:
                 "tags": tags,
             }
 
-        # Everything else proceeds to the LLM for definition/JSON.
+        # 3) Everything else → evaluate with LLM
         return {
             "action": "escalate",
             "needs_llm": True,
-            "reason": "not an obvious reject → send to model",
-            "tags": tags,
+            "reason": "lenient triage → model should evaluate",
+            "tags": tags or ["TRIAGE"],
         }
 
     def evaluate_ngram(
@@ -1153,13 +1183,15 @@ class RootExtractionCrew:
                         "The pre-screening denies the cluster from even being evaluated!\n"
                     )
                     stream_text(
-                        f"These are the {BLUE}reasons{RESET}..."
+                        f"These are the {BLUE}reasons{RESET}...\n"
                         if len(prevaluate["reason"].split("; ")) > 1
-                        else f"This is the {BLUE}reason{RESET}..."
+                        else f"This is the {BLUE}reason{RESET}...\n"
                     )
-                    stream_text(prevaluate["reason"])
-                    
+                    stream_text(prevaluate["reason"] + "\n\n")
+
                     # 2) insert record of skip into sqlite
+                    cursor = self.new_definitions_db.cursor()
+
                     cursor.execute(
                         """
                         INSERT INTO clusters (
@@ -1190,7 +1222,7 @@ class RootExtractionCrew:
                             clustering_meta_json,
                         ),
                     )
-                    
+
                     cluster_rowid = cursor.lastrowid
 
                     # 3) Insert each of the merged defs into `raw_defs`
@@ -1247,7 +1279,7 @@ class RootExtractionCrew:
 
                         # 4) commit once per cluster-member
                         self.new_definitions_db.commit()
-                    
+
             self.processed_ngrams.add(ngram[0])
             self.save_processed_ngrams()
             seen_words += 1
