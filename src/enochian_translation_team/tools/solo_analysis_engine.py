@@ -21,7 +21,7 @@ def _get_field(item, field, default=""):
     return getattr(item, field, default)
 
 
-def stream_text(text: str, delay: float = 0.00005):
+def stream_text(text: str, delay: float = 0.001):
     for c in text:
         sys.stdout.write(c)
         sys.stdout.flush()
@@ -187,7 +187,8 @@ Numeric scores are floats 0.00–1.00.
             """
   "EVALUATION": "<accepted/rejected>",
   "REASON": "<1-3 sentences explaining the reason for the evaluation selected>",
-  "DEFINITION": "<1-3 sentences of core semantics; no negatives>",  
+  "DEFINITION": "<1-3 sentences of core semantics; no negatives, be as concrete as possible and not vague>",  
+  "EXAMPLE": "<give 1-3 short example sentences of how its English equivalence would be used, marking it in each sentence.">,
   "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
   "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
   "SIGNATURE": {
@@ -197,7 +198,7 @@ Numeric scores are floats 0.00–1.00.
     "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
     "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
   },
-  "NEGATIVE_CONTRAST": ["max 2 phrases (e.g., 'non-temporal', 'non-agentive')"]
+  "NEGATIVE_CONTRAST": ["max 4 phrases (e.g., 'non-temporal', 'non-agentive')"]
 }
 
 CONSTRAINTS
@@ -207,21 +208,23 @@ CONSTRAINTS
         ),
         expected_output=(
             "{\n"
-            f'  "ROOT": "{root.upper()}",'
+            f'    "ROOT": "{root.upper()}",'
             """
-  "EVALUATION": "<accepted/rejected>",
-  "REASON": "<1-3 sentences explaining the reason for the evaluation selected>",
-  "DEFINITION": "<1-3 sentences of core semantics; no negatives>",  
-  "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
-  "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
-  "SIGNATURE": {
-    "position": "prefix|infix|suffix|root|particle|variable",
-    "boundness": "bound|clitic|free|unknown",
-    "slot": "initial|medial|final|mixed",
-    "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
-    "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
-  },
-  "NEGATIVE_CONTRAST": ["max 2 phrases (e.g., 'non-temporal', 'non-agentive')"]
+    "EVALUATION": "<accepted/rejected>",
+    "REASON": "<1-3 sentences explaining the reason for the evaluation selected>",
+    "DEFINITION": "<1-3 sentences of core semantics; no negatives, be as concrete as possible and not vague>",
+    "EXAMPLE": "<give 1-3 short example sentences of how its English equivalence would be used, marking it in each sentence.>",
+    "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
+    "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
+    "SIGNATURE": {
+        "position": "prefix|infix|suffix|root|particle|variable",
+        "boundness": "bound|clitic|free|unknown",
+        "slot": "initial|medial|final|mixed",
+        "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
+        "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
+    },
+    "RULES": "Return an ARRAY (not a string) of 2–5 strings. Each string MUST follow: REGEX → +FEATURE[, +FEATURE]. Anchor REGEX to position (^, $). Use <ROOT> to stand for the candidate where applicable (e.g., ^<ROOT>.*). Encode only testable morphotactics and core semantic contributions (no metaphors/speculation). Omit any affix/function you cannot justify with evidence instead of guessing.",
+    "NEGATIVE_CONTRAST": ["max 4 phrases (e.g., 'non-temporal', 'non-agentive')"]
 }"""
         ),
     )
