@@ -1035,6 +1035,21 @@ class RootExtractionCrew:
                         )
                     #                self.save_results(output)
 
+                    def _to_text(x, sep="\n\n========\n\n"):
+                        if x is None:
+                            return None
+                        if isinstance(x, str):
+                            return x
+                        if isinstance(x, (list, tuple)):
+                            # If it's a list of strings, join; otherwise JSON.
+                            if all(isinstance(i, str) for i in x):
+                                return sep.join(x)
+                            return json.dumps(x, ensure_ascii=False)
+                        if isinstance(x, dict):
+                            return json.dumps(x, ensure_ascii=False)
+                        # numbers / other simple types
+                        return str(x)
+
                     cursor = self.new_definitions_db.cursor()
 
                     # 2) insert cluster and llm records into sqlite
@@ -1048,6 +1063,8 @@ class RootExtractionCrew:
                                 sem_count,
                                 idx_count,
                                 overlap_count,
+                                action,
+                                reason,
                                 glossator_prompt,
                                 glossator_model,
                                 adjudicator_prompt,
@@ -1057,7 +1074,7 @@ class RootExtractionCrew:
                                 cohesion,
                                 semantic_coverage,
                                 best_config
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
@@ -1066,18 +1083,20 @@ class RootExtractionCrew:
                                 sem_count,
                                 idx_count,
                                 overlap_count,
-                                evaluated["Glossator_Prompt"]
-                                or evaluated["raw_output"].get("Glossator_Prompt"),
-                                evaluated["Glossator_Model"]
-                                or evaluated["raw_output"].get("Glossator_Model"),
-                                evaluated["Adjudicator_Prompt"]
-                                or evaluated["raw_output"].get("Adjudicator_Prompt"),
-                                evaluated["Glossator_Model"]
-                                or evaluated["raw_output"].get("Glossator_Model"),
-                                evaluated["Glossator"]
-                                or evaluated["raw_output"].get("Glossator"),
-                                evaluated["Adjudicator"]
-                                or evaluated["raw_output"].get("Adjudicator"),
+                                _to_text(prevaluate["action"]),
+                                _to_text(prevaluate["reason"]),
+                                _to_text(evaluated["Glossator_Prompt"])
+                                or _to_text(evaluated["raw_output"].get("Glossator_Prompt")),
+                                _to_text(evaluated["Glossator_Model"])
+                                or _to_text(evaluated["raw_output"].get("Glossator_Model")),
+                                _to_text(evaluated["Adjudicator_Prompt"])
+                                or _to_text(evaluated["raw_output"].get("Adjudicator_Prompt")),
+                                _to_text(evaluated["Glossator_Model"])
+                                or _to_text(evaluated["raw_output"].get("Glossator_Model")),
+                                _to_text(evaluated["Glossator"])
+                                or _to_text(evaluated["raw_output"].get("Glossator")),
+                                _to_text(evaluated["Adjudicator"])
+                                or _to_text(evaluated["raw_output"].get("Adjudicator")),
                                 cohesion_score,
                                 semantic_coverage,
                                 clustering_meta_json,
@@ -1093,13 +1112,15 @@ class RootExtractionCrew:
                                 sem_count,
                                 idx_count,
                                 overlap_count,
+                                action,
+                                reason,
                                 glossator_prompt,
                                 glossator_model,
                                 glossator_def,
                                 cohesion,
                                 semantic_coverage,
                                 best_config
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
@@ -1108,12 +1129,14 @@ class RootExtractionCrew:
                                 sem_count,
                                 idx_count,
                                 overlap_count,
-                                evaluated["Glossator_Prompt"]
-                                or evaluated["raw_output"].get("Glossator_Prompt"),
-                                evaluated["Glossator_Model"]
-                                or evaluated["raw_output"].get("Glossator_Model"),
-                                evaluated["Glossator"]
-                                or evaluated["raw_output"].get("Glossator"),
+                                _to_text(prevaluate["action"]),
+                                _to_text(prevaluate["reason"]),
+                                _to_text(evaluated["Glossator_Prompt"])
+                                or _to_text(evaluated["raw_output"].get("Glossator_Prompt")),
+                                _to_text(evaluated["Glossator_Model"])
+                                or _to_text(evaluated["raw_output"].get("Glossator_Model")),
+                                _to_text(evaluated["Glossator"])
+                                or _to_text(evaluated["raw_output"].get("Glossator")),
                                 cohesion_score,
                                 semantic_coverage,
                                 clustering_meta_json,

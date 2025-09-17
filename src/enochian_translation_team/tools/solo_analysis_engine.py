@@ -125,7 +125,7 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
         description="",
     )
 
-    about_enochiana = "As a bit of context about the Enochian language: the root words are derived from Enochian, the language Adam spoke (from the Biblical Adam and Eve), and is allegedly used as a form of celestial speech by angels and other divine entities; there are many Christian (and Gnostic) undertones in the language, and the known words' main focus is divine cosmology, theology, and human action and government."
+    no_outside_speculation = "Use only the items provided in this prompt. Do **not** assume any extra-textual theology, mythology, or etymology."
     about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
 
     # === TASK ===
@@ -146,7 +146,9 @@ Candidates (contain {root.upper()}): {candidate_list}
 
 Related definitions & citations: {root_def_summary}
 
-Metrics & context: {about_enochiana} {about_metrics}
+Metrics: {about_metrics}
+
+Limited context: {no_outside_speculation}
 
 VALIDATION RULES
 

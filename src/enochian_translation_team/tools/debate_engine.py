@@ -355,7 +355,10 @@ Your tone must be **sharp, disciplined, and logically rigorous**. You are not he
             description="""
 You are the **Lead Linguist** defending a proposed Enochian root candidate after receiving a skeptical counter-analysis.
 
-Your task:
+Your primary task:
+- IF the Adjudicator has continued the debate, you MUST ADDRESS complete the Adjudicator's task assigned to you.
+
+Your peripheral tasks:
 - **Directly address the Skeptic's objections** with clear, evidence-based rebuttals.
 - Reaffirm the **semantic and morphological rationale** that supports the root's candidacy, emphasizing semantic relevance.
 - Identify any misinterpretations or overly narrow assumptions in the Skeptic's argument.
@@ -377,22 +380,18 @@ CONFIDENCE: <0.00–1.00>
         ),
         "rebuttal": Task(
             description="""
-You are the **Skeptical Linguist**, issuing your **final response** after reviewing the Lead Linguist's defense of a proposed Enochian root.
+You are the **Skeptical Linguist**, issuing a follow-up criticisms on the proposed Enochian root.
 
-Your task:
+Your primary task:
+- MOST IMPORTANTLY, address the adjudicator's concerns and accomplish the tasks assigned
+
+Your peripheral tasks:
 - Determine whether your initial objections were **fully and convincingly addressed**.
 - If key issues remain unresolved, issue a **focused, final rebuttal**. Do not repeat old arguments—refine them.
 - If the defense was **persuasive and thorough**, acknowledge the strength of their case—skepticism includes being open to revision when warranted.
-
-You must:
-- Pinpoint any remaining **logical inconsistencies**, unconvincing assumptions, or semantic leaps.
-- Avoid vague dismissals—only critique if you can articulate **specific remaining weaknesses**.
-- If the defense meaningfully strengthens the hypothesis, say so—but make it clear *why*.
-
-🎯 This is your last chance to weigh in before the adjudication. Be precise, fair, and intellectually rigorous.
 """,
             expected_output=f"""**Return exactly**:
-REBUTTAL: <a final critique of the linguist's supporting arguments>
+REBUTTAL: <while following the adjudicator's instructions, argue and dismantle the arguments for the new root word>
 EVIDENCE: <up to 5 bullets expounding the rebuttal>
 CONFIDENCE: <0.00–1.00>
 """,
@@ -711,9 +710,9 @@ What follows is the debate transcript:
                 tasks["defend"].description,
                 f"{RESET}\n",
             )
-            if (len(skeptic_rebuttal[debate_round]) > 0) or (
-                skeptic_response and len(skeptic_response) > 0
-            ):
+            if (
+                len(skeptic_rebuttal) > 0 and len(skeptic_rebuttal[debate_round]) > 0
+            ) or (skeptic_response and len(skeptic_response) > 0):
                 defense_prompt_data = [
                     tasks["defend"].description,
                     f"You said earlier: {linguist_proposal}\n\n",
@@ -751,7 +750,7 @@ What follows is the debate transcript:
                 break
         elif stage_name == "adjudicator":
             agent_tool = tools[stage_name]
-            if len(linguist_defense[debate_round]) > 0:
+            if len(linguist_defense) > 0 and len(linguist_defense[debate_round]) > 0:
                 print(
                     f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}"
                 )
@@ -768,23 +767,34 @@ What follows is the debate transcript:
                 #     stream_text(adjudicator_ruling)
                 #     print()
 
-                adjudicator_prompt = "\n".join(
-                    [
-                        tasks["ruling"].description,
-                        f"Linguist proposed: {linguist_proposal}\n\n",
-                        f"Skeptic replied: {skeptic_response}\n\n",
-                        f"Linguist defended by arguing: {linguist_defense}\n\n",
-                        f"Expected output: {tasks['ruling'].expected_output}",
-                    ]
+                adjudicator_prompt = [
+                    tasks["ruling"].description,
+                    f"Linguist proposed: {linguist_proposal}\n\n",
+                    f"Skeptic replied: {skeptic_response}\n\n",
+                    f"Linguist defended by arguing: {linguist_defense[0]}\n\n",
+                ]
+                # intentionally range(0, 0) sometimes
+                for i in range(0, debate_round):
+                    adjudicator_prompt.append(
+                        f"You said: {adjudicator_ruling[i]}\n\n"
+                    )
+                    adjudicator_prompt.append(
+                        f"Then the skeptic rebuttaled: {skeptic_rebuttal[i]}\n\n"
+                    )
+                    adjudicator_prompt.append(
+                        f"Then the linguist defended by saying: {linguist_defense[i + 1]}\n\n"
+                    )
+                adjudicator_prompt.append(
+                    f"Expected output: {tasks['ruling'].expected_output}"
                 )
-                adjudicator_ruling = agent_tool._run(
-                    prompt=adjudicator_prompt,
+                adjudicator_ruling.append(agent_tool._run(
+                    prompt="\n".join(adjudicator_prompt),
                     stream_callback=adjudicator_cb,
                     print_chunks=True,
                     role_name="👩‍⚖️\tAdjudicator",
-                )["response_text"]
+                )["response_text"])
 
-                if "CONTINUE" in adjudicator_ruling and len(STAGES) < 10:
+                if "CONTINUE" in adjudicator_ruling[debate_round] and len(STAGES) < 10:
                     STAGES.append(("rebuttal", 1))
                     STAGES.append(("defend", 1))
                     STAGES.append(("adjudicator", 1))
@@ -796,7 +806,7 @@ What follows is the debate transcript:
                 print("[Error] Linguist's Defense is an empty array!")
                 break
         elif stage_name == "rebuttal":
-            if len(linguist_defense[debate_round]) > 0:
+            if len(linguist_defense) > 0 and len(linguist_defense[debate_round]) > 0:
                 agent_tool = tools["skeptic"]
                 print(
                     f"\n\n{RESET}>>>🤔\tThe Skeptic considers and prepares a final criticism...\n{GRAY}"
@@ -882,11 +892,11 @@ What follows is the debate transcript:
             lines.append(f"\n\n=== 🥸 DEFENSE ROUND 1 ===\n")
             lines.append(linguist_defense[0].strip())
             for i in range(0, debate_round):
-                lines.append(f"\n\n=== 👩‍⚖️ ADJUDICATOR RULING ROUND {i} ===\n")
+                lines.append(f"\n\n=== 👩‍⚖️ ADJUDICATOR RULING ROUND {i + 1} ===\n")
                 lines.append(adjudicator_ruling[i].strip())
-                lines.append(f"\n\n=== 🤔 ATTACK ROUND {i} ===\n")
+                lines.append(f"\n\n=== 🤔 ATTACK ROUND {i + 2} ===\n")
                 lines.append(skeptic_rebuttal[i].strip())
-                lines.append(f"\n\n=== 🥸 DEFENSE ROUND {i + 1} ===\n")
+                lines.append(f"\n\n=== 🥸 DEFENSE ROUND {i + 2} ===\n")
                 lines.append(linguist_defense[i].strip())
 
             lines.append("\n\n=== 🧐 GLOSSATOR ===\n")
