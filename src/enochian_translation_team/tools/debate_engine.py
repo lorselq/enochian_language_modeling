@@ -410,6 +410,7 @@ Your peripheral tasks:
 REBUTTAL: <while following the adjudicator's instructions, evaluate and, if warranted, dismantle the arguments for the new root word>
 EVIDENCE: <up to 5 bullets expounding the rebuttal>
 POINTS_OF_AGREEMENT: <up to 3 bullets only if warranted; each bullet must name the specific claim/evidence from the Lead Linguist you accept and give a 1-sentence reason; do not introduce new evidence here; if none, write "None">
+DELTA: <up to 3 bullets of what's changed in your position since last round; else "None">
 CONFIDENCE: <0.00–1.00>
 """,
         ),
