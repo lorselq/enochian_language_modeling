@@ -355,16 +355,16 @@ Your tone must be **sharp, disciplined, and logically rigorous**. You are not he
 """,
             expected_output=f"""**Return exactly**:
 **CRITIQUE**: <an indication whether or not {root.upper()} has a valid proposed definition>
-**EVIDENCE**: <up to 5 bullets; each bullet names {root.upper()} and directly addresses evidence supporting the definition>
+**EVIDENCE**: <up to 5 bullets; each bullet names {root.upper()} and directly addresses the claim's evidence (supporting or undercutting) with citations to this list: {candidate_list}>
 **ALTERNATIVE**: <up to 2 bullets; optional>
 **CONFIDENCE**: <0.00–1.00>""",
         ),
         "defend": Task(
-            description="""
+            description=f"""
 You are the **Lead Linguist** defending a proposed Enochian root candidate after receiving a skeptical counter-analysis.
 
 Your primary task:
-- IF the Adjudicator has continued the debate, you MUST ADDRESS complete the Adjudicator's task assigned to you.
+- IF the Adjudicator has continued the debate, you MUST COMPLETE the Adjudicator's task assigned to you.
 
 Your peripheral tasks:
 - **Directly address the Skeptic's objections** with clear, evidence-based rebuttals.
@@ -378,11 +378,19 @@ Your tone must be:
 - **Analytical** (you argue with data)
 - **Persuasive** (you're here to win over the Skeptic—or at least dismantle their critique)
 
+Your constraints:
+- Use only Enochian words from this list: {candidate_list}. If you need an example and it’s not in the list, say so. Do not invent forms.
+- When you introduce a morphotactic claim, state the RULE in a testable form and give at least one NEGATIVE TEST it would forbid.
+
 🎯 Your goal is not just to *respond*, but to **reassert the legitimacy** of the proposed root and demonstrate that the original analysis withstands scrutiny.
 """,
             expected_output=f"""**Return exactly**:
-DEFENSE: <a defense that addresses the skeptic's criticisms>
-EVIDENCE: <up to 5 bullets; each bullet provides defense against a different criticism the skeptic made and provides additional support for the lexical inclusion of your definition for {root.upper()}>
+MODE: <INITIAL | FOLLOWUP>
+TASK_RESPONSE: <if adjudicator assigned tasks, address them point-by-point; else "N/A">
+DEFENSE: <concise defense addressing the skeptic's newest criticisms>
+EVIDENCE: <up to 5 bullets; each bullet cites only words from {candidate_list}; show the derivational/morphotactic rule or attested usage supporting {root.upper()}>
+POINTS_OF_AGREEMENT: <up to 3 bullets only if warranted; each bullet must name the specific claim/evidence from the Lead Linguist you accept and give a 1-sentence reason; do not introduce new evidence here; if none, write "None">
+DELTA: <up to 3 bullets of what's changed in your position since last round; else "None">
 CONFIDENCE: <0.00–1.00>
 """,
         ),
@@ -399,8 +407,9 @@ Your peripheral tasks:
 - If the defense was **persuasive and thorough**, acknowledge the strength of their case—skepticism includes being open to revision when warranted.
 """,
             expected_output=f"""**Return exactly**:
-REBUTTAL: <while following the adjudicator's instructions, argue and dismantle the arguments for the new root word>
+REBUTTAL: <while following the adjudicator's instructions, evaluate and, if warranted, dismantle the arguments for the new root word>
 EVIDENCE: <up to 5 bullets expounding the rebuttal>
+POINTS_OF_AGREEMENT: <up to 3 bullets only if warranted; each bullet must name the specific claim/evidence from the Lead Linguist you accept and give a 1-sentence reason; do not introduce new evidence here; if none, write "None">
 CONFIDENCE: <0.00–1.00>
 """,
         ),
