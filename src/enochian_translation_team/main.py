@@ -48,6 +48,7 @@ def main():
     GOLD = "\033[38;5;178m"
     RESET = "\033[0m"
     local_remote_mode = None
+    remote = True
     while local_remote_mode not in ("1", "2"):
         local_remote_mode = input("Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? ")
     if local_remote_mode == "1" or local_remote_mode == "2":
@@ -56,6 +57,8 @@ def main():
             env_remote = find_dotenv(".env_remote")
             load_dotenv(env_local, override=True)
             load_dotenv(env_remote, override=True)
+            if local_remote_mode == "1":
+                remote = False
         else:
             print("[Error] Could not load environment file for local LLM connection. Exiting.")
             return
@@ -75,7 +78,7 @@ def main():
     else:
         style = "solo"
 
-    crew = RootExtractionCrew(style)
+    crew = RootExtractionCrew(style, remote)
 
     if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip().lower()

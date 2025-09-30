@@ -45,7 +45,7 @@ def stream_text(text: str, delay: float = 0.001):
 
 
 class RootExtractionCrew:
-    def __init__(self, style):
+    def __init__(self, style, use_remote):
         paths = get_config_paths()
         self.dictionary_path = paths["dictionary"]
         self.model_path = paths["model_output"]
@@ -72,6 +72,7 @@ class RootExtractionCrew:
         )
 
         self.run_id = self._begin_run(engine=style)
+        self.use_remote = use_remote
 
     def _prepare_db(self, conn: sqlite3.Connection) -> None:
         """Set pragmatic SQLite settings for long runs."""
@@ -583,6 +584,7 @@ class RootExtractionCrew:
                 stats_summary=stats_summary,
                 stream_callback=stream_callback,
                 root_entry=None,  # can be None; debate engine will handle
+                use_remote=self.use_remote,
                 # blind_evaluation=True,
                 # debate_lite=True,
             )
@@ -593,6 +595,7 @@ class RootExtractionCrew:
                 stats_summary=stats_summary,
                 stream_callback=stream_callback,
                 root_entry=None,
+                use_remote=self.use_remote,
             )
 
         # Normalize expected keys (be defensive)
@@ -1067,14 +1070,12 @@ class RootExtractionCrew:
                                 reason,
                                 glossator_prompt,
                                 glossator_model,
-                                adjudicator_prompt,
-                                adjudicator_model,
                                 glossator_def,
-                                adjudicator_verdict,
+                                verdict,
                                 cohesion,
                                 semantic_coverage,
                                 best_config
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
