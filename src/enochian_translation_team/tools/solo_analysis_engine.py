@@ -71,6 +71,7 @@ def solo_agent_ngram_analysis(
     stats_summary: str,
     stream_callback=None,
     root_entry: Optional[Entry] = None,
+    use_remote: bool = True,
 ):
     joined_defs = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
@@ -123,6 +124,7 @@ Your tone must be confident, scholarly, and analytical.
 Be thorough, avoid vague generalizations, and always back claims with observed data.""",
         name="Lexicographer",
         description="",
+        use_remote=use_remote
     )
 
     no_outside_speculation = "Use only the items provided in this prompt. Do **not** assume any extra-textual theology, mythology, or etymology."

@@ -100,6 +100,7 @@ def debate_ngram(
     stream_callback=None,
     root_entry: Optional[Entry] = None,
     blind_evaluation: bool = True,
+    use_remote: bool = True,
 ):
     joined_defs = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
@@ -160,11 +161,13 @@ Your tone must be confident, scholarly, and analytical.
 Be thorough, avoid vague generalizations, and always back claims with observed data.""",
             name="Junior Research Linguist",
             description="",
+            use_remote=use_remote
         ),
         "initial_ruling": QueryModelTool(
             system_prompt=f"You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is).",
             name="Adjudicator",
             description="",
+            use_remote=use_remote
         ),
         "synthesis": QueryModelTool(
             system_prompt="""
@@ -175,6 +178,7 @@ You have received analytical reports from five Junior Linguists, each offering o
 Your tone should be polished, scholarly, and decisive.""",
             name="Lead Linguist",
             description="",
+            use_remote=use_remote
         ),
         "skeptic": QueryModelTool(
             system_prompt="""
@@ -185,6 +189,7 @@ Do not dismiss arguments just because they involve theological or metaphysical f
 Your tone is incisive, precise, and intellectually honest.""",
             name="Skeptic",
             description="",
+            use_remote=use_remote
         ),
         "adjudicator": QueryModelTool(
             system_prompt="""
@@ -198,16 +203,19 @@ Your tone is incisive, precise, and intellectually honest.""",
             """,
             name="Adjudicator",
             description="",
+            use_remote=use_remote
         ),
         "glossator": QueryModelTool(
             system_prompt="You are a highly precise Enochian glossator. Your role is to propose a single, clear, authoritative dictionary-style definition for a root word that has been approved by an adjudicator. Use the prior linguistic analysis to distill the core conceptual meaning of the word, based solely on its internal usage patterns, morphology, and semantic range across the cited examples. Avoid descriptive summaries. Instead, craft a definition that would be suitable for formal inclusion in a lexicon. This definition should be concise (1-2 lines), but maximally informative. You must not reference English or natural-language etymology. Write in an academic tone, as if submitting this to a linguistic corpus project.",
             name="Glossator",
             description="",
+            use_remote=use_remote
         ),
         "tldr": QueryModelTool(
             system_prompt="You are a helpful summarizer. You don't repeat anything anyone says and you use your own words.",
             name="TLDR",
             description="",
+            use_remote=use_remote
         ),
     }
 

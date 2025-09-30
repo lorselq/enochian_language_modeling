@@ -10,6 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, RetryCallState
 from typing import Optional, Callable, ClassVar
 from openai import OpenAI
 from crewai.tools import BaseTool
+from pydantic import PrivateAttr
 
 # Silence those INFO logs
 logging.getLogger("openai").setLevel(logging.WARNING)
@@ -37,6 +38,8 @@ class QueryModelTool(BaseTool):
         "You are a research linguist specializing in rare, obscure, dead constructed-languages."
     )
     gloss_model: str = ""
+    # private attribute (not a field)
+    _use_remote: bool = PrivateAttr(default=True)
 
     def __init__(
         self,
@@ -44,6 +47,7 @@ class QueryModelTool(BaseTool):
         system_prompt: str,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        use_remote: bool = True,
     ):
         super().__init__(
             name=name or self.default_name,
@@ -51,6 +55,7 @@ class QueryModelTool(BaseTool):
         )
         # now Pydantic knows system_prompt exists and is a string
         self.system_prompt = system_prompt
+        self._use_remote = use_remote
 
     @staticmethod
     def _log_attempt(retry_state: RetryCallState):
@@ -215,11 +220,12 @@ class QueryModelTool(BaseTool):
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.0,
+            temperature=0.2,
             stream=True,
             reasoning_effort=(
                 "high" if (role == "Glossator" or role == "Adjudicator") else "medium"
             ),
+            seed=93,
         )
 
         print(
@@ -296,23 +302,34 @@ class QueryModelTool(BaseTool):
         print_chunks: bool = False,
         role_name: Optional[str] = None,
     ) -> dict[str, str]:
-        try:
-            return self._try_remote(
-                prompt,
-                stream_callback=stream_callback,
-                print_chunks=print_chunks,
-                role_name=role_name,
-            )
-        except Exception:
-            # exit if out of OpenRouter calls
-            print(
-                f"⚠️ [{time.ctime()}] Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡"
-            )
-            sys.exit()
-            # fallback to local
-            # print(
-            #     f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}"
-            # )
+        if self._use_remote:
+            try:
+                return self._try_remote(
+                    prompt,
+                    stream_callback=stream_callback,
+                    print_chunks=print_chunks,
+                    role_name=role_name,
+                )
+            except Exception:
+                # exit if out of OpenRouter calls
+                # print(
+                #     f"⚠️ [{time.ctime()}] Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡"
+                # )
+                # sys.exit()
+                # fallback to local
+                print(
+                    f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}"
+                )
+                return self._llm_call(
+                    api_base_env="LOCAL_OPENAI_API_BASE",
+                    api_key_env="LOCAL_OPENAI_API_KEY",
+                    model_env="LOCAL_MODEL_NAME",
+                    prompt=prompt,
+                    stream_callback=stream_callback,
+                    print_chunks=print_chunks,
+                    role_name=role_name,
+                )
+        else:
             return self._llm_call(
                 api_base_env="LOCAL_OPENAI_API_BASE",
                 api_key_env="LOCAL_OPENAI_API_KEY",
