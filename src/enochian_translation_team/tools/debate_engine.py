@@ -379,7 +379,7 @@ Your tone must be:
 - **Persuasive** (you're here to win over the Skeptic—or at least dismantle their critique)
 
 Your constraints:
-- Use only Enochian words from this list: {candidate_list}. If you need an example and it’s not in the list, say so. Do not invent forms.
+- Use only Enochian words from this list: {candidate_list}. If you need an example and it's not in the list, say so. Do not invent forms.
 - When you introduce a morphotactic claim, state the RULE in a testable form and give at least one NEGATIVE TEST it would forbid.
 
 🎯 Your goal is not just to *respond*, but to **reassert the legitimacy** of the proposed root and demonstrate that the original analysis withstands scrutiny.
