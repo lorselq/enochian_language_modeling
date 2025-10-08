@@ -1,7 +1,8 @@
 import logging
 import time
+import re
 import sys
-from typing import Optional
+from typing import Dict, List, Optional, Tuple, Set
 from crewai import Agent, Task, Crew
 from sentence_transformers import SentenceTransformer, util
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
@@ -93,6 +94,131 @@ def safe_output(crew_output) -> dict:
         return {}
 
 
+# ---------------------------
+# Parsing helpers (raw text)
+# ---------------------------
+
+_HEADING = r"[A-Z][A-Z_ ]+"
+_KEYVAL_RE = re.compile(rf"^\s*([A-Z][A-Z_ ]+)\s*:\s*(.*)$")
+_BULLET_RE = re.compile(r"^\s*(?:[-*•]|(?:\d+[\.)]))\s+(.*\S)\s*$")
+_CHECKBOX_OPEN_RE = re.compile(r"- \[ \]|^\s*\[\s\]\s", re.MULTILINE)
+_TASKS_HEADER_RE = re.compile(r"(?:^|\n)(TASKS?|CHECKLIST)\s*:\s*", re.IGNORECASE)
+
+
+def _split_lines(text: str) -> List[str]:
+    return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
+def _sectionize(text: str):
+    lines = _split_lines(text or "")
+    sections = {}
+    current = None
+    for ln in lines:
+        m = _KEYVAL_RE.match(ln.strip())
+        if m:
+            current = m.group(1).strip().upper()
+            sections.setdefault(current, [])
+            val = m.group(2)
+            if val:
+                sections[current].append(val)
+        else:
+            if current is not None:
+                sections[current].append(ln)
+    return sections
+
+
+def _extract_bullets(lines: List[str]) -> List[str]:
+    out = []
+    for ln in lines:
+        m = _BULLET_RE.match(ln)
+        if m:
+            out.append(m.group(1).strip())
+    return [b for b in out if b]
+
+
+def _get_field_text(sections, key: str) -> str:
+    vals = sections.get(key.upper(), [])
+    return "\n".join(vals).strip()
+
+
+def _get_bulleted_field(sections, key: str) -> List[str]:
+    return _extract_bullets(sections.get(key.upper(), []))
+
+
+def _norm_set(items: List[str]) -> Set[str]:
+    return {
+        re.sub(r"\s+", " ", it.strip().lower())
+        for it in (items or [])
+        if it and it.strip()
+    }
+
+
+def _parse_confidence(text: str) -> Optional[float]:
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:/?\s*1\.?0*|%)?", text or "")
+    if not m:
+        return None
+    val = float(m.group(1))
+    if val > 1.0:
+        val = val / 100.0
+    return max(0.0, min(1.0, val))
+
+
+def _extract_confidence(block_text: str) -> Optional[float]:
+    sections = _sectionize(block_text)
+    conf = _get_field_text(sections, "CONFIDENCE")
+    if conf:
+        return _parse_confidence(conf)
+    m = re.search(r"CONFIDENCE\s*:\s*([^\n]+)", block_text or "", re.IGNORECASE)
+    return _parse_confidence(m.group(1)) if m else None
+
+
+def _extract_delta(block_text: str) -> str:
+    sections = _sectionize(block_text)
+    return _get_field_text(sections, "DELTA")
+
+
+def _has_meaningful_delta(delta_text: str) -> bool:
+    t = (delta_text or "").strip().lower()
+    return t not in {"", "none", "n/a", "na", "no change"}
+
+
+def _extract_evidence(block_text: str) -> List[str]:
+    sections = _sectionize(block_text)
+    bullets = _get_bulleted_field(sections, "EVIDENCE")
+    if bullets:
+        return bullets
+    raw = _get_field_text(sections, "EVIDENCE")
+    if raw:
+        parts = [p.strip() for p in re.split(r"[;•]+", raw) if p.strip()]
+        return parts
+    return []
+
+
+def _count_points_of_agreement(block_text: str) -> int:
+    sections = _sectionize(block_text)
+    bullets = _get_bulleted_field(sections, "POINTS_OF_AGREEMENT")
+    if not bullets:
+        raw = _get_field_text(sections, "POINTS_OF_AGREEMENT")
+        if (raw or "").strip().lower() in {"", "none", "n/a", "na", "no"}:
+            return 0
+    return len(bullets)
+
+
+def _extract_tasks_from_ruling(ruling_text: str) -> int:
+    text = ruling_text or ""
+    open_boxes = len(_CHECKBOX_OPEN_RE.findall(text))
+    if open_boxes > 0:
+        return open_boxes
+    m = _TASKS_HEADER_RE.search(text)
+    if m:
+        start = m.end()
+        tail = text[start:]
+        next_head = re.search(rf"\n\s*({_HEADING})\s*:", tail)
+        body = tail[: next_head.start()] if next_head else tail
+        return len(_BULLET_RE.findall(body))
+    return len(_BULLET_RE.findall(text))
+
+
 def debate_ngram(
     root: str,
     candidates: list[Entry],
@@ -161,13 +287,13 @@ Your tone must be confident, scholarly, and analytical.
 Be thorough, avoid vague generalizations, and always back claims with observed data.""",
             name="Junior Research Linguist",
             description="",
-            use_remote=use_remote
+            use_remote=use_remote,
         ),
         "initial_ruling": QueryModelTool(
             system_prompt=f"You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is).",
             name="Adjudicator",
             description="",
-            use_remote=use_remote
+            use_remote=use_remote,
         ),
         "synthesis": QueryModelTool(
             system_prompt="""
@@ -178,7 +304,7 @@ You have received analytical reports from five Junior Linguists, each offering o
 Your tone should be polished, scholarly, and decisive.""",
             name="Lead Linguist",
             description="",
-            use_remote=use_remote
+            use_remote=use_remote,
         ),
         "skeptic": QueryModelTool(
             system_prompt="""
@@ -189,7 +315,7 @@ Do not dismiss arguments just because they involve theological or metaphysical f
 Your tone is incisive, precise, and intellectually honest.""",
             name="Skeptic",
             description="",
-            use_remote=use_remote
+            use_remote=use_remote,
         ),
         "adjudicator": QueryModelTool(
             system_prompt="""
@@ -203,19 +329,19 @@ Your tone is incisive, precise, and intellectually honest.""",
             """,
             name="Adjudicator",
             description="",
-            use_remote=use_remote
+            use_remote=use_remote,
         ),
         "glossator": QueryModelTool(
             system_prompt="You are a highly precise Enochian glossator. Your role is to propose a single, clear, authoritative dictionary-style definition for a root word that has been approved by an adjudicator. Use the prior linguistic analysis to distill the core conceptual meaning of the word, based solely on its internal usage patterns, morphology, and semantic range across the cited examples. Avoid descriptive summaries. Instead, craft a definition that would be suitable for formal inclusion in a lexicon. This definition should be concise (1-2 lines), but maximally informative. You must not reference English or natural-language etymology. Write in an academic tone, as if submitting this to a linguistic corpus project.",
             name="Glossator",
             description="",
-            use_remote=use_remote
+            use_remote=use_remote,
         ),
         "tldr": QueryModelTool(
             system_prompt="You are a helpful summarizer. You don't repeat anything anyone says and you use your own words.",
             name="TLDR",
             description="",
-            use_remote=use_remote
+            use_remote=use_remote,
         ),
     }
 
@@ -425,47 +551,47 @@ First line **MUST BE EXACTLY**:
 or
 <CONTINUE>
 
-If you output CONTINUE, you MUST provide precise tasks for the Skeptic and Linguist.
+If you output CONTINUE, you MUST provide precise next-round tasks using Markdown checkboxes.
+If you output STOP, DO NOT include a TASKS section.
 
-You may refer to this **stats_summary**: 
+You may refer to this stats_summary:
 {stats_summary}
 
 Signals you may use (one or both):
-(A) The stats_summary: n, cohesion, derivational_patterns, incompatible_meanings, metric_notes.
-(B) Debate content: look for explicit RULES (position-anchored morphotactics), EVIDENCE (attested forms),
-    and any explicit NEGATIVE_TESTS. Also note if any claim relies on opaque morphology (affix/function
-    asserted without a RULE that can be tested on an attested form).
+(A) stats_summary: n, cohesion, derivational_patterns, incompatible_meanings, metric_notes.
+(B) Debate content: explicit RULES (position-anchored morphotactics), EVIDENCE (attested forms), NEGATIVE_TESTS; 
+    note any opaque morphology (affix/function asserted without a testable RULE on an attested form).
 
 Guidelines:
-— CONTINUE when ANY of the following applies:
+— CONTINUE when ANY applies:
   • Small/fragile evidence: n ≤ 3; OR broadened sense not grounded in RULES.
-  • Opaque morphology: an affix/function is claimed but no testable RULE supports it.
-  • Partial conflict: some counterexamples exist and were not neutralized by RULES/EVIDENCE.
-  • Metric anomalies or missing confidence cited to justify claims (e.g., “similarity=1.00”), without corroborating RULES/EVIDENCE.
+  • Opaque morphology: affix/function claimed but no testable RULE supports it.
+  • Partial conflict: counterexamples exist and weren't neutralized by RULES/EVIDENCE.
+  • Metric anomalies or naked confidence claims (e.g., “similarity=1.00”) without corroborating RULES/EVIDENCE.
   • New evidence appeared in the last turn that the opponent has not addressed.
 
-— STOP when ALL of the following are satisfied (or justified explicitly):
-  • Cohesion is adequate OR, if cohesion not provided, the debate converged on a single concrete sense.
-  • ≥1 derivational pattern is demonstrated via RULES **and** at least one attested form.
-  • Incompatible meanings are either 0, or quarantined by RULES (e.g., excluded environments).
-  • If NEGATIVE_TESTS were requested, at least one concrete test (using attested or clearly marked hypothetical pattern)
-    has been proposed to guard scope.
+— STOP when ALL are satisfied (or explicitly justified):
+  • Cohesion is adequate OR the debate converged on a single concrete sense.
+  • ≥1 derivational pattern is demonstrated via RULES AND at least one attested form.
+  • Incompatible meanings are 0 or quarantined by RULES (e.g., excluded environments).
+  • If NEGATIVE_TESTS were requested, at least one concrete test (using attested or clearly marked hypothetical pattern) guards scope.
 
-When you output CONTINUE, assign focused NEXT_ROUND_TASKS with owners:
-  - Skeptic: specify a falsification or stress test (e.g., demand a RULE that maps suffix → function and one attested example),
+When you output CONTINUE, assign focused TASKS with owners:
+  - Skeptic: specify a falsification or stress test (e.g., demand a RULE mapping suffix→function plus one attested example), 
     or require a NEGATIVE_TEST that would fail under the proposed sense.
   - Linguist: supply missing RULES with anchored regex (^,$), cite ≥1 attested form, or partition senses with clear exclusions.
 
-Do not opine on acceptance. Be procedural and concise.
+Be procedural and concise. Do not opine on acceptance.
 """
             ),
             #            expected_output="A ruling that begins with either ✅ ACCEPTED or ❌ REJECTED, followed by a concise rationale addressing both arguments.",
             expected_output=f"""<STOP|CONTINUE>
 WHY: <1–2 sentences naming the decisive signals>
-TRIGGERS: [tokens like: SMALL_N, OVERBROAD, OPAQUE_AFFIX, PARTIAL_CONFLICT, METRIC_ANOM, NEW_EVIDENCE]
-IF CONTINUE, NEXT_ROUND_TASKS:
-- owner=skeptic; test=<what to probe or falsify>; evidence_format=<RULES|EVIDENCE|NEGATIVE_TESTS>; success=<measurable criterion>
-- owner=linguist; task=<what to supply>; evidence_format=<RULES|EVIDENCE>; success=<measurable criterion>
+TRIGGERS: [SMALL_N|OVERBROAD|OPAQUE_AFFIX|PARTIAL_CONFLICT|METRIC_ANOM|NEW_EVIDENCE]
+
+TASKS:
+- [ ] owner=skeptic; test=<what to probe or falsify>; evidence_format=<RULES|EVIDENCE|NEGATIVE_TESTS>; success=<measurable criterion>
+- [ ] owner=linguist; task=<what to supply>; evidence_format=<RULES|EVIDENCE>; success=<measurable criterion>
 """,
         ),
         "gloss": Task(
@@ -590,12 +716,13 @@ What follows is the debate transcript:
     time.sleep(0.7)
     stream_text(tasks["propose"].description)
     print(f"\n{RESET}\n")
+    
 
     STAGES = [
-        ("linguist", 3),
+        ("linguist", 5),
         ("synthesis", 1),
         ("skeptic", 1),
-        ("defend", 1),
+        ("initial_defend", 1),
         ("adjudicator", 1),
     ]
     debate_round = 0
@@ -603,15 +730,38 @@ What follows is the debate transcript:
     initial_ruling = ""
     linguist_proposal = ""
     skeptic_response = ""
+    initial_defense = ""
     linguist_defense = []
     skeptic_rebuttal = []
     adjudicator_prompt = ""
     adjudicator_ruling = []
+    max_rounds = 3
     gloss = ""
     tldr_summary = ""
     transcript = ""
     glossator_prompt = ""
     gloss_model = ""
+
+    def _additional_prompting(role: str):
+        bonus_prompting = []
+        for i in range(0, debate_round):
+            if len(adjudicator_ruling) > i:
+                bonus_prompting.append(
+                    f"{'You said: ' if role == 'adjudicator' else 'The Adjudicator weighed in: '}"
+                )
+                bonus_prompting.append(f"{adjudicator_ruling[i]}\n")
+            if len(skeptic_rebuttal) > i:
+                bonus_prompting.append(
+                    f"{'You said: ' if role == 'skeptic' else 'The Skeptic countered: '}"
+                )
+                bonus_prompting.append(f"{skeptic_rebuttal[i]}\n")
+            if len(linguist_defense) > i:
+                bonus_prompting.append(
+                    f"{'You said: ' if role == 'linguist' else 'The Linguist argued: '}"
+                )
+                bonus_prompting.append(f"{linguist_defense[i]}\n")
+        return "\n".join(bonus_prompting)
+
     for stage_name, count in STAGES:
         time.sleep(1)
         if stage_name == "linguist":
@@ -636,67 +786,17 @@ What follows is the debate transcript:
                     time.sleep(0.7)
                     # jump to the “synthesis” stage index
                     break
-        # elif stage_name == "initial_ruling":
-        #     agent_tool = tools[stage_name]
-        #     print(
-        #         f"\n\n{RESET}>>>👩‍⚖️\tAn expert in the field takes an initial look at the research and decides whether it makes sense to deliberate on the material or move on to other ngram candidates...\n\n{GRAY}"
-        #     )
-        #     stream_text(tasks["initial_ruling"].description)
-        #     print(f"\n{RESET}\n")
-
-        #     if is_canon and blind_evaluation:
-        #         initial_ruling = (
-        #             f"✅ ACCEPTED\n"
-        #             f"The proposed root '{root.upper()}' is already a canon entry defined as '{root_def_text}'. "
-        #             "This existing definition provides sufficient internal linguistic evidence for approval.\n"
-        #             "The following debate is preserved for insight and extended justification:"
-        #         )
-        #         print(initial_ruling)
-        #         continue
-        #     else:
-        #         if linguist_variants and len(linguist_variants) > 0:
-        #             initial_ruling = agent_tool._run(
-        #                 prompt="\n".join(
-        #                     [tasks["initial_ruling"].description, *linguist_variants]
-        #                 ),
-        #                 stream_callback=adjudicator_cb,
-        #                 print_chunks=True,
-        #                 role_name="👩‍⚖️\tAdjudicator",
-        #             )["response_text"]
-        #         else:
-        #             print(f"[Error] linguist_variants are empty")
-
-        #         txt = initial_ruling.strip().lower()
-        #         initial_ruling_verdict = (
-        #             txt.startswith("✅ accepted")
-        #             or txt.startswith("accepted")
-        #             or "✅" in initial_ruling
-        #             or ("accepted" in txt and "not accepted" not in txt)
-        #         )
-
-        #         if initial_ruling and initial_ruling_verdict:
-        #             continue
-        #         else:
-        #             print("\n\n")
-        #             stream_text(initial_rejection)
-        #             break
         elif stage_name == "synthesis":
             agent_tool = tools[stage_name]
             print(
                 f"\n\n{RESET}>>>🥸\tThe Senior Linguist reads the reports of their juniors and begins synthesizing them into a meaningful proposal...\n{GRAY}"
             )
-            if linguist_variants and len(linguist_variants) > 0:
-                linguist_proposal = agent_tool._run(
-                    prompt="\n".join(
-                        [tasks["synthesize"].description, *linguist_variants]
-                    ),
-                    stream_callback=linguist_cb,
-                    print_chunks=True,
-                    role_name="🥸\tSenior Linguist",
-                )["response_text"]
-            else:
-                print(f"[Error] linguist_variants are empty")
-                break
+            linguist_proposal = agent_tool._run(
+                prompt="\n".join([tasks["synthesize"].description, *linguist_variants]),
+                stream_callback=linguist_cb,
+                print_chunks=True,
+                role_name="🥸\tSenior Linguist",
+            )["response_text"]
         elif stage_name == "skeptic":
             agent_tool = tools[stage_name]
             print(
@@ -705,22 +805,100 @@ What follows is the debate transcript:
             stream_text(tasks["counter"].description)
             print(f"\n{RESET}\n")
 
-            if linguist_proposal and len(linguist_proposal) > 0:
-                skeptic_response = agent_tool._run(
+            skeptic_response = agent_tool._run(
+                prompt="\n".join(
+                    [
+                        tasks["counter"].description,
+                        f"Linguist said: {linguist_proposal}",
+                        f"Your goal: {tasks['counter'].expected_output}",
+                    ]
+                ),
+                stream_callback=skeptic_cb,
+                print_chunks=True,
+                role_name="🤔\tSkeptic",
+            )["response_text"]
+        elif stage_name == "initial_defend":
+            agent_tool = tools["linguist"]
+            print(
+                f"\n\n{RESET}>>>🥸\tThe Lead Linguist's considers what the Skeptic has said and prepares a defense...\n{GRAY}",
+                tasks["defend"].description,
+                f"{RESET}\n",
+            )
+            initial_defense_prompt = [
+                tasks["defend"].description,
+                f"You said earlier: {linguist_proposal}\n\n",
+                f"Skeptic said: {skeptic_response}\n\n",
+                f"Your goal: {tasks['defend'].expected_output}",
+            ]
+            initial_defense = agent_tool._run(
+                prompt="\n".join(initial_defense_prompt),
+                stream_callback=linguist_cb,
+                print_chunks=True,
+                role_name="🥸\tSenior Linguist",
+            )["response_text"]
+        elif stage_name == "adjudicator":
+            if debate_round < max_rounds:
+                agent_tool = tools[stage_name]
+                print(
+                    f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}"
+                )
+                stream_text(tasks["ruling"].description)
+                f"\n{RESET}\n"
+
+                adjudicator_prompt = [
+                    tasks["ruling"].description,
+                    f"Linguist proposed: {linguist_proposal}\n\n",
+                    f"Skeptic replied: {skeptic_response}\n\n",
+                    f"Linguist defended by arguing: {initial_defense}\n\n",
+                ]
+                adjudicator_prompt.append(_additional_prompting("adjudicator"))
+                adjudicator_prompt.append(
+                    f"Expected output: {tasks['ruling'].expected_output}"
+                )
+                adjudicator_ruling.append(
+                    agent_tool._run(
+                        prompt="\n".join(adjudicator_prompt),
+                        stream_callback=adjudicator_cb,
+                        print_chunks=True,
+                        role_name="👩‍⚖️\tAdjudicator",
+                    )["response_text"]
+                )
+
+                if "continue" in adjudicator_ruling[debate_round].lower():
+                    STAGES.append(("rebuttal", 1))
+                    STAGES.append(("defend", 1))
+                    STAGES.append(("adjudicator", 1))
+                else:
+                    STAGES.append(("glossator", 1))
+                    STAGES.append(("summarizer", 1))
+            else:
+                STAGES.append(("glossator", 1))
+                STAGES.append(("summarizer", 1))
+        elif stage_name == "rebuttal":
+            agent_tool = tools["skeptic"]
+            print(
+                f"\n\n{RESET}>>>🤔\tThe Skeptic considers and prepares a final criticism...\n{GRAY}"
+            )
+            stream_text(tasks["rebuttal"].description)
+            print(f"\n{RESET}\n")
+
+            skeptic_rebuttal.append(
+                agent_tool._run(
                     prompt="\n".join(
                         [
-                            tasks["counter"].description,
-                            f"Linguist said: {linguist_proposal}",
-                            f"Your goal: {tasks['counter'].expected_output}",
+                            tasks["rebuttal"].description,
+                            f"Linguist proposed: {linguist_proposal}\n\n",
+                            f"You replied: {skeptic_response}\n\n",
+                            f"Linguist defended by arguing: {initial_defense}\n\n",
+                            f"{_additional_prompting('skeptic')}\n\n",
+                            f"Expected output: {tasks['rebuttal'].expected_output}",
                         ]
                     ),
                     stream_callback=skeptic_cb,
                     print_chunks=True,
                     role_name="🤔\tSkeptic",
                 )["response_text"]
-            else:
-                print("[Error] linguist_proposal defined as ''")
-                break
+            )
         elif stage_name == "defend":
             agent_tool = tools["linguist"]
             print(
@@ -728,138 +906,23 @@ What follows is the debate transcript:
                 tasks["defend"].description,
                 f"{RESET}\n",
             )
-            if (
-                len(skeptic_rebuttal) > 0 and len(skeptic_rebuttal[debate_round]) > 0
-            ) or (skeptic_response and len(skeptic_response) > 0):
-                defense_prompt_data = [
-                    tasks["defend"].description,
-                    f"You said earlier: {linguist_proposal}\n\n",
-                    f"Skeptic said: {skeptic_response}\n\n",
-                ]
-                if (
-                    len(skeptic_rebuttal) > 0
-                    and len(skeptic_rebuttal[debate_round]) > 0
-                ):
-                    # this is sometimes supposed to be range(0, 0) in how it turns out
-                    for i in range(0, debate_round):
-                        defense_prompt_data.append(
-                            f"Then you defended by saying: {linguist_defense[i]}\n\n"
-                        )
-                        defense_prompt_data.append(
-                            f"Then the adjudicator declared: {adjudicator_ruling[i]}\n\n"
-                        )
-                        defense_prompt_data.append(
-                            f"Then the skeptic rebuttaled: {skeptic_rebuttal[i]}\n\n"
-                        )
-                    debate_round += 1
-                defense_prompt_data.append(
-                    f"Your goal: {tasks['defend'].expected_output}"
-                )
-                linguist_defense.append(
-                    agent_tool._run(
-                        prompt="\n".join(defense_prompt_data),
-                        stream_callback=linguist_cb,
-                        print_chunks=True,
-                        role_name="🥸\tSenior Linguist",
-                    )["response_text"]
-                )
-            else:
-                print("[Error] skeptic_response defined as ''")
-                break
-        elif stage_name == "adjudicator":
-            agent_tool = tools[stage_name]
-            if len(linguist_defense) > 0 and len(linguist_defense[debate_round]) > 0:
-                print(
-                    f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}"
-                )
-                stream_text(tasks["ruling"].description)
-                f"\n{RESET}\n"
-
-                # if is_canon:
-                #     adjudicator_ruling = (
-                #         f"✅ ACCEPTED\n"
-                #         f"The proposed root '{root.upper()}' is already a canon entry defined as '{root_def_text}'. "
-                #         "This existing definition provides sufficient internal linguistic evidence for approval.\n"
-                #         "The prior debate is preserved for insight and extended justification."
-                #     )
-                #     stream_text(adjudicator_ruling)
-                #     print()
-
-                adjudicator_prompt = [
-                    tasks["ruling"].description,
-                    f"Linguist proposed: {linguist_proposal}\n\n",
-                    f"Skeptic replied: {skeptic_response}\n\n",
-                    f"Linguist defended by arguing: {linguist_defense[0]}\n\n",
-                ]
-                # intentionally range(0, 0) sometimes
-                for i in range(0, debate_round):
-                    adjudicator_prompt.append(
-                        f"You said: {adjudicator_ruling[i]}\n\n"
-                    )
-                    adjudicator_prompt.append(
-                        f"Then the skeptic rebuttaled: {skeptic_rebuttal[i]}\n\n"
-                    )
-                    adjudicator_prompt.append(
-                        f"Then the linguist defended by saying: {linguist_defense[i + 1]}\n\n"
-                    )
-                adjudicator_prompt.append(
-                    f"Expected output: {tasks['ruling'].expected_output}"
-                )
-                adjudicator_ruling.append(agent_tool._run(
-                    prompt="\n".join(adjudicator_prompt),
-                    stream_callback=adjudicator_cb,
+            defense_prompt = [
+                tasks["defend"].description,
+                f"You said earlier: {linguist_proposal}\n\n",
+                f"Skeptic said: {skeptic_response}\n\n",
+                f"You responded: {initial_defense}\n\n",
+                _additional_prompting("linguist"),
+                f"Your goal: {tasks['defend'].expected_output}",
+            ]
+            linguist_defense.append(
+                agent_tool._run(
+                    prompt="\n".join(defense_prompt),
+                    stream_callback=linguist_cb,
                     print_chunks=True,
-                    role_name="👩‍⚖️\tAdjudicator",
-                )["response_text"])
-
-                if "CONTINUE" in adjudicator_ruling[debate_round] and len(STAGES) < 10:
-                    STAGES.append(("rebuttal", 1))
-                    STAGES.append(("defend", 1))
-                    STAGES.append(("adjudicator", 1))
-                else:
-                    STAGES.append(("glossator", 1))
-                    STAGES.append(("summarizer", 1))
-
-            else:
-                print("[Error] Linguist's Defense is an empty array!")
-                break
-        elif stage_name == "rebuttal":
-            if len(linguist_defense) > 0 and len(linguist_defense[debate_round]) > 0:
-                agent_tool = tools["skeptic"]
-                print(
-                    f"\n\n{RESET}>>>🤔\tThe Skeptic considers and prepares a final criticism...\n{GRAY}"
-                )
-                stream_text(tasks["rebuttal"].description)
-                print(f"\n{RESET}\n")
-
-                # this is intentionally potentially range(0, 0) sometimes
-                for i in range(0, debate_round):
-                    defense_prompt_data.append(
-                        f"You rebuttaled: {skeptic_rebuttal[i]}\n\n"
-                    )
-                    defense_prompt_data.append(
-                        f"Then the linguist defended by saying: {linguist_defense[i]}\n\n"
-                    )
-                skeptic_rebuttal.append(
-                    agent_tool._run(
-                        prompt="\n".join(
-                            [
-                                tasks["rebuttal"].description,
-                                f"Linguist proposed: {linguist_proposal}\n\n",
-                                f"You replied: {skeptic_response}\n\n",
-                                f"Linguist defended by arguing: {linguist_defense}\n\n",
-                                f"Adjudicator decided the debate should continue. Do what they are asking you, the skeptic, to do: {adjudicator_ruling}\n\n"
-                                f"Expected output: {tasks['rebuttal'].expected_output}",
-                            ]
-                        ),
-                        stream_callback=skeptic_cb,
-                        print_chunks=True,
-                        role_name="🤔\tSkeptic",
-                    )["response_text"]
-                )
-            else:
-                print("[Error] linguist_defense defined as ''")
-                break
+                    role_name="🥸\tSenior Linguist",
+                )["response_text"]
+            )
+            debate_round += 1
         elif stage_name == "glossator":
             agent_tool = tools[stage_name]
             gloss = ""
@@ -871,19 +934,9 @@ What follows is the debate transcript:
                 f"\n\n## Original prompt for the linguist's team:\n{tasks['propose'].description}",
                 f"## Linguist proposed:\n{linguist_proposal}\n\n",
                 f"## Skeptic replied:\n{skeptic_response}\n\n",
-                f"## Linguist defended:\n{linguist_defense[0]}\n\n",
+                f"## Linguist defended:\n{initial_defense}\n\n",
+                _additional_prompting("glossator"),
             ]
-            # again, sometimes this is supposed to be range(0, 0)
-            for i in range(0, debate_round):
-                debate_history_pregloss.append(
-                    f"## Adjudicator decided:\n{adjudicator_ruling[i]}\n\n"
-                )
-                debate_history_pregloss.append(
-                    f"## Skeptic rebuttaled:\n{skeptic_rebuttal[i]}\n\n"
-                )
-                debate_history_pregloss.append(
-                    f"## Linguist defended:\n{linguist_defense[i + 1]}\n\n"
-                )
             debate_history_pregloss.append(
                 f"## Expected output:\n{tasks['gloss'].expected_output}"
             )
@@ -908,14 +961,18 @@ What follows is the debate transcript:
             lines.append("\n\n=== 🤔 ATTACK ROUND 1===\n")
             lines.append(skeptic_response.strip())
             lines.append(f"\n\n=== 🥸 DEFENSE ROUND 1 ===\n")
-            lines.append(linguist_defense[0].strip())
-            for i in range(0, debate_round):
-                lines.append(f"\n\n=== 👩‍⚖️ ADJUDICATOR RULING ROUND {i + 1} ===\n")
-                lines.append(adjudicator_ruling[i].strip())
-                lines.append(f"\n\n=== 🤔 ATTACK ROUND {i + 2} ===\n")
-                lines.append(skeptic_rebuttal[i].strip())
-                lines.append(f"\n\n=== 🥸 DEFENSE ROUND {i + 2} ===\n")
-                lines.append(linguist_defense[i].strip())
+            lines.append(initial_defense.strip())
+            if debate_round < 1:
+                lines.append(f"\n\n=== 👩‍⚖️ ADJUDICATOR RULING ROUND 1 ===\n")
+                lines.append(adjudicator_ruling[debate_round].strip())
+            else:
+                for i in range(0, debate_round):
+                    lines.append(f"\n\n=== 👩‍⚖️ ADJUDICATOR RULING ROUND {i + 1} ===\n")
+                    lines.append(adjudicator_ruling[i].strip())
+                    lines.append(f"\n\n=== 🤔 ATTACK ROUND {i + 2} ===\n")
+                    lines.append(skeptic_rebuttal[i].strip())
+                    lines.append(f"\n\n=== 🥸 DEFENSE ROUND {i + 2} ===\n")
+                    lines.append(linguist_defense[i].strip())
 
             lines.append("\n\n=== 🧐 GLOSSATOR ===\n")
             lines.append(gloss)
@@ -944,7 +1001,8 @@ What follows is the debate transcript:
     return {
         "Linguist": linguist_proposal,
         "Skeptic": skeptic_response,
-        "Defense": linguist_defense,
+        "Initial_Defense": initial_defense,
+        "Followup_Defense": linguist_defense,
         "Rebuttal": skeptic_rebuttal,
         "Adjudicator": adjudicator_ruling,
         "Adjudicator_Prompt": adjudicator_prompt,
@@ -956,7 +1014,8 @@ What follows is the debate transcript:
         "raw_output": {
             "Linguist": linguist_proposal,
             "Skeptic": skeptic_response,
-            "Defense": linguist_defense,
+            "Initial_Defense": initial_defense,
+            "Followup_Defense": linguist_defense,
             "Rebuttal": skeptic_rebuttal,
             "Adjudicator": adjudicator_ruling,
             "Adjudicator_Prompt": adjudicator_prompt,

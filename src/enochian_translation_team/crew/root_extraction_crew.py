@@ -1056,6 +1056,7 @@ class RootExtractionCrew:
                     cursor = self.new_definitions_db.cursor()
 
                     # 2) insert cluster and llm records into sqlite
+                    xstr = lambda s: str(s).lower() or ""
                     if style == "debate":
                         cursor.execute(
                             """
@@ -1086,18 +1087,29 @@ class RootExtractionCrew:
                                 overlap_count,
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
+                                # gloss prompt
                                 _to_text(evaluated["Glossator_Prompt"])
-                                or _to_text(evaluated["raw_output"].get("Glossator_Prompt")),
+                                or _to_text(
+                                    evaluated["raw_output"].get("Glossator_Prompt")
+                                ),
+                                # gloss model
                                 _to_text(evaluated["Glossator_Model"])
-                                or _to_text(evaluated["raw_output"].get("Glossator_Model")),
-                                _to_text(evaluated["Adjudicator_Prompt"])
-                                or _to_text(evaluated["raw_output"].get("Adjudicator_Prompt")),
-                                _to_text(evaluated["Glossator_Model"])
-                                or _to_text(evaluated["raw_output"].get("Glossator_Model")),
+                                or _to_text(
+                                    evaluated["raw_output"].get("Glossator_Model")
+                                ),
+                                # glossator def
                                 _to_text(evaluated["Glossator"])
                                 or _to_text(evaluated["raw_output"].get("Glossator")),
-                                _to_text(evaluated["Adjudicator"])
-                                or _to_text(evaluated["raw_output"].get("Adjudicator")),
+                                # verdict
+                                str(
+                                    "accepted" in xstr(_to_text(evaluated["Glossator"]))
+                                    or "accepted"
+                                    in xstr(
+                                        _to_text(
+                                            evaluated["raw_output"].get("Glossator")
+                                        )
+                                    )
+                                ),
                                 cohesion_score,
                                 semantic_coverage,
                                 clustering_meta_json,
@@ -1133,9 +1145,13 @@ class RootExtractionCrew:
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
                                 _to_text(evaluated["Glossator_Prompt"])
-                                or _to_text(evaluated["raw_output"].get("Glossator_Prompt")),
+                                or _to_text(
+                                    evaluated["raw_output"].get("Glossator_Prompt")
+                                ),
                                 _to_text(evaluated["Glossator_Model"])
-                                or _to_text(evaluated["raw_output"].get("Glossator_Model")),
+                                or _to_text(
+                                    evaluated["raw_output"].get("Glossator_Model")
+                                ),
                                 _to_text(evaluated["Glossator"])
                                 or _to_text(evaluated["raw_output"].get("Glossator")),
                                 cohesion_score,
