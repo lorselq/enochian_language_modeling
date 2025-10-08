@@ -188,7 +188,7 @@ def cluster_definitions(definitions, model):
         .cpu()
         .numpy()
     )
-    dist_matrix = cosine_distances(embeddings)
+    dist_matrix = cosine_distances(embeddings, embeddings)
 
     # auto-tune clusters
     return tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix)
