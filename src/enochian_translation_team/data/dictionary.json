@@ -895,11 +895,7 @@
         "key_citations": [
             {
                 "location": "6.25",
-                "context": "...and are *in government"
-            },
-            {
-                "location": "and continuance as...\"",
-                "context": ""
+                "context": "...and are *in government* and continuance as..."
             }
         ],
         "commentary": "an excellent example of the relative consistency of the Enochian language"
@@ -1398,12 +1394,8 @@
         "canon_word": true,
         "key_citations": [
             {
-                "location": "9",
-                "context": "42:"
-            },
-            {
-                "location": "...in their eyes are *millstones* greater than the earth...\"",
-                "context": ""
+                "location": "9.42",
+                "context": "...in their eyes are *millstones* greater than the earth..."
             }
         ],
         "commentary": ""
@@ -1553,12 +1545,8 @@
         "canon_word": true,
         "key_citations": [
             {
-                "location": "19",
-                "context": "113:"
-            },
-            {
-                "location": "... she is the bed *of an harlot*...\"",
-                "context": ""
+                "location": "19.113",
+                "context": "... she is the bed *of an harlot*..."
             }
         ],
         "commentary": ""
@@ -2196,11 +2184,7 @@
         "key_citations": [
             {
                 "location": "18.8",
-                "context": "...openest "
-            },
-            {
-                "location": "the glory\" of God.\"",
-                "context": ""
+                "context": "...openest 'the glory' of God."
             }
         ],
         "commentary": ""
@@ -7808,11 +7792,7 @@
         "key_citations": [
             {
                 "location": "10.17",
-                "context": ":"
-            },
-            {
-                "location": "...and weeping *laid up* for the earth...\"",
-                "context": ""
+                "context": "...and weeping *laid up* for the earth..."
             }
         ],
         "commentary": ""
@@ -9385,8 +9365,8 @@
         "canon_word": true,
         "key_citations": [
             {
-                "location": "\"...under whom *I have placed* 9639...\"",
-                "context": ""
+                "location": "4.14",
+                "context": "...under whom *I have placed* 9639..."
             }
         ],
         "commentary": ""
@@ -11403,11 +11383,7 @@
         "key_citations": [
             {
                 "location": "6.6",
-                "context": "...mighty in the *firmaments of water"
-            },
-            {
-                "location": "...\"",
-                "context": ""
+                "context": "...mighty in the *firmaments of water*..."
             }
         ],
         "commentary": ""
@@ -12421,11 +12397,7 @@
         "key_citations": [
             {
                 "location": "10.28",
-                "context": "...the heads of *scorpions"
-            },
-            {
-                "location": "and live sulphur...\"",
-                "context": ""
+                "context": "...the heads of *scorpions* and live sulphur..."
             }
         ],
         "commentary": ""
@@ -14574,10 +14546,14 @@
         "key_citations": [
             {
                 "location": "1.73",
-                "context": "...*move*, 2.42:"
+                "context": "...*move*, therefore..."
             },
             {
-                "location": "...*move*, therefore...\",therefore...\",3.74",
+                "location": "2.42",
+                "context": "...*move*, therefore..."
+            },
+            {
+                "location": "3.74",
                 "context": "...*move*, descend..."
             },
             {
@@ -14627,10 +14603,10 @@
             },
             {
                 "location": "8.47",
-                "context": ":"
+                "context": "...*appear* to the terror of the earth..."
             },
             {
-                "location": "...*appear* to the terror of the earth...\",11.35",
+                "location": "11.35",
                 "context": "...move, therefore, and *show yourselves*..."
             },
             {

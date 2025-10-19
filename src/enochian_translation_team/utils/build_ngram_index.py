@@ -1,3 +1,4 @@
+from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
 import os
 import json
 import sqlite3

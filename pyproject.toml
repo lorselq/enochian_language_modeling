@@ -23,6 +23,7 @@ scikit-fuzzy = "^0.5.0"
 marisa-trie = "^1.2.1"
 hyperopt = "^0.2.7"
 yaspin = "^3.1.0"
+pysqlite3-binary = "^0.5.4"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
