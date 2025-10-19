@@ -1539,19 +1539,6 @@
         "commentary": ""
     },
     {
-        "word": "BABALOND",
-        "normalized": "babalond",
-        "definition": "harlot",
-        "canon_word": true,
-        "key_citations": [
-            {
-                "location": "19.113",
-                "context": "... she is the bed *of an harlot*..."
-            }
-        ],
-        "commentary": ""
-    },
-    {
         "word": "BAEOVIB",
         "normalized": "beovib",
         "definition": "righteousness",
@@ -9480,7 +9467,7 @@
                 "context": "...righteousness *and* truth..."
             },
             {
-                "location": "\"3.45",
+                "location": "3.45",
                 "context": "...*and* the corners of your government..."
             }
         ],
