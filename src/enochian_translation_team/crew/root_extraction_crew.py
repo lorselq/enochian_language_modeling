@@ -1,3 +1,4 @@
+from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
 import re
 import json
 import sqlite3
@@ -601,7 +602,7 @@ class RootExtractionCrew:
         # Normalize expected keys (be defensive)
         normalized = {
             "Glossator": the_result.get("Glossator", "") or "",
-            "Glossator_Model": the_result.get("Glossator_Model", ""),
+            "Model": the_result.get("Model", ""),
             "Glossator_Prompt": the_result.get("Glossator_Prompt", ""),
             "Adjudicator": the_result.get("Adjudicator", ""),
             "Adjudicator_Prompt": the_result.get("Adjudicator_Prompt", ""),
@@ -1067,16 +1068,22 @@ class RootExtractionCrew:
                                 sem_count,
                                 idx_count,
                                 overlap_count,
-                                action,
+                                prevaluation,
                                 reason,
+                                model,
+                                proposal,
+                                critique,
+                                defense,
+                                adjudicator_rounds,
+                                skeptic_rounds,
+                                linguist_rounds,
                                 glossator_prompt,
-                                glossator_model,
                                 glossator_def,
                                 verdict,
-                                cohesion,
+                                semantic_cohesion,
                                 semantic_coverage,
                                 best_config
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
@@ -1087,15 +1094,45 @@ class RootExtractionCrew:
                                 overlap_count,
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
+                                # proposal
+                                _to_text(evaluated["Proposal"])
+                                or _to_text(
+                                    evaluated["raw_output"].get("Proposal")
+                                ),
+                                # critique
+                                _to_text(evaluated["Critique"])
+                                or _to_text(
+                                    evaluated["raw_output"].get("Critique")
+                                ),
+                                # defense
+                                _to_text(evaluated["Initial_Defense"])
+                                or _to_text(
+                                    evaluated["raw_output"].get("Initial_Defense")
+                                ),
+                                # adjudicator_rounds
+                                _to_text(evaluated["Adjudicator"])
+                                or _to_text(
+                                    evaluated["raw_output"].get("Adjudicator")
+                                ),
+                                # skeptic_rounds
+                                _to_text(evaluated["Skeptic"])
+                                or _to_text(
+                                    evaluated["raw_output"].get("Skeptic")
+                                ),
+                                # linguist_rounds
+                                _to_text(evaluated["Linguist"])
+                                or _to_text(
+                                    evaluated["raw_output"].get("Linguist")
+                                ),
+                                # gloss model
+                                _to_text(evaluated["Model"])
+                                or _to_text(
+                                    evaluated["raw_output"].get("Model")
+                                ),
                                 # gloss prompt
                                 _to_text(evaluated["Glossator_Prompt"])
                                 or _to_text(
                                     evaluated["raw_output"].get("Glossator_Prompt")
-                                ),
-                                # gloss model
-                                _to_text(evaluated["Glossator_Model"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Glossator_Model")
                                 ),
                                 # glossator def
                                 _to_text(evaluated["Glossator"])
@@ -1125,15 +1162,16 @@ class RootExtractionCrew:
                                 sem_count,
                                 idx_count,
                                 overlap_count,
-                                action,
+                                prevaluation,
                                 reason,
+                                model,
                                 glossator_prompt,
-                                glossator_model,
                                 glossator_def,
+                                verdict,
                                 cohesion,
                                 semantic_coverage,
                                 best_config
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
@@ -1148,9 +1186,9 @@ class RootExtractionCrew:
                                 or _to_text(
                                     evaluated["raw_output"].get("Glossator_Prompt")
                                 ),
-                                _to_text(evaluated["Glossator_Model"])
+                                _to_text(evaluated["Model"])
                                 or _to_text(
-                                    evaluated["raw_output"].get("Glossator_Model")
+                                    evaluated["raw_output"].get("Model")
                                 ),
                                 _to_text(evaluated["Glossator"])
                                 or _to_text(evaluated["raw_output"].get("Glossator")),

@@ -5,7 +5,7 @@
 #   python init_loagaeth_db.py loagaeth.sqlite --overwrite
 #
 # The script only creates schema; you can insert rows later with your own loaders.
-
+from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
 import os
 import sys
 import argparse

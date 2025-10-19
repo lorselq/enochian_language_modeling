@@ -1,33 +1,26 @@
+#!/usr/bin/env python3
 """
 init_insights_db.py
 
 Initializes (or gently migrates) the insights database used by the ELM debate/solo pipelines.
-This version implements the schema upgrades we discussed:
 
-- Separate `runs` for batch metadata
-- Richer `clusters` with adjudication fields & cohesion metrics
-- Keep raw definitions in `raw_defs` (no judgments mixed in)
-- Normalize `citations` (one row per citation) + `sources`
-- Track synthesized definitions in `synth_defs`
-- Record gating/skips in `skips`
-- Optional `decisions` table for future per-target adjudications
-- Useful indexes + FTS5 over definitions for fast search
+Design choices per request:
+- **No FTS** anywhere (SQLite 3.37.2; json1 may or may not be present).
+- Keep the column name **cohesion** (do not rename to semantic_cohesion).
+- Provide a **clusters_processed VIEW** that mirrors `clusters` and filters to rows
+  whose `glossator_def` is non-empty and (ideally) valid JSON. If JSON1 is available,
+  we require `json_valid(glossator_def)=1`; otherwise we fall back to a conservative
+  heuristic (starts with '{' and not an error prefix).
+- Create schemas for both **solo** and **debate** variants; we infer the variant from
+  the DB pathname (contains "solo" → solo; otherwise debate).
 
-The module is safe to re-run: it will create missing tables and indexes, and
-attempt to add missing columns on existing tables.
-
-SQLite notes:
-- Adding constraints to existing columns is not supported during migration.
-- We therefore add only missing columns (no retroactive CHECK constraints).
-- New databases created from scratch will have full constraints.
-
-Author: ELM project
+The script is idempotent and safe to re-run.
 """
-
 from __future__ import annotations
+from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
 import os
 import sqlite3
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Tuple
 
 # -------------------------
 # Paths
@@ -35,15 +28,15 @@ from typing import Dict, Iterable, Tuple
 
 
 def DB_PATH(file_name: str = "debate_derived_definitions.sqlite3") -> str:
-    """
-    Build an absolute path into your repo's data/ directory.
+    """Build an absolute path into your repo's data/ directory.
 
-    Default file name picks the debate DB; pass a different name for alternates, e.g.:
-        DB_PATH("solo_analysis_derived_definitions.sqlite3")
+    Example overrides:
+        DB_PATH("raw_solo_analysis_derived_definitions.sqlite3")
+        DB_PATH("processed_debate_derived_definitions.sqlite3")
     """
     return os.path.abspath(
         os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),  # Go up from scripts directory
+            os.path.dirname(os.path.dirname(__file__)),  # up from scripts/
             "src",
             "enochian_translation_team",
             "data",
@@ -66,10 +59,10 @@ def _open(db_path: str) -> sqlite3.Connection:
     return conn
 
 
-def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+def _table_or_view_exists(conn: sqlite3.Connection, name: str) -> bool:
     cur = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ? LIMIT 1;",
-        (table,),
+        (name,),
     )
     return cur.fetchone() is not None
 
@@ -85,9 +78,7 @@ def _index_exists(conn: sqlite3.Connection, name: str) -> bool:
 def _columns(
     conn: sqlite3.Connection, table: str
 ) -> Dict[str, Tuple[int, str, int, int, str]]:
-    """
-    Return PRAGMA table_info columns mapping: {name: (cid, name, type, notnull, dflt_value, pk)}
-    """
+    """Return PRAGMA table_info columns mapping: {name: (cid, name, type, notnull, dflt_value, pk)}"""
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
     return {r[1]: r for r in rows}
 
@@ -105,21 +96,17 @@ def _create_index_if_missing(conn: sqlite3.Connection, name: str, ddl: str) -> N
         conn.execute(ddl)
 
 
-def _fts5_available(conn: sqlite3.Connection) -> bool:
-    try:
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS __fts5_smoketest USING fts5(x);"
-        )
-        conn.execute("DROP TABLE __fts5_smoketest;")
-        return True
-    except sqlite3.DatabaseError:
-        return False
-
-
 def _infer_variant_from_path(path: str) -> str:
-    if "solo" in path.lower():
-        return "solo"
-    return "debate"
+    path_l = path.lower()
+    return "solo" if "solo" in path_l else "debate"
+
+
+def _has_json1(conn: sqlite3.Connection) -> bool:
+    try:
+        row = conn.execute("SELECT json_valid('{\"a\":1}')").fetchone()
+        return bool(row and row[0] == 1)
+    except sqlite3.Error:
+        return False
 
 
 # -------------------------
@@ -135,13 +122,17 @@ CREATE TABLE IF NOT EXISTS clusters (
   sem_count             INTEGER,
   idx_count             INTEGER,
   overlap_count         INTEGER,
-  action                TEXT,
+  prevaluation          TEXT,
   reason                TEXT,
+  model                 TEXT,
+  proposal              TEXT,
+  critique              TEXT,
+  defense               TEXT,
+  adjudicator_rounds    TEXT,
+  skeptic_rounds        TEXT,
+  linguist_rounds       TEXT,
   glossator_prompt      TEXT,
-  glossator_model       TEXT,
   glossator_def         TEXT,
-  verdict               TEXT,
-  semantic_cohesion     REAL,
   derivational_validity REAL,
   rebuttal_resilience   REAL,
   cohesion              REAL,
@@ -161,13 +152,11 @@ CREATE TABLE IF NOT EXISTS clusters (
   sem_count             INTEGER,
   idx_count             INTEGER,
   overlap_count         INTEGER,
-  action                TEXT,
+  prevaluation          TEXT,
   reason                TEXT,
+  model                 TEXT,
   glossator_prompt      TEXT,
-  glossator_model       TEXT,
   glossator_def         TEXT,
-  semantic_cohesion     REAL,
-  derivational_validity REAL,
   cohesion              REAL,
   semantic_coverage     REAL,
   best_config           TEXT,
@@ -177,95 +166,75 @@ CREATE TABLE IF NOT EXISTS clusters (
 """
 
 SCHEMA_CREATE = f"""
--- Ensure foreign keys
 PRAGMA foreign_keys = ON;
 
 -- 0) Runs: batch-level metadata
 CREATE TABLE IF NOT EXISTS runs (
   run_id        TEXT PRIMARY KEY,
-  -- free-form name or UUID for human traceability
   run_name      TEXT,
   engine        TEXT CHECK (engine IN ('debate','solo')) NOT NULL DEFAULT 'debate',
-  embedder      TEXT,              -- e.g., all-MiniLM-L6-v2
-  env_json      TEXT,              -- library versions, seeds, device info
+  embedder      TEXT,
+  env_json      TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
--- 1) Clusters: one row per evaluated cluster of an n-gram
+-- 1) Clusters per variant
 [[[CLUSTERS_BLOCK]]]
 
--- 2) Raw definitions: never mix judgments here
+-- 2) Raw definitions (optional, kept for provenance)
 CREATE TABLE IF NOT EXISTS raw_defs (
   def_id        INTEGER PRIMARY KEY AUTOINCREMENT,
   cluster_id    INTEGER NOT NULL REFERENCES clusters(cluster_id) ON DELETE CASCADE,
-  source_word   TEXT    NOT NULL,               -- member word/variant
-  variant       TEXT    NOT NULL,               -- variant (as relevant)
-  definition    TEXT    NOT NULL,               -- human-compiled base gloss
-  enhanced_def  TEXT,                           -- model-enhanced gloss
-  fasttext      REAL,                           -- FastText score (optional)
-  similarity    REAL,                           -- embedding sim score
-  tier          TEXT,                           -- provenance tier/label
+  source_word   TEXT    NOT NULL,
+  variant       TEXT    NOT NULL,
+  definition    TEXT    NOT NULL,
+  enhanced_def  TEXT,
+  fasttext      REAL,
+  similarity    REAL,
+  tier          TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (cluster_id, source_word, definition)
 );
 
--- 2b) Citations normalized (split from JSON)
 CREATE TABLE IF NOT EXISTS citations (
   citation_id   INTEGER PRIMARY KEY AUTOINCREMENT,
   def_id        INTEGER NOT NULL REFERENCES raw_defs(def_id) ON DELETE CASCADE,
-  location      TEXT,                           -- folio/page/line
-  context       TEXT                            -- short snippet
+  location      TEXT,
+  context       TEXT
 );
 
--- 3) Synthesized definitions per ngram/cluster
 CREATE TABLE IF NOT EXISTS synth_defs (
   synth_id      INTEGER PRIMARY KEY AUTOINCREMENT,
   ngram         TEXT    NOT NULL,
   cluster_id    INTEGER REFERENCES clusters(cluster_id) ON DELETE SET NULL,
-  synth_def     TEXT    NOT NULL,               -- short gloss used for reconstruction
-  notes         TEXT,                           -- any kind of commentary necessary
-  members       TEXT    NOT NULL,               -- JSON: [def_id, ...]
-  method_meta   TEXT,                           -- JSON of best_config/method commentary
+  synth_def     TEXT    NOT NULL,
+  notes         TEXT,
+  members       TEXT    NOT NULL,
+  method_meta   TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
--- 4) Skips (gate rejections before debate)
 CREATE TABLE IF NOT EXISTS skips (
   skip_id       INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id        TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
   ngram         TEXT NOT NULL,
   cluster_index INTEGER,
-  reason_code   TEXT,                           -- e.g., LOW_OVERLAP, SMALL_CLUSTER, LOW_COHESION
+  reason_code   TEXT,
   sem_count     INTEGER,
   idx_count     INTEGER,
   overlap_count INTEGER,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
--- 5) Generic decisions table (optional, flexible)
-CREATE TABLE IF NOT EXISTS decisions (
-  decision_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id        TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-  target_kind   TEXT CHECK (target_kind IN ('lexeme','sense','attestation','cluster','synth')) NOT NULL,
-  target_id     TEXT NOT NULL,
-  verdict       TEXT CHECK (verdict IN ('accept','reject','hold')),
-  reason_code   TEXT,
-  note          TEXT,
-  timestamp     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-
--- Helpful indexes
+-- Helpful indexes (no FTS)
 CREATE INDEX IF NOT EXISTS idx_clusters_ngram       ON clusters(ngram);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_ngram   ON clusters(run_id, ngram);
 CREATE INDEX IF NOT EXISTS idx_raw_defs_cluster     ON raw_defs(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_raw_defs_source      ON raw_defs(source_word);
 CREATE INDEX IF NOT EXISTS idx_citations_def        ON citations(def_id);
 CREATE INDEX IF NOT EXISTS idx_skips_run_ngram      ON skips(run_id, ngram);
-CREATE INDEX IF NOT EXISTS idx_clusters_ngram_has_gloss
-ON clusters(ngram, cluster_id)
-WHERE TRIM(COALESCE(glossator_def, '')) <> '';
 
--- Convenience view because why not
+-- Convenience view of rows that have a non-empty definition (regardless of verdict)
 CREATE VIEW IF NOT EXISTS accepted_clusters AS
 SELECT cluster_id, ngram, glossator_def
 FROM clusters
@@ -273,86 +242,130 @@ WHERE TRIM(COALESCE(glossator_def, '')) <> '';
 """
 
 # -------------------------
-# FTS5 (created only if available)
+# VIEW builders (JSON-valid filter if available)
 # -------------------------
 
-SCHEMA_FTS5 = """
-CREATE VIRTUAL TABLE IF NOT EXISTS raw_defs_fts USING fts5(
-  definition,
-  enhanced_def,
-  content='raw_defs',
-  content_rowid='def_id'
-);
-
--- Keep FTS in sync
-CREATE TRIGGER IF NOT EXISTS raw_defs_ai AFTER INSERT ON raw_defs BEGIN
-  INSERT INTO raw_defs_fts(rowid, definition, enhanced_def)
-  VALUES (new.def_id, new.definition, new.enhanced_def);
-END;
-
-CREATE TRIGGER IF NOT EXISTS raw_defs_ad AFTER DELETE ON raw_defs BEGIN
-  DELETE FROM raw_defs_fts WHERE rowid = old.def_id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS raw_defs_au AFTER UPDATE ON raw_defs BEGIN
-  UPDATE raw_defs_fts
-  SET definition = new.definition,
-      enhanced_def = new.enhanced_def
-  WHERE rowid = new.def_id;
-END;
+_DEF_VIEW_SOLO_JSON = """
+CREATE VIEW IF NOT EXISTS clusters_processed AS
+SELECT
+  cluster_id,
+  run_id,
+  ngram,
+  cluster_index,
+  sem_count,
+  idx_count,
+  overlap_count,
+  prevaluation,
+  reason,
+  model,
+  glossator_prompt,
+  glossator_def,
+  LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS verdict,
+  cohesion,
+  semantic_coverage,
+  best_config,
+  created_at
+FROM clusters
+WHERE TRIM(COALESCE(glossator_def, '')) <> ''
+  AND json_valid(glossator_def) = 1;
 """
 
-# -------------------------
-# Migration helpers
-# -------------------------
+_DEF_VIEW_DEBATE_JSON = """
+CREATE VIEW IF NOT EXISTS clusters_processed AS
+SELECT
+  cluster_id,
+  run_id,
+  ngram,
+  cluster_index,
+  sem_count,
+  idx_count,
+  overlap_count,
+  prevaluation,
+  reason,
+  model,
+  proposal,
+  critique,
+  defense,
+  adjudicator_rounds,
+  skeptic_rounds,
+  linguist_rounds,
+  glossator_prompt,
+  glossator_def,
+  LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS verdict,
+  derivational_validity,
+  rebuttal_resilience,
+  cohesion,
+  semantic_coverage,
+  best_config,
+  created_at
+FROM clusters
+WHERE TRIM(COALESCE(glossator_def, '')) <> ''
+  AND json_valid(glossator_def) = 1;
+"""
 
+# Fallback when JSON1 is not available.
+# Heuristic: leading '{' and not an error prefix.
+_DEF_VIEW_SOLO_HEUR = """
+CREATE VIEW IF NOT EXISTS clusters_processed AS
+SELECT
+  cluster_id,
+  run_id,
+  ngram,
+  cluster_index,
+  sem_count,
+  idx_count,
+  overlap_count,
+  prevaluation,
+  reason,
+  model,
+  glossator_prompt,
+  glossator_def,
+  LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS verdict,
+  cohesion,
+  semantic_coverage,
+  best_config,
+  created_at
+FROM clusters
+WHERE TRIM(COALESCE(glossator_def, '')) <> ''
+  AND TRIM(glossator_def) GLOB '{*}'
+  AND glossator_def NOT LIKE '[ERROR]%'
+  AND glossator_def NOT LIKE 'ERROR%';
+"""
 
-def _migrate_add_missing_columns(conn: sqlite3.Connection) -> None:
-    """
-    For existing databases, add new columns that did not exist previously.
-    We deliberately avoid retrofitting CHECK constraints.
-    """
-    # clusters new columns
-    cluster_new_cols = {
-        "sem_count": "INTEGER",
-        "idx_count": "INTEGER",
-        "overlap_count": "INTEGER",
-        "glossator_prompt": "TEXT",
-        "glossator_model": "TEXT",
-        "adjudicator_prompt": "TEXT",
-        "adjudicator_model": "TEXT",
-        "glossator_def": "TEXT",
-        "adjudicator_verdict": "TEXT",
-        "semantic_cohesion": "REAL",
-        "derivational_validity": "REAL",
-        "rebuttal_resilience": "REAL",
-        "cohesion": "REAL",
-        "semantic_coverage": "REAL",
-        "best_config": "TEXT",
-    }
-    if _table_exists(conn, "clusters"):
-        for col, decl in cluster_new_cols.items():
-            _add_column_if_missing(conn, "clusters", col, decl)
-
-    # raw_defs new columns
-    raw_defs_new_cols = {
-        "enhanced_def": "TEXT",
-        "fasttext": "REAL",
-        "similarity": "REAL",
-        "tier": "TEXT",
-    }
-    if _table_exists(conn, "raw_defs"):
-        for col, decl in raw_defs_new_cols.items():
-            _add_column_if_missing(conn, "raw_defs", col, decl)
-
-
-def _ensure_fts5(conn: sqlite3.Connection) -> None:
-    if _fts5_available(conn):
-        conn.executescript(SCHEMA_FTS5)
-    else:
-        # FTS5 not available; we just skip without failing.
-        pass
-
+_DEF_VIEW_DEBATE_HEUR = """
+CREATE VIEW IF NOT EXISTS clusters_processed AS
+SELECT
+  cluster_id,
+  run_id,
+  ngram,
+  cluster_index,
+  sem_count,
+  idx_count,
+  overlap_count,
+  prevaluation,
+  reason,
+  model,
+  proposal,
+  critique,
+  defense,
+  adjudicator_rounds,
+  skeptic_rounds,
+  linguist_rounds,
+  glossator_prompt,
+  glossator_def,
+  LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS verdict,
+  derivational_validity,
+  rebuttal_resilience,
+  cohesion,
+  semantic_coverage,
+  best_config,
+  created_at
+FROM clusters
+WHERE TRIM(COALESCE(glossator_def, '')) <> ''
+  AND TRIM(glossator_def) GLOB '{*}'
+  AND glossator_def NOT LIKE '[ERROR]%'
+  AND glossator_def NOT LIKE 'ERROR%';
+"""
 
 # -------------------------
 # Public API
@@ -360,36 +373,45 @@ def _ensure_fts5(conn: sqlite3.Connection) -> None:
 
 
 def init_db(path: str) -> None:
-    """
-    Initialize (or migrate) a database at `path`.
-    """
+    """Initialize (or migrate) a database at `path`."""
+    variant = _infer_variant_from_path(path)
     with _open(path) as conn:
         try:
             schema = SCHEMA_CREATE.replace(
                 "[[[CLUSTERS_BLOCK]]]",
-                (
-                    CLUSTERS_SOLO
-                    if _infer_variant_from_path(path) == "solo"
-                    else CLUSTERS_DEBATE
-                ),
+                CLUSTERS_SOLO if variant == "solo" else CLUSTERS_DEBATE,
             )
             conn.executescript(schema)
-            _migrate_add_missing_columns(conn)
-            _ensure_fts5(conn)
+
+            # Rebuild the processed VIEW to ensure the latest filter logic
+            if _table_or_view_exists(conn, "clusters_processed"):
+                conn.execute("DROP VIEW IF EXISTS clusters_processed;")
+
+            if _has_json1(conn):
+                ddl = (
+                    _DEF_VIEW_SOLO_JSON if variant == "solo" else _DEF_VIEW_DEBATE_JSON
+                )
+            else:
+                ddl = (
+                    _DEF_VIEW_SOLO_HEUR if variant == "solo" else _DEF_VIEW_DEBATE_HEUR
+                )
+            conn.executescript(ddl)
+
         except sqlite3.Error as e:
             raise RuntimeError(f"Database initialization failed: {e}") from e
 
-    print(f"Initialized insights DB at {path}")
+    print(
+        f"Initialized insights DB at {path} (variant={variant}, no FTS; json1={'yes' if _has_json1(_open(path)) else 'no'})"
+    )
 
 
 # -------------------------
 # CLI
 # -------------------------
-
 if __name__ == "__main__":
     dbs = [
-        "debate_derived_definitions.sqlite3",
-        "solo_analysis_derived_definitions.sqlite3",
+        "revised_debate_derived_definitions.sqlite3",
+        "revised_solo_analysis_derived_definitions.sqlite3",
     ]
     for name in dbs:
         init_db(DB_PATH(name))
