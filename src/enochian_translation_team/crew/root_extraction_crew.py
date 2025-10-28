@@ -310,7 +310,7 @@ class RootExtractionCrew:
             f"cohesion={cohesion_score:.3f} | "
             f"semantic_hits={semantic_hits} | "
             f"coverage={semantic_coverage:.3f} | "
-            f"sem={sem_count} | idx={idx_count} | overlap={overlap_count}"
+            f"sem={sem_count} | idx={idx_count} | overlap_count={overlap_count}"
         )
 
     def _dynamic_coh_floor(self, n: int | None, gram_len: int | None) -> float:
@@ -1089,9 +1089,9 @@ class RootExtractionCrew:
                                 self.run_id,
                                 ngram[0].upper(),
                                 cluster_id,
-                                sem_count,
-                                idx_count,
-                                overlap_count,
+                                len(sem_norms),
+                                len(index_norms),
+                                evaluated["overlap_count"],
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
                                 # proposal
@@ -1179,7 +1179,7 @@ class RootExtractionCrew:
                                 cluster_id,
                                 sem_count,
                                 idx_count,
-                                overlap_count,
+                                evaluated["overlap_count"],
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
                                 _to_text(evaluated["Glossator_Prompt"])
