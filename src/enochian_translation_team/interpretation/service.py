@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numbers
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Set
 
 from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.dictionary_loader import load_dictionary
@@ -89,21 +89,34 @@ class InterpretationService:
             ngram_text = slice_info.ngram
             cluster_records = self.repository.fetch_clusters(ngram_text, variants=active_variants)
             candidate_breakdowns = self.candidate_finder.find_candidates(ngram_text)
-            candidate_index: Dict[str, Dict[str, object]] = {}
+            candidate_lookup: Dict[str, Dict[str, object]] = {}
+            unique_candidates: List[Dict[str, object]] = []
+            seen_signatures: Set[tuple] = set()
             for candidate in candidate_breakdowns:
-                normalized = candidate.get("normalized")
-                if not normalized:
+                cleaned = _cleanup_candidate(candidate)
+                signature = (
+                    cleaned.get("normalized"),
+                    cleaned.get("composite"),
+                    cleaned.get("cos_sim"),
+                    cleaned.get("target_length"),
+                )
+                if signature in seen_signatures:
                     continue
-                key = str(normalized)
-                candidate_index[key] = _cleanup_candidate(candidate)
+                seen_signatures.add(signature)
+                unique_candidates.append(cleaned)
+                for key in _candidate_lookup_keys(candidate):
+                    if key not in candidate_lookup:
+                        candidate_lookup[key] = cleaned
             analyses.append(
                 {
                     "word_index": slice_info.word_index,
                     "span": [slice_info.start, slice_info.end],
                     "ngram": ngram_text.upper(),
-                    "candidates": list(candidate_index.values()),
+                    "candidates": unique_candidates,
                     "clusters": [
-                        self._serialize_cluster(record, candidate_index)
+                        self._serialize_cluster(
+                            record, candidate_lookup, unique_candidates
+                        )
                         for record in cluster_records
                     ],
                 }
@@ -117,7 +130,10 @@ class InterpretationService:
         }
 
     def _serialize_cluster(
-        self, record: ClusterRecord, candidate_index: Dict[str, Dict[str, object]]
+        self,
+        record: ClusterRecord,
+        candidate_lookup: Dict[str, Dict[str, object]],
+        candidates: List[Dict[str, object]],
     ) -> Dict[str, object]:
         serialized = {
             "variant": record.variant,
@@ -138,7 +154,9 @@ class InterpretationService:
                 "semantic_cohesion": record.semantic_cohesion,
                 "best_config": record.best_config,
             },
-            "residual_details": [self._serialize_residual_detail(detail) for detail in record.residual_details],
+            "residual_details": self._reconcile_residual_details(
+                record.residual_details, candidate_lookup, candidates
+            ),
         }
 
         enriched_defs = []
@@ -151,8 +169,8 @@ class InterpretationService:
             matched_candidate = None
             matched_key = None
             for key in normalized_options:
-                if key and key in candidate_index:
-                    matched_candidate = candidate_index[key]
+                if key and key in candidate_lookup:
+                    matched_candidate = candidate_lookup[key]
                     matched_key = key
                     break
             enriched = dict(raw_def)
@@ -162,8 +180,37 @@ class InterpretationService:
         serialized["definitions"] = enriched_defs
         return serialized
 
-    def _serialize_residual_detail(self, detail: ResidualDetail) -> Dict[str, object]:
-        return {
+    def _reconcile_residual_details(
+        self,
+        details: List[ResidualDetail],
+        candidate_lookup: Dict[str, Dict[str, object]],
+        candidates: List[Dict[str, object]],
+    ) -> List[Dict[str, object]]:
+        reconciled: List[Dict[str, object]] = []
+        matched_candidates: Set[int] = set()
+
+        for detail in details:
+            candidate = None
+            normalized_key = _safe_lower(detail.normalized)
+            if normalized_key and normalized_key in candidate_lookup:
+                candidate = candidate_lookup[normalized_key]
+                matched_candidates.add(id(candidate))
+
+            reconciled.append(
+                self._merge_residual_detail(detail, candidate)
+            )
+
+        for candidate in candidates:
+            if id(candidate) in matched_candidates:
+                continue
+            reconciled.append(_residual_detail_from_candidate(candidate))
+
+        return reconciled
+
+    def _merge_residual_detail(
+        self, detail: ResidualDetail, candidate: Optional[Dict[str, object]]
+    ) -> Dict[str, object]:
+        payload = {
             "normalized": detail.normalized,
             "definition": detail.definition,
             "coverage_ratio": detail.coverage_ratio,
@@ -171,7 +218,23 @@ class InterpretationService:
             "avg_confidence": detail.avg_confidence,
             "uncovered": list(detail.uncovered),
             "low_confidence": list(detail.low_confidence),
+            "source": "database",
+            "candidate": candidate,
         }
+
+        if candidate:
+            breakdown = candidate.get("breakdown") or {}
+            payload["candidate_breakdown"] = breakdown
+            payload["candidate_coverage_ratio"] = breakdown.get("coverage_ratio")
+            payload["candidate_residual_ratio"] = breakdown.get("residual_ratio")
+            payload["candidate_uncovered"] = _extract_uncovered_texts(breakdown)
+            payload["candidate_low_confidence"] = _extract_low_confidence_segments(
+                breakdown
+            )
+        else:
+            payload["candidate_breakdown"] = None
+
+        return payload
 
 
 def _cleanup_candidate(candidate: Dict[str, object]) -> Dict[str, object]:
@@ -179,11 +242,78 @@ def _cleanup_candidate(candidate: Dict[str, object]) -> Dict[str, object]:
     for key in ("normalized", "composite", "cos_sim", "confidence", "tfidf"):
         if key in candidate:
             value = candidate[key]
-            cleaned[key] = float(value) if isinstance(value, numbers.Real) else value
+            cleaned[key] = (
+                float(value) if isinstance(value, numbers.Real) else value
+            )
     cleaned["breakdown"] = candidate.get("breakdown")
     cleaned["target"] = candidate.get("target")
     cleaned["target_length"] = candidate.get("target_length")
     return cleaned
+
+
+def _candidate_lookup_keys(candidate: Dict[str, object]) -> Set[str]:
+    keys: Set[str] = set()
+    for raw in (candidate.get("normalized"), candidate.get("word")):
+        lowered = _safe_lower(raw)
+        if lowered:
+            keys.add(lowered)
+    breakdown = candidate.get("breakdown") or {}
+    segments = breakdown.get("segments") or []
+    for segment in segments:
+        lowered = _safe_lower(segment.get("canonical"))
+        if lowered:
+            keys.add(lowered)
+    return keys
+
+
+def _residual_detail_from_candidate(candidate: Dict[str, object]) -> Dict[str, object]:
+    breakdown = candidate.get("breakdown") or {}
+    uncovered = _extract_uncovered_texts(breakdown)
+    low_conf = _extract_low_confidence_segments(breakdown)
+    return {
+        "normalized": candidate.get("normalized"),
+        "definition": None,
+        "coverage_ratio": breakdown.get("coverage_ratio"),
+        "residual_ratio": breakdown.get("residual_ratio"),
+        "avg_confidence": None,
+        "uncovered": uncovered,
+        "low_confidence": low_conf,
+        "source": "candidate_finder",
+        "candidate": candidate,
+        "candidate_breakdown": breakdown,
+        "candidate_coverage_ratio": breakdown.get("coverage_ratio"),
+        "candidate_residual_ratio": breakdown.get("residual_ratio"),
+        "candidate_uncovered": uncovered,
+        "candidate_low_confidence": low_conf,
+    }
+
+
+def _extract_uncovered_texts(breakdown: Dict[str, object]) -> List[str]:
+    uncovered = breakdown.get("uncovered") or []
+    texts = []
+    for entry in uncovered:
+        text = entry.get("text") if isinstance(entry, dict) else None
+        if isinstance(text, str) and text.strip():
+            texts.append(text.strip())
+    return texts
+
+
+def _extract_low_confidence_segments(breakdown: Dict[str, object]) -> List[str]:
+    segments = breakdown.get("segments") or []
+    low_conf: List[str] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        text = segment.get("text")
+        confidence = segment.get("semantic_confidence")
+        if (
+            isinstance(text, str)
+            and text.strip()
+            and isinstance(confidence, numbers.Real)
+            and float(confidence) < 0.5
+        ):
+            low_conf.append(f"{text.strip()}@{float(confidence):.2f}")
+    return low_conf
 
 
 def _safe_lower(value: Optional[str]) -> Optional[str]:
