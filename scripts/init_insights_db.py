@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS clusters (
   idx_count             INTEGER,
   overlap_count         INTEGER,
   prevaluation          TEXT,
+  action                TEXT,
   reason                TEXT,
   model                 TEXT,
   proposal              TEXT,
@@ -133,11 +134,17 @@ CREATE TABLE IF NOT EXISTS clusters (
   linguist_rounds       TEXT,
   glossator_prompt      TEXT,
   glossator_def         TEXT,
+  verdict               TEXT,
   derivational_validity REAL,
   rebuttal_resilience   REAL,
+  semantic_cohesion     REAL,
   cohesion              REAL,
   semantic_coverage     REAL,
   best_config           TEXT,
+  residual_explained    REAL,
+  residual_ratio        REAL,
+  residual_headline     TEXT,
+  residual_focus_prompt TEXT,
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (run_id, ngram, cluster_index)
 );
@@ -153,13 +160,19 @@ CREATE TABLE IF NOT EXISTS clusters (
   idx_count             INTEGER,
   overlap_count         INTEGER,
   prevaluation          TEXT,
+  action                TEXT,
   reason                TEXT,
   model                 TEXT,
   glossator_prompt      TEXT,
   glossator_def         TEXT,
+  verdict               TEXT,
   cohesion              REAL,
   semantic_coverage     REAL,
   best_config           TEXT,
+  residual_explained    REAL,
+  residual_ratio        REAL,
+  residual_headline     TEXT,
+  residual_focus_prompt TEXT,
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (run_id, ngram, cluster_index)
 );
@@ -194,6 +207,19 @@ CREATE TABLE IF NOT EXISTS raw_defs (
   tier          TEXT,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (cluster_id, source_word, definition)
+);
+
+CREATE TABLE IF NOT EXISTS residual_details (
+  residual_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  cluster_id         INTEGER NOT NULL REFERENCES clusters(cluster_id) ON DELETE CASCADE,
+  normalized         TEXT    NOT NULL,
+  definition         TEXT,
+  coverage_ratio     REAL,
+  residual_ratio     REAL,
+  avg_confidence     REAL,
+  uncovered_json     TEXT,
+  low_conf_json      TEXT,
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS citations (
@@ -231,6 +257,7 @@ CREATE INDEX IF NOT EXISTS idx_clusters_ngram       ON clusters(ngram);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_ngram   ON clusters(run_id, ngram);
 CREATE INDEX IF NOT EXISTS idx_raw_defs_cluster     ON raw_defs(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_raw_defs_source      ON raw_defs(source_word);
+CREATE INDEX IF NOT EXISTS idx_residual_details_cluster ON residual_details(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_citations_def        ON citations(def_id);
 CREATE INDEX IF NOT EXISTS idx_skips_run_ngram      ON skips(run_id, ngram);
 
@@ -256,6 +283,7 @@ SELECT
   idx_count,
   overlap_count,
   prevaluation,
+  action,
   reason,
   model,
   glossator_prompt,
@@ -264,6 +292,10 @@ SELECT
   cohesion,
   semantic_coverage,
   best_config,
+  residual_explained,
+  residual_ratio,
+  residual_headline,
+  residual_focus_prompt,
   created_at
 FROM clusters
 WHERE TRIM(COALESCE(glossator_def, '')) <> ''
@@ -281,6 +313,7 @@ SELECT
   idx_count,
   overlap_count,
   prevaluation,
+  action,
   reason,
   model,
   proposal,
@@ -294,9 +327,14 @@ SELECT
   LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS verdict,
   derivational_validity,
   rebuttal_resilience,
+  semantic_cohesion,
   cohesion,
   semantic_coverage,
   best_config,
+  residual_explained,
+  residual_ratio,
+  residual_headline,
+  residual_focus_prompt,
   created_at
 FROM clusters
 WHERE TRIM(COALESCE(glossator_def, '')) <> ''
@@ -316,6 +354,7 @@ SELECT
   idx_count,
   overlap_count,
   prevaluation,
+  action,
   reason,
   model,
   glossator_prompt,
@@ -324,6 +363,10 @@ SELECT
   cohesion,
   semantic_coverage,
   best_config,
+  residual_explained,
+  residual_ratio,
+  residual_headline,
+  residual_focus_prompt,
   created_at
 FROM clusters
 WHERE TRIM(COALESCE(glossator_def, '')) <> ''
@@ -343,6 +386,7 @@ SELECT
   idx_count,
   overlap_count,
   prevaluation,
+  action,
   reason,
   model,
   proposal,
@@ -356,9 +400,14 @@ SELECT
   LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS verdict,
   derivational_validity,
   rebuttal_resilience,
+  semantic_cohesion,
   cohesion,
   semantic_coverage,
   best_config,
+  residual_explained,
+  residual_ratio,
+  residual_headline,
+  residual_focus_prompt,
   created_at
 FROM clusters
 WHERE TRIM(COALESCE(glossator_def, '')) <> ''
@@ -396,6 +445,25 @@ def init_db(path: str) -> None:
                     _DEF_VIEW_SOLO_HEUR if variant == "solo" else _DEF_VIEW_DEBATE_HEUR
                 )
             conn.executescript(ddl)
+
+            # Ensure newly introduced columns exist for older databases
+            shared_columns = {
+                "action": "TEXT",
+                "verdict": "TEXT",
+                "residual_explained": "REAL",
+                "residual_ratio": "REAL",
+                "residual_headline": "TEXT",
+                "residual_focus_prompt": "TEXT",
+            }
+            for column, decl in shared_columns.items():
+                _add_column_if_missing(conn, "clusters", f"{column} {decl}")
+
+            if variant == "debate":
+                debate_columns = {
+                    "semantic_cohesion": "REAL",
+                }
+                for column, decl in debate_columns.items():
+                    _add_column_if_missing(conn, "clusters", f"{column} {decl}")
 
         except sqlite3.Error as e:
             raise RuntimeError(f"Database initialization failed: {e}") from e
