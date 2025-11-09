@@ -35,3 +35,4 @@ enochian-build-fasttext = "enochian_translation_team.tools.train_fasttext_model:
 enochian-build-ngram-index = "enochian_translation_team.utils.build_ngram_index:main"
 enochian-inspect = "enochian_translation_team.tools.inspect_definitions:main"
 enochian-analysis = "enochian_translation_team.main:main"
+enochian-interpret = "enochian_translation_team.interpretation.cli:main"

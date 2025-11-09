@@ -1114,6 +1114,29 @@ class RootExtractionCrew:
 
                     cursor = self.new_definitions_db.cursor()
 
+                    def _safe_float(value):
+                        try:
+                            return float(value)
+                        except (TypeError, ValueError):
+                            return None
+
+                    residual_report = evaluated.get("residual_report") or {}
+                    residual_explained = _safe_float(
+                        residual_report.get("explained_ratio")
+                    )
+                    residual_ratio = _safe_float(
+                        residual_report.get("residual_ratio")
+                    )
+                    residual_headline = residual_report.get("headline") or None
+                    residual_focus_prompt = (
+                        residual_report.get("focus_prompt") or None
+                    )
+                    residual_word_details = (
+                        residual_report.get("word_details") or []
+                        if isinstance(residual_report, dict)
+                        else []
+                    )
+
                     # 2) insert cluster and llm records into sqlite
                     xstr = lambda s: str(s).lower() or ""
                     if style == "debate":
@@ -1140,8 +1163,12 @@ class RootExtractionCrew:
                                 verdict,
                                 semantic_cohesion,
                                 semantic_coverage,
-                                best_config
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                best_config,
+                                residual_explained,
+                                residual_ratio,
+                                residual_headline,
+                                residual_focus_prompt
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
@@ -1208,6 +1235,10 @@ class RootExtractionCrew:
                                 cohesion_score,
                                 semantic_coverage,
                                 clustering_meta_json,
+                                residual_explained,
+                                residual_ratio,
+                                residual_headline,
+                                residual_focus_prompt,
                             ),
                         )
                     elif style == "solo":
@@ -1228,8 +1259,12 @@ class RootExtractionCrew:
                                 verdict,
                                 cohesion,
                                 semantic_coverage,
-                                best_config
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                best_config,
+                                residual_explained,
+                                residual_ratio,
+                                residual_headline,
+                                residual_focus_prompt
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
@@ -1253,10 +1288,62 @@ class RootExtractionCrew:
                                 cohesion_score,
                                 semantic_coverage,
                                 clustering_meta_json,
+                                residual_explained,
+                                residual_ratio,
+                                residual_headline,
+                                residual_focus_prompt,
                             ),
                         )
 
                     cluster_rowid = cursor.lastrowid
+
+                    if residual_word_details:
+                        detail_rows = []
+                        for detail in residual_word_details:
+                            if not isinstance(detail, dict):
+                                continue
+                            normalized_word = (
+                                str(detail.get("normalized") or detail.get("word") or "")
+                                .strip()
+                            )
+                            if not normalized_word:
+                                continue
+                            uncovered = detail.get("uncovered") or []
+                            if not isinstance(uncovered, list):
+                                uncovered = [str(uncovered)] if uncovered else []
+                            low_conf = detail.get("low_conf_segments") or []
+                            if not isinstance(low_conf, list):
+                                low_conf = [str(low_conf)] if low_conf else []
+
+                            detail_rows.append(
+                                (
+                                    cluster_rowid,
+                                    normalized_word,
+                                    str(detail.get("definition") or ""),
+                                    _safe_float(detail.get("coverage_ratio")),
+                                    _safe_float(detail.get("residual_ratio")),
+                                    _safe_float(detail.get("avg_confidence")),
+                                    json.dumps(uncovered, ensure_ascii=False),
+                                    json.dumps(low_conf, ensure_ascii=False),
+                                )
+                            )
+
+                        if detail_rows:
+                            cursor.executemany(
+                                """
+                                INSERT INTO residual_details (
+                                    cluster_id,
+                                    normalized,
+                                    definition,
+                                    coverage_ratio,
+                                    residual_ratio,
+                                    avg_confidence,
+                                    uncovered_json,
+                                    low_conf_json
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                detail_rows,
+                            )
 
                     # 3) Insert each of the merged defs into `raw_defs`
                     for entry in merged_cluster:
