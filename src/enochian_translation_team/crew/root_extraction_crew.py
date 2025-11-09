@@ -8,10 +8,8 @@ import time
 import uuid, json, sys, platform, datetime
 from typing import List, Optional, Dict, Any, Tuple
 from collections import defaultdict
-from gensim.models import FastText
-from sentence_transformers import SentenceTransformer
 from enochian_translation_team.utils.logger import save_log
-from enochian_translation_team.tools.debate_engine import debate_ngram, safe_output
+from enochian_translation_team.tools.debate_engine import debate_ngram
 from enochian_translation_team.tools.solo_analysis_engine import (
     solo_agent_ngram_analysis,
 )
@@ -24,6 +22,11 @@ from enochian_translation_team.utils.semantic_search import (
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.def_reducer import consolidate_ngram_senses
 from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
+from enochian_translation_team.utils.embeddings import (
+    get_fasttext_model,
+    get_sentence_transformer,
+    stream_text,
+)
 
 GOLD = "\033[38;5;178m"
 GREEN = "\033[38;5;120m"
@@ -31,17 +34,6 @@ YELLOW = "\033[38;5;190m"
 BLUE = "\033[38;5;153m"
 PINK = "\033[38;5;213m"
 RESET = "\033[0m"
-
-
-def stream_text(text: str, delay: float = 0.001):
-    for c in text:
-        sys.stdout.write(c)
-        sys.stdout.flush()
-        try:
-            time.sleep(delay)
-        except KeyboardInterrupt:
-            # if you really need to interrupt, break cleanly
-            break
 
 
 class RootExtractionCrew:
@@ -61,9 +53,9 @@ class RootExtractionCrew:
         self.new_definitions_db = sqlite3.connect(paths[style])
         self._prepare_db(self.new_definitions_db)
         self.subst_map = self.load_subst_map()
-        self.fasttext = FastText.load(str(self.model_path))
+        self.fasttext = get_fasttext_model(self.model_path)
         self.sentence_model_name = "paraphrase-MiniLM-L6-v2"
-        self.sentence_model = SentenceTransformer(self.sentence_model_name)
+        self.sentence_model = get_sentence_transformer(self.sentence_model_name)
         self.processed_ngrams = self.load_processed_ngrams()
         self.candidate_finder = MorphemeCandidateFinder(
             ngram_db_path=paths["ngram_index"],
