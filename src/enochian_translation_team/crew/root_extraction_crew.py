@@ -27,6 +27,7 @@ from enochian_translation_team.utils.embeddings import (
     get_sentence_transformer,
     stream_text,
 )
+from enochian_translation_team.utils.residual_analysis import summarize_residuals
 
 GOLD = "\033[38;5;178m"
 GREEN = "\033[38;5;120m"
@@ -290,12 +291,13 @@ class RootExtractionCrew:
         sem_count: int,
         idx_count: int,
         overlap_count: int,
+        residual_report: dict | None = None,
     ) -> str:
         """
         Compact, human-readable summary passed to debate/solo engines.
         Keep it short; these strings are used inside prompts.
         """
-        return (
+        summary = (
             f"root={root.upper()} | "
             f"cluster_size={cluster_size} | "
             f"cohesion={cohesion_score:.3f} | "
@@ -303,6 +305,17 @@ class RootExtractionCrew:
             f"coverage={semantic_coverage:.3f} | "
             f"sem={sem_count} | idx={idx_count} | overlap_count={overlap_count}"
         )
+        if residual_report:
+            explained = residual_report.get("explained_ratio")
+            residual = residual_report.get("residual_ratio")
+            headline = residual_report.get("headline")
+            if explained is not None:
+                summary += f" | explained={float(explained):.2f}"
+            if residual is not None:
+                summary += f" | residual={float(residual):.2f}"
+            if headline:
+                summary += f" | residues={headline}"
+        return summary
 
     def _dynamic_coh_floor(self, n: int | None, gram_len: int | None) -> float:
         """
@@ -523,15 +536,6 @@ class RootExtractionCrew:
         else:
             root_callout = ""
 
-        # Summarize stats for agents
-        stats_summary = (
-            f"{root_callout}"
-            f"The proposed root '{ngram.upper()}' has:\n"
-            f"- Cohesion Score: {cohesion_score} (semantic similarity among definitions; from 0.0 to 1.0, with higher being better)\n"
-            f"- Semantic Coverage: {round(semantic_coverage * 100, 1)}% ({semantic_hits}/{len(cluster)} words match semantically)\n"
-            f"- Candidate Count: {len(cluster)}"
-        )
-
         tiered_groups = defaultdict(list)
         for c in cluster:
             tier = _get_field(c, "tier", "Untiered")
@@ -557,7 +561,62 @@ class RootExtractionCrew:
             1 for c in cluster if _get_field(c, "source", "") in ("semantic", "both")
         )
 
-        stats_summary = self._build_stats_summary(
+        residual_inputs = []
+        seen_norms = set()
+        for original in cluster:
+            norm_form = _get_field(original, "normalized", "").lower()
+            if not norm_form or norm_form in seen_norms:
+                continue
+            seen_norms.add(norm_form)
+            display_word = _get_field(original, "word", norm_form)
+            candidate_breakdowns = self.candidate_finder.find_candidates(
+                norm_form, top_k=1
+            )
+            top_candidate = candidate_breakdowns[0] if candidate_breakdowns else None
+            breakdown = (
+                top_candidate.get("breakdown") if top_candidate else None
+            )
+            if not breakdown:
+                uncovered = (
+                    [{"span": [0, len(norm_form)], "text": norm_form}]
+                    if norm_form
+                    else []
+                )
+                breakdown = {
+                    "segments": [],
+                    "uncovered": uncovered,
+                    "coverage_ratio": 0.0,
+                    "residual_ratio": 1.0 if uncovered else 0.0,
+                }
+            residual_inputs.append(
+                {
+                    "word": display_word,
+                    "normalized": norm_form,
+                    "definition": _get_field(original, "definition", ""),
+                    "breakdown": breakdown,
+                }
+            )
+
+        residual_report = summarize_residuals(
+            root=ngram_lower,
+            analyses=residual_inputs,
+        )
+
+        # Summarize stats for agents with residual diagnostics
+        coverage_pct = round(semantic_coverage * 100, 1)
+        stats_lines = [
+            f"{root_callout}The proposed root '{ngram.upper()}' has:",
+            f"- Cohesion Score: {cohesion_score} (semantic similarity among definitions; from 0.0 to 1.0, with higher being better)",
+            f"- Semantic Coverage: {coverage_pct}% ({semantic_hits}/{len(cluster)} words match semantically)",
+            f"- Candidate Count: {len(cluster)}",
+        ]
+        focus_prompt = residual_report.get("focus_prompt") if residual_report else ""
+        if focus_prompt:
+            stats_lines.append("")
+            stats_lines.append("Morphological diagnostics:")
+            stats_lines.append(focus_prompt)
+
+        compact_summary = self._build_stats_summary(
             ngram,  # or ngram if iterating strings
             cluster_size=len(cluster),
             cohesion_score=cohesion_score,
@@ -566,7 +625,10 @@ class RootExtractionCrew:
             sem_count=sem_count,
             idx_count=idx_count,
             overlap_count=overlap_count,
+            residual_report=residual_report,
         )
+
+        stats_summary = "\n".join(stats_lines) + f"\n\nCompact metrics: {compact_summary}"
 
         the_result = {"raw_output": {}}
         if style == "debate":
@@ -577,6 +639,7 @@ class RootExtractionCrew:
                 stream_callback=stream_callback,
                 root_entry=None,  # can be None; debate engine will handle
                 use_remote=self.use_remote,
+                residual_prompt=focus_prompt,
                 # blind_evaluation=True,
                 # debate_lite=True,
             )
@@ -588,7 +651,11 @@ class RootExtractionCrew:
                 stream_callback=stream_callback,
                 root_entry=None,
                 use_remote=self.use_remote,
+                residual_prompt=focus_prompt,
             )
+
+        if isinstance(the_result, dict):
+            the_result.setdefault("residual_report", residual_report)
 
         # Normalize expected keys (be defensive)
         normalized = {
@@ -600,6 +667,7 @@ class RootExtractionCrew:
             "Archivist": the_result.get("Archivist", "") or "",
             "raw_output": the_result,
         }
+        normalized["residual_report"] = residual_report
         return normalized
 
     def process_ngrams(
