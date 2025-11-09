@@ -1,9 +1,13 @@
+import logging
 import math
 import sys
 import time
+from collections import OrderedDict
+
 import numpy as np
 import networkx as nx
-from typing import List
+import torch
+from typing import List, Optional
 from tqdm import tqdm
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
@@ -20,6 +24,109 @@ from sklearn.metrics.pairwise import cosine_distances
 from sklearn.neighbors import NearestNeighbors
 from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
 from enochian_translation_team.utils.variant_utils import generate_variants
+
+
+logger = logging.getLogger(__name__)
+
+
+class EmbeddingCache:
+    def __init__(self, max_size: int = 2048):
+        self.max_size = max_size
+        self._cache: OrderedDict[tuple[str, str], torch.Tensor] = OrderedDict()
+        self.hits = 0
+        self.misses = 0
+
+    def lookup(self, key: tuple[str, str]) -> torch.Tensor | None:
+        if key in self._cache:
+            self.hits += 1
+            value = self._cache.pop(key)
+            self._cache[key] = value
+            return value
+        self.misses += 1
+        return None
+
+    def store(self, key: tuple[str, str], embedding: torch.Tensor) -> None:
+        if key in self._cache:
+            self._cache.pop(key)
+        elif len(self._cache) >= self.max_size:
+            self._cache.popitem(last=False)
+        self._cache[key] = embedding
+
+    def stats(self) -> dict:
+        total = self.hits + self.misses
+        hit_ratio = (self.hits / total) if total else 0.0
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_ratio": hit_ratio,
+            "size": len(self._cache),
+            "capacity": self.max_size,
+        }
+
+    def log_stats(self, *, context: str | None = None) -> None:
+        stats = self.stats()
+        ctx = f" [{context}]" if context else ""
+        logger.info(
+            "Embedding cache stats%s: hits=%d misses=%d hit_ratio=%.2f%% size=%d/%d",
+            ctx,
+            stats["hits"],
+            stats["misses"],
+            stats["hit_ratio"] * 100,
+            stats["size"],
+            stats["capacity"],
+        )
+
+
+embedding_cache = EmbeddingCache()
+
+
+def _batched_cached_embeddings(entries, sentence_model, *, context: str):
+    embeddings: List[Optional[torch.Tensor]] = [None] * len(entries)
+    to_encode_texts: List[str] = []
+    to_encode_keys: List[tuple[str, str]] = []
+    to_encode_indices: List[int] = []
+
+    for idx, entry in enumerate(entries):
+        key = (entry.canonical, entry.enhanced_definition)
+        cached = embedding_cache.lookup(key)
+        if cached is not None:
+            embeddings[idx] = cached
+            continue
+        to_encode_indices.append(idx)
+        to_encode_keys.append(key)
+        to_encode_texts.append(entry.enhanced_definition)
+
+    if to_encode_texts:
+        encoded_batch = sentence_model.encode(
+            to_encode_texts,
+            convert_to_tensor=True,
+            show_progress_bar=False,
+        )
+
+        if isinstance(encoded_batch, torch.Tensor):
+            encoded_batch = encoded_batch.detach().cpu()
+        else:
+            encoded_batch = torch.as_tensor(encoded_batch)
+
+        for idx, key, embedding in zip(
+            to_encode_indices,
+            to_encode_keys,
+            encoded_batch,
+        ):
+            embedding_cpu = embedding.clone().detach()
+            embedding_cache.store(key, embedding_cpu)
+            embeddings[idx] = embedding_cpu
+
+    # Ensure all embeddings were populated before returning.
+    result = []
+    for embedding in embeddings:
+        if embedding is None:
+            raise RuntimeError("Embedding cache returned an incomplete result set")
+        result.append(embedding)
+
+    embedding_cache.log_stats(context=context)
+
+    return result
 
 
 def normalize_form(word):
@@ -393,20 +500,15 @@ def find_semantically_similar_words(
     if not index_entries:
         return []
 
-    enhanced_entry_embeddings = [e.enhanced_definition for e in entries]
-    enhanced_index_defs = [e.enhanced_definition for e in index_entries]
-
-    root_embeddings = sentence_model.encode(
-        enhanced_index_defs,
-        convert_to_tensor=True,
-        #        show_progress_bar=False
+    root_embeddings_list = _batched_cached_embeddings(
+        index_entries, sentence_model, context="find_semantically_similar_words:index"
+    )
+    entry_embeddings_list = _batched_cached_embeddings(
+        entries, sentence_model, context="find_semantically_similar_words:entries"
     )
 
-    entry_embeddings = sentence_model.encode(
-        enhanced_entry_embeddings,
-        convert_to_tensor=True,
-        # show_progress_bar=False
-    )
+    root_embeddings = torch.stack(root_embeddings_list)
+    entry_embeddings = torch.stack(entry_embeddings_list)
 
     cosine_matrix = util.cos_sim(entry_embeddings, root_embeddings)
     enh_def_scores = cosine_matrix.max(dim=1).values.cpu().tolist()
