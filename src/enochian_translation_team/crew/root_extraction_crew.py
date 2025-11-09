@@ -22,7 +22,6 @@ from enochian_translation_team.utils.semantic_search import (
     cluster_definitions,
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
-from enochian_translation_team.utils.build_ngram_index import build_and_save_ngram_index
 from enochian_translation_team.utils.def_reducer import consolidate_ngram_senses
 from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
 
@@ -626,7 +625,6 @@ class RootExtractionCrew:
             else:
                 return getattr(item, field, default)
 
-        build_and_save_ngram_index()
         if single_ngram:
             ngrams = [(single_ngram, 9001)]  # Use a fake count
             max_words = 999
