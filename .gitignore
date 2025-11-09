@@ -188,6 +188,8 @@ src/enochian_translation_team/data/ngram_index.json
 src/enochian_translation_team/data/ngram_index.sqlite3
 src/enochian_translation_team/data/ngram_index.sqlite3.trie
 src/enochian_translation_team/data/ngram_index.sqlite3.meta.json
+src/enochian_translation_team/data/ngram_index.sqlite3-shm
+src/enochian_translation_team/data/ngram_index.sqlite3-wal
 src/enochian_translation_team/data/root_word_insights.json
 src/enochian_translation_team/data/processed_ngrams.json
 src/enochian_translation_team/data/debate_processed_ngrams.json
