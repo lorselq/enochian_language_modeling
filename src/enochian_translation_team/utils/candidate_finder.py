@@ -6,10 +6,10 @@ import numpy as np
 import logging
 from pathlib import Path
 from functools import lru_cache
-from gensim.models import FastText
 from gensim.utils import simple_preprocess
 from rapidfuzz import process as rf_process, fuzz
 from enochian_translation_team.utils.dictionary_loader import Entry
+from enochian_translation_team.utils.embeddings import get_fasttext_model
 
 # --- Logging setup ---
 logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.WARNING)
@@ -44,7 +44,7 @@ class MorphemeCandidateFinder:
         self.cursor = self.conn.cursor()
 
         # Load FastText model
-        self.fasttext_model = FastText.load(str(fasttext_model_path))
+        self.fasttext_model = get_fasttext_model(fasttext_model_path)
 
         # Build dictionary: canonical -> Entry
         self.dictionary = {e.canonical: e for e in dictionary_entries}
