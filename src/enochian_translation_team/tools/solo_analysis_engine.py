@@ -30,6 +30,7 @@ def solo_agent_ngram_analysis(
     stream_callback=None,
     root_entry: Optional[Entry] = None,
     use_remote: bool = True,
+    residual_prompt: str | None = None,
 ):
     joined_defs = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
@@ -69,6 +70,12 @@ def solo_agent_ngram_analysis(
     else:
         extra_prompt = ""
 
+    residual_section = (
+        f"Residual morphology diagnostics (segments vs. residue):\n{residual_prompt}\n"
+        if residual_prompt
+        else ""
+    )
+
     # === AGENT ===
     lexicographer = QueryModelTool(
         system_prompt=f"""
@@ -105,6 +112,10 @@ Special notes: {extra_prompt if extra_prompt else 'none'}
 Candidates (contain {root.upper()}): {candidate_list}
 
 Related definitions & citations: {root_def_summary}
+
+Stats summary: {stats_summary}
+
+{residual_section}
 
 Metrics: {about_metrics}
 
