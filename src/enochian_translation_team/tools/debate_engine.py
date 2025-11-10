@@ -1,7 +1,7 @@
 import logging
 import time
 import re
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Any
 from crewai import Agent, Task, Crew
 from sentence_transformers import util
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
@@ -188,6 +188,8 @@ def debate_ngram(
     blind_evaluation: bool = True,
     use_remote: bool = True,
     residual_prompt: str | None = None,
+    query_db: Any | None = None,
+    query_run_id: Any | None = None
 ):
     joined_defs = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
@@ -313,6 +315,8 @@ Your tone is incisive, precise, and intellectually honest.""",
         if residual_prompt
         else ""
     )
+
+    tools.map(lambda t: t.attach_logging(query_db, query_run_id))
 
     tasks = {
         "propose": Task(

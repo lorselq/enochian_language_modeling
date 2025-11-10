@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, Any
 from crewai import Task
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
 from enochian_translation_team.utils.dictionary_loader import Entry
@@ -31,6 +31,8 @@ def solo_agent_ngram_analysis(
     root_entry: Optional[Entry] = None,
     use_remote: bool = True,
     residual_prompt: str | None = None,
+    query_db: Any | None = None,
+    query_run_id: Any | None = None
 ):
     joined_defs = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
@@ -91,6 +93,8 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
         description="",
         use_remote=use_remote
     )
+
+    lexicographer.attach_logging(query_db, query_run_id)
 
     no_outside_speculation = "Use only the items provided in this prompt. Do **not** assume any extra-textual theology, mythology, or etymology."
     about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."

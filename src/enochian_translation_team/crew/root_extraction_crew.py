@@ -349,9 +349,9 @@ class RootExtractionCrew:
         self, stats: dict, rules: dict | None = None, *, force_model: bool = False
     ) -> dict:
         """
-        Pruning-only triage (more lenient):
-        - Skips ONLY 'extra-bad' clusters.
-        - Requires TWO independent red flags for most skips.
+        Pruning-only triage (slightly stricter than before):
+        - Skips ONLY 'extra-bad' clusters or mildly-bad clusters that also fall below cohesion floor.
+        - Requires TWO independent red flags for most skips; adds a gentle 1.5-strike rule.
         - Small clusters (n≤3) are NEVER pruned on dp==0 alone.
         """
         rules = rules or {}
@@ -364,14 +364,12 @@ class RootExtractionCrew:
         gram_len = stats.get("gram_len", None)
         gram_len = int(gram_len) if gram_len is not None else None
 
-        # More tolerant thresholds (override via rules if you like)
-        rej_scat = float(rules.get("reject_scatter", 0.45))  # was 0.30
-        rej_inc = float(rules.get("reject_incompatible", 0.45))  # was 0.30
-        mild_scat = float(rules.get("mild_scatter", 0.35))
-        mild_inc = float(rules.get("mild_incompatible", 0.20))
-        coh_margin = float(
-            rules.get("coh_margin", 0.10)
-        )  # how far below floor counts as "very low"
+        # Slightly tighter mild thresholds; keep reject thresholds as-is
+        rej_scat = float(rules.get("reject_scatter", 0.45))
+        rej_inc = float(rules.get("reject_incompatible", 0.45))
+        mild_scat = float(rules.get("mild_scatter", 0.33))  # was 0.35
+        mild_inc = float(rules.get("mild_incompatible", 0.18))  # was 0.20
+        coh_margin = float(rules.get("coh_margin", 0.10))  # unchanged
 
         reasons, tags = [], []
         floor = self._dynamic_coh_floor(n=n, gram_len=gram_len)
@@ -418,7 +416,20 @@ class RootExtractionCrew:
             details.append(f"scatter≥{mild_scat:.2f}")
             tags.append("SCATTER_MILD")
 
-        # Small clusters (n≤3): do NOT prune on dp=0; require BOTH low cohesion (strong) AND (inc or scat mild)
+        # 2a) NEW: gentle 1.5-strike rule
+        # If cohesion is below the *floor* (not just floor - margin) AND there is EITHER mild inc OR mild scat,
+        # skip for medium/large clusters (n≥4). This captures the "obviously weak" cases without being aggressive.
+        if (
+            not force_model
+            and n >= 4
+            and coh is not None
+            and coh < floor
+            and (inc >= mild_inc or scat >= mild_scat)
+        ):
+            reasons.append("below_floor + (mild_inc|mild_scat)")
+            tags.append("LOW_COH_FLOOR_COMBO")
+
+        # Small clusters: require very low cohesion AND (inc or scat mild)
         if n <= 3:
             if (coh is not None and coh < (floor - coh_margin)) and (
                 inc >= mild_inc or scat >= mild_scat
@@ -426,7 +437,6 @@ class RootExtractionCrew:
                 reasons.append(
                     "small_n two-strike (very low coh + conflict/dispersion)"
                 )
-            # else: never skip—let the model decide
         else:
             if strikes >= 2:
                 reasons.append("two-strike prune: " + ", ".join(details))
@@ -573,9 +583,7 @@ class RootExtractionCrew:
                 norm_form, top_k=1
             )
             top_candidate = candidate_breakdowns[0] if candidate_breakdowns else None
-            breakdown = (
-                top_candidate.get("breakdown") if top_candidate else None
-            )
+            breakdown = top_candidate.get("breakdown") if top_candidate else None
             if not breakdown:
                 uncovered = (
                     [{"span": [0, len(norm_form)], "text": norm_form}]
@@ -628,7 +636,9 @@ class RootExtractionCrew:
             residual_report=residual_report,
         )
 
-        stats_summary = "\n".join(stats_lines) + f"\n\nCompact metrics: {compact_summary}"
+        stats_summary = (
+            "\n".join(stats_lines) + f"\n\nCompact metrics: {compact_summary}"
+        )
 
         the_result = {"raw_output": {}}
         if style == "debate":
@@ -640,8 +650,8 @@ class RootExtractionCrew:
                 root_entry=None,  # can be None; debate engine will handle
                 use_remote=self.use_remote,
                 residual_prompt=focus_prompt,
-                # blind_evaluation=True,
-                # debate_lite=True,
+                query_db=self.new_definitions_db,
+                query_run_id=self.run_id
             )
         else:
             the_result = solo_agent_ngram_analysis(
@@ -652,6 +662,8 @@ class RootExtractionCrew:
                 root_entry=None,
                 use_remote=self.use_remote,
                 residual_prompt=focus_prompt,
+                query_db=self.new_definitions_db,
+                query_run_id=self.run_id
             )
 
         if isinstance(the_result, dict):
@@ -1124,13 +1136,9 @@ class RootExtractionCrew:
                     residual_explained = _safe_float(
                         residual_report.get("explained_ratio")
                     )
-                    residual_ratio = _safe_float(
-                        residual_report.get("residual_ratio")
-                    )
+                    residual_ratio = _safe_float(residual_report.get("residual_ratio"))
                     residual_headline = residual_report.get("headline") or None
-                    residual_focus_prompt = (
-                        residual_report.get("focus_prompt") or None
-                    )
+                    residual_focus_prompt = residual_report.get("focus_prompt") or None
                     residual_word_details = (
                         residual_report.get("word_details") or []
                         if isinstance(residual_report, dict)
@@ -1150,6 +1158,7 @@ class RootExtractionCrew:
                                 idx_count,
                                 overlap_count,
                                 prevaluation,
+                                action,
                                 reason,
                                 model,
                                 proposal,
@@ -1179,16 +1188,14 @@ class RootExtractionCrew:
                                 evaluated["overlap_count"],
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
+                                _to_text(evaluated["Model"])
+                                or _to_text(evaluated["raw_output"].get("Model")),
                                 # proposal
                                 _to_text(evaluated["Proposal"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Proposal")
-                                ),
+                                or _to_text(evaluated["raw_output"].get("Proposal")),
                                 # critique
                                 _to_text(evaluated["Critique"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Critique")
-                                ),
+                                or _to_text(evaluated["raw_output"].get("Critique")),
                                 # defense
                                 _to_text(evaluated["Initial_Defense"])
                                 or _to_text(
@@ -1196,24 +1203,13 @@ class RootExtractionCrew:
                                 ),
                                 # adjudicator_rounds
                                 _to_text(evaluated["Adjudicator"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Adjudicator")
-                                ),
+                                or _to_text(evaluated["raw_output"].get("Adjudicator")),
                                 # skeptic_rounds
                                 _to_text(evaluated["Skeptic"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Skeptic")
-                                ),
+                                or _to_text(evaluated["raw_output"].get("Skeptic")),
                                 # linguist_rounds
                                 _to_text(evaluated["Linguist"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Linguist")
-                                ),
-                                # gloss model
-                                _to_text(evaluated["Model"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Model")
-                                ),
+                                or _to_text(evaluated["raw_output"].get("Linguist")),
                                 # gloss prompt
                                 _to_text(evaluated["Glossator_Prompt"])
                                 or _to_text(
@@ -1255,8 +1251,8 @@ class RootExtractionCrew:
                                 reason,
                                 model,
                                 glossator_prompt,
-                                glossator_def,
                                 verdict,
+                                glossator_def,
                                 cohesion,
                                 semantic_coverage,
                                 best_config,
@@ -1275,13 +1271,21 @@ class RootExtractionCrew:
                                 evaluated["overlap_count"],
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
+                                _to_text(evaluated["Model"])
+                                or _to_text(evaluated["raw_output"].get("Model")),
                                 _to_text(evaluated["Glossator_Prompt"])
                                 or _to_text(
                                     evaluated["raw_output"].get("Glossator_Prompt")
                                 ),
-                                _to_text(evaluated["Model"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Model")
+                                # verdict
+                                str(
+                                    "accepted" in xstr(_to_text(evaluated["Glossator"]))
+                                    or "accepted"
+                                    in xstr(
+                                        _to_text(
+                                            evaluated["raw_output"].get("Glossator")
+                                        )
+                                    )
                                 ),
                                 _to_text(evaluated["Glossator"])
                                 or _to_text(evaluated["raw_output"].get("Glossator")),
@@ -1302,10 +1306,9 @@ class RootExtractionCrew:
                         for detail in residual_word_details:
                             if not isinstance(detail, dict):
                                 continue
-                            normalized_word = (
-                                str(detail.get("normalized") or detail.get("word") or "")
-                                .strip()
-                            )
+                            normalized_word = str(
+                                detail.get("normalized") or detail.get("word") or ""
+                            ).strip()
                             if not normalized_word:
                                 continue
                             uncovered = detail.get("uncovered") or []
