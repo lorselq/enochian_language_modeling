@@ -252,6 +252,38 @@ CREATE TABLE IF NOT EXISTS skips (
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+-- raw
+CREATE TABLE IF NOT EXISTS agent_raw (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cluster_id INTEGER NOT NULL REFERENCES clusters(cluster_id) ON DELETE CASCADE,
+  role TEXT,                     -- e.g., 'raw_output'
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_agent_raw_cluster ON agent_raw(cluster_id);
+
+-- llm jobs
+CREATE TABLE IF NOT EXISTS llm_job (
+  job_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id       TEXT REFERENCES runs(run_id) ON DELETE CASCADE,
+  prompt_hash  TEXT UNIQUE,
+  role         TEXT,               -- Glossator | Adjudicator | Skeptic | etc
+  model        TEXT,
+  base_url     TEXT,
+  temperature  REAL,
+  system_prompt TEXT,
+  user_prompt  TEXT,
+  request_json TEXT,               -- full request payload (safe to store)
+  response_text TEXT,              -- final text (non-streamed we’d use usage JSON too)
+  tokens_in    INTEGER,
+  tokens_out   INTEGER,
+  cost_usd     REAL,
+  status       TEXT,               -- queued|ok|cached|failed
+  error        TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  finished_at  TEXT
+);
+
 -- Helpful indexes (no FTS)
 CREATE INDEX IF NOT EXISTS idx_clusters_ngram       ON clusters(ngram);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_ngram   ON clusters(run_id, ngram);
@@ -260,6 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_raw_defs_source      ON raw_defs(source_word);
 CREATE INDEX IF NOT EXISTS idx_residual_details_cluster ON residual_details(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_citations_def        ON citations(def_id);
 CREATE INDEX IF NOT EXISTS idx_skips_run_ngram      ON skips(run_id, ngram);
+CREATE INDEX IF NOT EXISTS idx_llm_job_run          ON llm_job(run_id);
 
 -- Convenience view of rows that have a non-empty definition (regardless of verdict)
 CREATE VIEW IF NOT EXISTS accepted_clusters AS
