@@ -1,68 +1,26 @@
 import logging
-import time
-import sys
-from typing import Optional
+from typing import Optional, Any
 from crewai import Task
-from sentence_transformers import SentenceTransformer
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
 from enochian_translation_team.utils.dictionary_loader import Entry
+from enochian_translation_team.utils.embeddings import (
+    get_sentence_transformer,
+    select_definitions,
+    stream_text,
+)
 
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("openai.api_requestor").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+embedder = get_sentence_transformer("all-MiniLM-L6-v2")
 
 
 def _get_field(item, field, default=""):
     if isinstance(item, dict):
         return item.get(field, default)
     return getattr(item, field, default)
-
-
-def stream_text(text: str, delay: float = 0.001):
-    for c in text:
-        sys.stdout.write(c)
-        sys.stdout.flush()
-        try:
-            time.sleep(delay)
-        except KeyboardInterrupt:
-            # if you really need to interrupt, break cleanly
-            break
-
-
-def select_definitions(def_list, max_words=75):
-    selected = []
-    total_words = 0
-
-    for d in def_list:
-        # Only count words before the first citation bracket
-        bracket_index = d.find(" [")
-        if bracket_index != -1:
-            word_slice = d[:bracket_index]
-        else:
-            word_slice = d
-        word_count = len(word_slice.split())
-
-        if total_words + word_count > max_words:
-            break
-
-        selected.append(d)
-        total_words += word_count
-
-    return selected
-
-
-def safe_output(crew_output) -> dict:
-    if not crew_output:
-        return {}
-
-    try:
-        return getattr(crew_output, "raw_output", {})
-    except Exception as e:
-        print(f"[!] Failed to extract output: {e}")
-        return {}
 
 
 def solo_agent_ngram_analysis(
@@ -72,6 +30,9 @@ def solo_agent_ngram_analysis(
     stream_callback=None,
     root_entry: Optional[Entry] = None,
     use_remote: bool = True,
+    residual_prompt: str | None = None,
+    query_db: Any | None = None,
+    query_run_id: Any | None = None
 ):
     joined_defs = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
@@ -111,6 +72,12 @@ def solo_agent_ngram_analysis(
     else:
         extra_prompt = ""
 
+    residual_section = (
+        f"Residual morphology diagnostics (segments vs. residue):\n{residual_prompt}\n"
+        if residual_prompt
+        else ""
+    )
+
     # === AGENT ===
     lexicographer = QueryModelTool(
         system_prompt=f"""
@@ -126,6 +93,8 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
         description="",
         use_remote=use_remote
     )
+
+    lexicographer.attach_logging(query_db, query_run_id)
 
     no_outside_speculation = "Use only the items provided in this prompt. Do **not** assume any extra-textual theology, mythology, or etymology."
     about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
@@ -147,6 +116,10 @@ Special notes: {extra_prompt if extra_prompt else 'none'}
 Candidates (contain {root.upper()}): {candidate_list}
 
 Related definitions & citations: {root_def_summary}
+
+Stats summary: {stats_summary}
+
+{residual_section}
 
 Metrics: {about_metrics}
 
