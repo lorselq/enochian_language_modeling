@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS grid_cell (
   artifact_id     INTEGER NOT NULL,            -- the particular table/square
   row_idx         INTEGER NOT NULL,
   col_idx         INTEGER NOT NULL,
-  node_id  INTEGER NOT NULL,            -- which letter_node sits here
+  node_id         INTEGER NOT NULL,            -- which letter_node sits here
   orientation     INTEGER DEFAULT 0,           -- e.g., 0, 45, 90, 135
   meta_json       TEXT,                        -- additional information, e.g., inside-circle, inside-square, bolded
   FOREIGN KEY(artifact_id) REFERENCES artifact(id)    ON DELETE CASCADE,
