@@ -252,12 +252,6 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
             description="",
             use_remote=use_remote,
         ),
-        "initial_ruling": QueryModelTool(
-            system_prompt=f"You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is).",
-            name="Adjudicator",
-            description="",
-            use_remote=use_remote,
-        ),
         "synthesis": QueryModelTool(
             system_prompt="""
 You are the Lead Linguist in a collaborative reverse-engineering effort focused on the Enochian language—a system with obscure morphology and nonstandard linguistic structures.
@@ -316,7 +310,8 @@ Your tone is incisive, precise, and intellectually honest.""",
         else ""
     )
 
-    tools.map(lambda t: t.attach_logging(query_db, query_run_id))
+    for _, tool in tools.items():
+        tool.attach_logging(query_db, query_run_id)
 
     tasks = {
         "propose": Task(
