@@ -595,13 +595,13 @@ def build_sidecar(
 # ----------------------------- CLI -----------------------------
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", type=Path, default=Path("ngram_index.sqlite"))
-    ap.add_argument("--keys", type=Path, default=Path("enochian_keys.txt"))
-    ap.add_argument("--dict", type=Path, default=Path("dictionary.json"))
-    ap.add_argument("--subst", type=Path, default=Path("substitution_map.json"))
-    ap.add_argument("--compress", type=Path, default=Path("sequence_compressions.json"))
+    ap.add_argument("--db", type=Path, default=Path("src/enochian_translation_team/data/ngram_index.sqlite"))
+    ap.add_argument("--keys", type=Path, default=Path("src/enochian_translation_team/data/enochian_keys.txt"))
+    ap.add_argument("--dict", type=Path, default=Path("src/enochian_translation_team/data/dictionary.json"))
+    ap.add_argument("--subst", type=Path, default=Path("src/enochian_translation_team/data/substitution_map.json"))
+    ap.add_argument("--compress", type=Path, default=Path("src/enochian_translation_team/data/sequence_compressions.json"))
     ap.add_argument("--min_n", type=int, default=1)
-    ap.add_argument("--max_n", type=int, default=6)
+    ap.add_argument("--max_n", type=int, default=7)
     ap.add_argument("--respect_pauses", type=int, default=1)
     ap.add_argument("--variant_map", type=Path, default=None)  # optional manual overrides
     args = ap.parse_args()

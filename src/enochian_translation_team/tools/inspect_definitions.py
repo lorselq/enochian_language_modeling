@@ -1,7 +1,7 @@
 from typing import List
 import sys
 import json
-from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
+from enochian_translation_team.utils.dictionary_loader import load_dictionary, EntryLike
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
 from enochian_translation_team.utils.config import get_config_paths

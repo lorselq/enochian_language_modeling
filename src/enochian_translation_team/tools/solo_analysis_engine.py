@@ -2,7 +2,7 @@ import logging
 from typing import Optional, Any
 from crewai import Task
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
-from enochian_translation_team.utils.dictionary_loader import Entry
+from enochian_translation_team.utils.dictionary_loader import EntryLike
 from enochian_translation_team.utils.embeddings import (
     get_sentence_transformer,
     select_definitions,

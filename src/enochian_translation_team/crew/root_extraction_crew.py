@@ -21,7 +21,7 @@ from enochian_translation_team.utils.semantic_search import (
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.def_reducer import consolidate_ngram_senses
-from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
+from enochian_translation_team.utils.dictionary_loader import load_dictionary, EntryLike
 from enochian_translation_team.utils.embeddings import (
     get_fasttext_model,
     get_sentence_transformer,

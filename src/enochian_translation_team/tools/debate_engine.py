@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple, Set, Any
 from crewai import Agent, Task, Crew
 from sentence_transformers import util
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
-from enochian_translation_team.utils.dictionary_loader import Entry
+from enochian_translation_team.utils.dictionary_loader import EntryLike
 from enochian_translation_team.utils.embeddings import (
     get_sentence_transformer,
     select_definitions,
