@@ -6,6 +6,7 @@ from typing import List, Optional, Literal, Any, Dict, Tuple, runtime_checkable,
 from pydantic import BaseModel, field_validator, Field
 from dataclasses import dataclass
 from pathlib import Path
+from enochian_translation_team.utils.types_lexicon import EntryRecord, AltRecord, SenseRecord
 
 
 
@@ -105,7 +106,7 @@ class Entry(BaseModel):
 def load_dictionary(
     json_path: str,
     cache_dir: str = ".cache",
-) -> List[Entry]:
+) -> List[EntryRecord]:
     """
     Load dictionary JSON (list or dict) into validated Entry objects.
     - Supports 'alternates', 'senses', or single 'definition'.
@@ -195,69 +196,60 @@ def load_dictionary(
                 logger.warning(f"Invalid alternate for '{canonical}': {alt} ({e})")
 
     # --- Build phase (AFTER grouping) ---
-    entries: List[Entry] = []
-    for norm, data in grouped.items():
-        commentary = "; ".join(data['commentaries']) if data['commentaries'] else None
-        entry = Entry(
-            canonical=data['canonical'],
-            alternates=data['alternates'],
-            senses=data['senses'] or None,
-            context_tags=data['context_tags'] or None,
-            pos=data['pos'],
-            normalized=norm,
-            key_citations=data['key_citations'] or None,
-            commentary=commentary,
-            canon_word=data['canon_word'],
-        )
-        entries.append(entry)
+        entries: List[EntryRecord] = []
+        for norm, data in grouped.items():
+            entry: EntryRecord = {
+                "canonical": data["canonical"],
+                "alternates": [AltRecord(value=a.value, confidence=a.confidence) if hasattr(a, "value") else a
+                            for a in data["alternates"]],
+            }
+            if data["senses"]:
+                entry["senses"] = [SenseRecord(definition=s.definition, confidence=s.confidence) if hasattr(s, "definition") else s
+                                for s in data["senses"]]
+            if data["context_tags"]:
+                entry["context_tags"] = data["context_tags"]
+            if data["pos"]:
+                entry["pos"] = data["pos"]
+            entry["normalized"] = norm
+            if data["key_citations"]:
+                entry["key_citations"] = data["key_citations"]
+            if data.get("commentaries"):
+                entry["commentary"] = "; ".join(data["commentaries"])
+            if data.get("canon_word"):
+                entry["canon_word"] = True
+            entries.append(entry)
+        return entries
 
-    logger.info(f"Loaded {len(entries)} merged dictionary entries")
-    return entries
 
-
-def load_dictionary_v2(json_path: str) -> list[_EntryLike]:
-    """
-    Adapt the NEW dictionary.json schema to the minimal shape used by training.
-    Keeps: normalized/word -> canonical, top-level definition, senses[*].definition.
-    Assigns confidence=1.0 if not present.
-    Ignores: citations/commentary.
-    """
-    raw = json.loads(Path(json_path).read_text())
-    if not isinstance(raw, list):
-        logger.error("v2 expects a list root; got %s", type(raw))
-        return []
-
-    entries: list[_EntryLike] = []
-    for it in raw:
-        if not isinstance(it, dict):
-            continue
-
-        canonical = (it.get("normalized") or it.get("word") or "").lower().strip()
-        if not canonical:
-            continue
-
-        # Optional original orthography as an alternate token
-        alts: list[_Alt] = []
-        w = (it.get("word") or "").lower().strip()
-        if w and w != canonical:
-            alts.append(_Alt(value=w, confidence=1.0))
-
-        # Collect definitions with default confidence
-        senses: list[_Sense] = []
-        top_def = (it.get("definition") or "").strip()
-        if top_def:
-            senses.append(_Sense(definition=top_def, confidence=1.0))
-
-        for s in (it.get("senses") or []):
-            try:
+    def load_dictionary_v2(json_path: str) -> list[EntryRecord]:
+        raw = json.loads(Path(json_path).read_text())
+        if not isinstance(raw, list):
+            return []
+        out: list[EntryRecord] = []
+        for it in raw:
+            if not isinstance(it, dict):
+                continue
+            canonical = (it.get("normalized") or it.get("word") or "").lower().strip()
+            if not canonical:
+                continue
+            alts: list[AltRecord] = []
+            w = (it.get("word") or "").lower().strip()
+            if w and w != canonical:
+                alts.append(AltRecord(value=w, confidence=1.0))
+            senses: list[SenseRecord] = []
+            top = (it.get("definition") or "").strip()
+            if top:
+                senses.append(SenseRecord(definition=top, confidence=1.0))
+            for s in (it.get("senses") or []):
                 d = (s.get("definition") or "").strip()
                 if d:
-                    conf = float(s.get("confidence", 1.0))
-                    # Avoid duplicate of top_def with same text
-                    if not (top_def and d == top_def and conf == 1.0):
-                        senses.append(_Sense(definition=d, confidence=conf))
-            except Exception:
-                continue
-
-        entries.append(_EntryLike(canonical=canonical, alternates=alts, senses=senses))
-    return entries
+                    c = float(s.get("confidence", 1.0))
+                    senses.append(SenseRecord(definition=d, confidence=c))
+            rec: EntryRecord = {
+                "canonical": canonical,
+                "alternates": alts,
+            }
+            if senses:
+                rec["senses"] = senses
+            out.append(rec)
+        return out
