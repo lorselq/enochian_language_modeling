@@ -2,10 +2,13 @@ from typing import List
 import sys
 import json
 from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
-from gensim.models import FastText
 from Levenshtein import distance as levenshtein_distance
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import util
 from enochian_translation_team.utils.config import get_config_paths
+from enochian_translation_team.utils.embeddings import (
+    get_fasttext_model,
+    get_sentence_transformer,
+)
 
 # === 0. Establish substitution map for later reference ===
 def load_substitution_map():
@@ -30,10 +33,10 @@ def load_entries() -> List[Entry]:
 # === 2. Load Model ===
 def load_fasttext():
     path = get_config_paths()["model_output"]
-    return FastText.load(str(path))
+    return get_fasttext_model(path)
 
 def load_sentence_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    return get_sentence_transformer("all-MiniLM-L6-v2")
 
 # === 3. Normalize Word (Y = I, lowercase, etc) ===
 def normalize_form(word):

@@ -1,3 +1,5 @@
+from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
+import sqlite3
 import os
 import sys
 import logging
@@ -11,7 +13,9 @@ from typing import Optional, Callable, ClassVar
 from openai import OpenAI
 from crewai.tools import BaseTool
 from pydantic import PrivateAttr
-
+from enochian_translation_team.utils.llm_jobs import (
+    make_prompt_hash, llm_job_try_cache, llm_job_start, llm_job_finish
+)
 # Silence those INFO logs
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("openai.api_requestor").setLevel(logging.WARNING)
@@ -40,6 +44,8 @@ class QueryModelTool(BaseTool):
     gloss_model: str = ""
     # private attribute (not a field)
     _use_remote: bool = PrivateAttr(default=True)
+    _db: Optional[sqlite3.Connection] = PrivateAttr(default=None)
+    _run_id: Optional[str] = PrivateAttr(default=None)
 
     def __init__(
         self,
@@ -185,6 +191,10 @@ class QueryModelTool(BaseTool):
             print_chunks=print_chunks,
             role_name=role_name,
         )
+    
+    def attach_logging(self, db: sqlite3.Connection, run_id: str):
+        self._db = db
+        self._run_id = run_id
 
     def _emit(self, print_chunks, stream_callback, role, content):
         if print_chunks:
@@ -202,11 +212,56 @@ class QueryModelTool(BaseTool):
         print_chunks: bool = False,
         role_name: Optional[str] = None,
     ) -> dict[str, str]:
+        base_url = os.getenv(api_base_env, "[ERROR] could not get base URL!")
+        api_key  = os.getenv(api_key_env, "[ERROR] could not get API key!")
+        model    = os.getenv(model_env, "[ERROR] could not identify model!")
+        role     = role_name or self.name
+        temperature = 0.2
+
         client = OpenAI(
-            base_url=os.getenv(api_base_env, ""),
-            api_key=os.getenv(api_key_env, ""),
+            base_url=base_url,
+            api_key=api_key,
             timeout=httpx.Timeout(120.0, read=120.0, write=10.0, connect=5.0),
         )
+
+        # --- LLM JOB logging (optional) ---
+        job_id = None
+        if self._db and self._run_id:
+            phash = make_prompt_hash(
+                system_prompt=self.system_prompt,
+                user_prompt=prompt,
+                role=role,
+                model=model,
+                temperature=temperature,
+                base_url=base_url,
+            )
+            # 0) try cache first
+            cached = llm_job_try_cache(self._db, phash)
+            if cached:
+                # mark as cached (idempotent)
+                try:
+                    job_id = llm_job_start(
+                        self._db, run_id=self._run_id, prompt_hash=phash, role=role,
+                        model=model, base_url=base_url, temperature=temperature,
+                        system_prompt=self.system_prompt, user_prompt=prompt,
+                        request_json={"model": model, "messages": [{"role":"system","content": self.system_prompt},{"role":"user","content": prompt}], "temperature": temperature, "stream": True}
+                    )
+                    llm_job_finish(self._db, job_id, response_text=cached["response_text"], status="cached")
+                except Exception:
+                    pass  # don’t let logging failures break the call
+                return cached
+
+            # 1) log queued
+            try:
+                job_id = llm_job_start(
+                    self._db, run_id=self._run_id, prompt_hash=phash, role=role,
+                    model=model, base_url=base_url, temperature=temperature,
+                    system_prompt=self.system_prompt, user_prompt=prompt,
+                    request_json={"model": model, "messages": [{"role":"system","content": self.system_prompt},{"role":"user","content": prompt}], "temperature": temperature, "stream": True}
+                )
+            except Exception:
+                job_id = None  # proceed without logging
+
         response_text = ""
         role = role_name or self.name
         if "Glossator" in role:
@@ -289,6 +344,12 @@ class QueryModelTool(BaseTool):
         # 6) Final fallback if nothing arrived
         if not response_text:
             response_text = "[ERROR] No content returned."
+
+        if self._db and job_id:
+            try:
+                llm_job_finish(self._db, job_id, response_text=response_text, status="ok")
+            except Exception:
+                pass
 
         return {
             "response_text": response_text,

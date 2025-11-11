@@ -6,10 +6,10 @@ import numpy as np
 import logging
 from pathlib import Path
 from functools import lru_cache
-from gensim.models import FastText
 from gensim.utils import simple_preprocess
 from rapidfuzz import process as rf_process, fuzz
 from enochian_translation_team.utils.dictionary_loader import Entry
+from enochian_translation_team.utils.embeddings import get_fasttext_model
 
 # --- Logging setup ---
 logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.WARNING)
@@ -44,7 +44,7 @@ class MorphemeCandidateFinder:
         self.cursor = self.conn.cursor()
 
         # Load FastText model
-        self.fasttext_model = FastText.load(str(fasttext_model_path))
+        self.fasttext_model = get_fasttext_model(fasttext_model_path)
 
         # Build dictionary: canonical -> Entry
         self.dictionary = {e.canonical: e for e in dictionary_entries}
@@ -101,20 +101,32 @@ class MorphemeCandidateFinder:
 
     def segment_target(
         self, target: str
-    ) -> list[tuple[list[str], float, dict[str, float]]]:
+    ) -> list[tuple[list[str], float, dict[str, float], list[dict[str, float | int | str]]]]:
         """
         Beam-search segmentation over target string.
-        Returns list of (path, cumulative_tfidf, {ngram: tfidf}).
+        Returns list of (path, cumulative_tfidf, {ngram: tfidf}, coverage_segments).
+
+        Each coverage segment captures the positional slice that a canonical word
+        explains inside ``target``. We retain positional metadata so downstream
+        diagnostics can distinguish between explained and unexplained residue.
         """
-        beams = [(0, [], 0.0, {})]
+        beams: list[
+            tuple[
+                int,
+                list[str],
+                float,
+                dict[str, float],
+                list[dict[str, float | int | str]],
+            ]
+        ] = [(0, [], 0.0, {}, [])]
         tgt = target.lower()
         final = []
 
         while beams:
             new_beams = []
-            for pos, path, score, ngram_scores in beams:
+            for pos, path, score, ngram_scores, coverage in beams:
                 if pos >= len(tgt):
-                    final.append((path, score, ngram_scores))
+                    final.append((path, score, ngram_scores, coverage))
                     continue
                 # try next n-grams
                 for n in range(self.min_n, min(self.max_n, len(tgt) - pos) + 1):
@@ -125,7 +137,22 @@ class MorphemeCandidateFinder:
                         new_path = path + [canon]
                         new_score = score + tfidf
                         new_scores = {**ngram_scores, ng: tfidf}
-                        new_beams.append((pos + n, new_path, new_score, new_scores))
+                        new_segment = {
+                            "start": pos,
+                            "end": pos + n,
+                            "ngram": ng,
+                            "canonical": canon,
+                            "tfidf": tfidf,
+                        }
+                        new_beams.append(
+                            (
+                                pos + n,
+                                new_path,
+                                new_score,
+                                new_scores,
+                                coverage + [new_segment],
+                            )
+                        )
             # keep top-K beams
             beams = sorted(new_beams, key=lambda b: b[2], reverse=True)[
                 : self.beam_width
@@ -133,7 +160,10 @@ class MorphemeCandidateFinder:
         return final
 
     def score_parse(
-        self, path: list[str], ngram_scores: dict[str, float], target: str
+        self,
+        path: list[str],
+        ngram_scores: dict[str, float],
+        target: str,
     ) -> dict:
         """
         Compute composite score and return explanation.
@@ -188,6 +218,78 @@ class MorphemeCandidateFinder:
             },
         }
 
+    def _segment_confidence(self, canonical: str) -> float:
+        """
+        Heuristic per-segment semantic confidence sourced from the dictionary.
+
+        We surface the highest confidence score available for the entry to give
+        downstream diagnostics a sense of how trustworthy each matched segment is.
+        """
+
+        entry = self.dictionary.get(canonical)
+        if entry and getattr(entry, "senses", None):
+            return max((s.confidence for s in entry.senses), default=0.0)
+        if entry and getattr(entry, "alternates", None):
+            return max((a.confidence for a in entry.alternates), default=0.0)
+        return 0.0
+
+    def _build_breakdown(
+        self, target: str, coverage: list[dict[str, float | int | str]]
+    ) -> dict:
+        """Compute explained vs residual spans for a given segmentation path."""
+
+        if not target:
+            return {
+                "segments": [],
+                "uncovered": [],
+                "coverage_ratio": 0.0,
+                "residual_ratio": 0.0,
+            }
+
+        mask = [False] * len(target)
+        explained_segments: list[dict[str, float | int | str]] = []
+        for seg in coverage:
+            start = int(seg.get("start", 0))
+            end = int(seg.get("end", start))
+            start = max(0, min(len(target), start))
+            end = max(start, min(len(target), end))
+            for idx in range(start, end):
+                mask[idx] = True
+            explained_segments.append(
+                {
+                    "span": [start, end],
+                    "text": target[start:end],
+                    "ngram": str(seg.get("ngram", "")),
+                    "canonical": str(seg.get("canonical", "")),
+                    "tfidf": float(seg.get("tfidf", 0.0)),
+                    "semantic_confidence": self._segment_confidence(
+                        str(seg.get("canonical", ""))
+                    ),
+                }
+            )
+
+        uncovered: list[dict[str, object]] = []
+        idx = 0
+        while idx < len(mask):
+            if mask[idx]:
+                idx += 1
+                continue
+            start = idx
+            while idx < len(mask) and not mask[idx]:
+                idx += 1
+            uncovered.append({"span": [start, idx], "text": target[start:idx]})
+
+        covered_chars = sum(1 for flag in mask if flag)
+        coverage_ratio = covered_chars / len(mask) if mask else 0.0
+        residual_ratio = max(0.0, 1.0 - coverage_ratio)
+
+        return {
+            "segments": explained_segments,
+            "uncovered": uncovered,
+            "coverage_ratio": coverage_ratio,
+            "residual_ratio": residual_ratio,
+        }
+
     def find_candidates(self, target: str, top_k: int = 5) -> list[dict]:
         """
         Full pipeline: segment, score, ensure normalized, prune by cos_sim, and return top-K.
@@ -201,12 +303,15 @@ class MorphemeCandidateFinder:
 
         # 2) Score each path and force a normalized value
         scored = []
-        for path, _, ngram_scores in parses:
+        for path, _, ngram_scores, coverage in parses:
             c = self.score_parse(path, ngram_scores, target)
             # Ensure every candidate has a 'normalized'
             if not c.get("normalized"):
                 # Take the last element of the segmentation path as the candidate token
                 c["normalized"] = path[-1].lower()
+            c["target"] = target
+            c["target_length"] = len(target)
+            c["breakdown"] = self._build_breakdown(target, coverage)
             scored.append(c)
 
         print(
@@ -227,6 +332,9 @@ class MorphemeCandidateFinder:
             "normalized": root_norm,
             "cos_sim": 1.0,
             "composite": 1.0,
+            "target": target,
+            "target_length": len(target),
+            "breakdown": self._build_breakdown(target, []),
         }
 
         if not filtered:

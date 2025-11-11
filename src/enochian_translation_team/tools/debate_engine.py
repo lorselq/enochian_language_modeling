@@ -1,19 +1,23 @@
 import logging
 import time
 import re
-import sys
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Any
 from crewai import Agent, Task, Crew
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import util
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
 from enochian_translation_team.utils.dictionary_loader import Entry
+from enochian_translation_team.utils.embeddings import (
+    get_sentence_transformer,
+    select_definitions,
+    stream_text,
+)
 
 logging.getLogger("openai").setLevel(logging.WARNING)
 logging.getLogger("openai.api_requestor").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+embedder = get_sentence_transformer("all-MiniLM-L6-v2")
 AGREEMENT_THRESHOLD = 0.815
 
 
@@ -21,17 +25,6 @@ def _get_field(item, field, default=""):
     if isinstance(item, dict):
         return item.get(field, default)
     return getattr(item, field, default)
-
-
-def stream_text(text: str, delay: float = 0.006):
-    for c in text:
-        sys.stdout.write(c)
-        sys.stdout.flush()
-        try:
-            time.sleep(delay)
-        except KeyboardInterrupt:
-            # if you really need to interrupt, break cleanly
-            break
 
 
 def check_convergence(texts: list[str]) -> bool:
@@ -59,39 +52,6 @@ def check_convergence(texts: list[str]) -> bool:
     # 5) Compute average and compare against threshold
     avg_sim = sum(scores) / len(scores)
     return avg_sim >= AGREEMENT_THRESHOLD
-
-
-def select_definitions(def_list, max_words=75):
-    selected = []
-    total_words = 0
-
-    for d in def_list:
-        # Only count words before the first citation bracket
-        bracket_index = d.find(" [")
-        if bracket_index != -1:
-            word_slice = d[:bracket_index]
-        else:
-            word_slice = d
-        word_count = len(word_slice.split())
-
-        if total_words + word_count > max_words:
-            break
-
-        selected.append(d)
-        total_words += word_count
-
-    return selected
-
-
-def safe_output(crew_output) -> dict:
-    if not crew_output:
-        return {}
-
-    try:
-        return getattr(crew_output, "raw_output", {})
-    except Exception as e:
-        print(f"[!] Failed to extract output: {e}")
-        return {}
 
 
 # ---------------------------
@@ -227,6 +187,9 @@ def debate_ngram(
     root_entry: Optional[Entry] = None,
     blind_evaluation: bool = True,
     use_remote: bool = True,
+    residual_prompt: str | None = None,
+    query_db: Any | None = None,
+    query_run_id: Any | None = None
 ):
     joined_defs = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
@@ -289,12 +252,6 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
             description="",
             use_remote=use_remote,
         ),
-        "initial_ruling": QueryModelTool(
-            system_prompt=f"You are the world's foremost computational linguistics scholar, specializing in low-corpora constructed languages (which is exactly what the Enochian language is).",
-            name="Adjudicator",
-            description="",
-            use_remote=use_remote,
-        ),
         "synthesis": QueryModelTool(
             system_prompt="""
 You are the Lead Linguist in a collaborative reverse-engineering effort focused on the Enochian language—a system with obscure morphology and nonstandard linguistic structures.
@@ -347,6 +304,14 @@ Your tone is incisive, precise, and intellectually honest.""",
 
     no_outside_speculation = "Use only the items provided in this prompt. Do **not** assume any extra-textual theology, mythology, or etymology."
     about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
+    residual_section = (
+        f"Residual morphology diagnostics (segments vs. residue):\n{residual_prompt}\n"
+        if residual_prompt
+        else ""
+    )
+
+    for _, tool in tools.items():
+        tool.attach_logging(query_db, query_run_id)
 
     tasks = {
         "propose": Task(
@@ -370,9 +335,11 @@ All justification must come from **internal evidence only**—patterns observed 
 
 With this in mind, examine the following definitions and citations (contained within square brackets, pipe-delimited, most relevant first) for the root '{root.upper()}':
 
-{root_def_summary}
+  {root_def_summary}
 
-Use these to **propose a coherent explanation of the root** based on morphological structure and shared semantics.
+  {residual_section}
+
+  Use these to **propose a coherent explanation of the root** based on morphological structure and shared semantics.
 
 {no_outside_speculation}
 {about_metrics}
@@ -410,7 +377,8 @@ CONFIDENCE: <0.00–1.00>
                 "Abstract or metaphorical meanings are acceptable if supported by internal consistency.\n\n"
                 "Be concise, definitive, and analytical. No hedging.\n\n"
                 "Begin with the ruling, then follow with a 1–3 sentence justification.\n\n"
-            ),
+            )
+            + residual_section,
             expected_output=f"""**Follow this required format exactly:**
 <✅ ACCEPTED | ❌ REJECTED>
 SCORES: semantic_cohesion=<0.0–1.0>; derivational_validity=<0.0–1.0>; rebuttal_resilience=<0.0–1.0>
@@ -441,11 +409,13 @@ This report will be delivered to the Adjudicator, so your tone must be **scholar
 
 The junior research team used the following definitions and citations as part of their arguments. Use them as supporting context where helpful:
 
-{root_def_summary}
+ {root_def_summary}
 
-{no_outside_speculation}
-{about_metrics}
-{extra_prompt}
+  {residual_section}
+
+ {no_outside_speculation}
+ {about_metrics}
+ {extra_prompt}
 """,
             expected_output=f"""
 **Return exactly**:
@@ -477,6 +447,7 @@ If the proposal lacks linguistic rigor:
 If there are any Enochian words used to justify the root's possible meaning, they must come from this list: {candidate_list}. If the Lead Linguist uses any Enochian words other than the ones in that list, call them out as hallucinations right away.
 
 {skeptic_hint}
+{residual_section}
 Your tone must be **sharp, disciplined, and logically rigorous**. You are not here to sabotage, but to **safeguard the integrity** of the linguistic record.
 """,
             expected_output=f"""**Return exactly**:
@@ -509,6 +480,8 @@ Your constraints:
 - When you introduce a morphotactic claim, state the RULE in a testable form and give at least one NEGATIVE TEST it would forbid.
 
 🎯 Your goal is not just to *respond*, but to **reassert the legitimacy** of the proposed root and demonstrate that the original analysis withstands scrutiny.
+
+{residual_section}
 """,
             expected_output=f"""**Return exactly**:
 MODE: <INITIAL | FOLLOWUP>
@@ -531,6 +504,8 @@ Your peripheral tasks:
 - Determine whether your initial objections were **fully and convincingly addressed**.
 - If key issues remain unresolved, issue a **focused, final rebuttal**. Do not repeat old arguments—refine them.
 - If the defense was **persuasive and thorough**, acknowledge the strength of their case—skepticism includes being open to revision when warranted.
+
+{residual_section}
 """,
             expected_output=f"""**Return exactly**:
 REBUTTAL: <while following the adjudicator's instructions, evaluate and, if warranted, dismantle the arguments for the new root word>
@@ -554,10 +529,12 @@ or
 If you output CONTINUE, you MUST provide precise next-round tasks using Markdown checkboxes.
 If you output STOP, DO NOT include a TASKS section.
 
-You may refer to this stats_summary:
-{stats_summary}
+  You may refer to this stats_summary:
+  {stats_summary}
 
-Signals you may use (one or both):
+  {residual_section}
+
+  Signals you may use (one or both):
 (A) stats_summary: n, cohesion, derivational_patterns, incompatible_meanings, metric_notes.
 (B) Debate content: explicit RULES (position-anchored morphotactics), EVIDENCE (attested forms), NEGATIVE_TESTS; 
     note any opaque morphology (affix/function asserted without a testable RULE on an attested form).
@@ -714,7 +691,7 @@ What follows is the debate transcript:
 
     print(f"{GRAY}Starting prompt for research team:", end=" ")
     time.sleep(0.7)
-    stream_text(tasks["propose"].description)
+    stream_text(tasks["propose"].description, delay=0.006)
     print(f"\n{RESET}\n")
     
 
@@ -802,7 +779,7 @@ What follows is the debate transcript:
             print(
                 f"\n\n{RESET}>>>🤔\tThe Skeptic understands the proposal and wishes to make a critique...\n{GRAY}"
             )
-            stream_text(tasks["counter"].description)
+            stream_text(tasks["counter"].description, delay=0.006)
             print(f"\n{RESET}\n")
 
             skeptic_response = agent_tool._run(
@@ -842,7 +819,7 @@ What follows is the debate transcript:
                 print(
                     f"\n\n{RESET}>>>👩‍⚖️\tA mutual colleague adjudicating the debate wishes to weigh in...\n{GRAY}"
                 )
-                stream_text(tasks["ruling"].description)
+                stream_text(tasks["ruling"].description, delay=0.006)
                 f"\n{RESET}\n"
 
                 adjudicator_prompt = [
@@ -879,7 +856,7 @@ What follows is the debate transcript:
             print(
                 f"\n\n{RESET}>>>🤔\tThe Skeptic considers and prepares a final criticism...\n{GRAY}"
             )
-            stream_text(tasks["rebuttal"].description)
+            stream_text(tasks["rebuttal"].description, delay=0.006)
             print(f"\n{RESET}\n")
 
             skeptic_rebuttal.append(
