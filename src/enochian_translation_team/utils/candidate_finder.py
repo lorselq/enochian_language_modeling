@@ -4,11 +4,12 @@ import math
 import json
 import numpy as np
 import logging
+from typing import Sequence
 from pathlib import Path
 from functools import lru_cache
 from gensim.utils import simple_preprocess
 from rapidfuzz import process as rf_process, fuzz
-from enochian_translation_team.utils.dictionary_loader import Entry
+from enochian_translation_team.utils.dictionary_loader import EntryLike
 from enochian_translation_team.utils.embeddings import get_fasttext_model
 
 # --- Logging setup ---
@@ -30,11 +31,11 @@ class MorphemeCandidateFinder:
         self,
         ngram_db_path: Path,
         fasttext_model_path: Path,
-        dictionary_entries: list[Entry],
+        dictionary_entries: Sequence[EntryLike],
         weights: tuple[float, float, float] = (0.5, 0.3, 0.2),
         similarity_threshold: float = 0.4,
         edit_threshold: int = 70,
-        prune_threshold: float = 0.0, # above 0.0 will prune words not meeting semantic threshold; for character-cares only, set to 0.0
+        prune_threshold: float = 0.0,
         min_n: int = 2,
         max_n: int = 6,
         beam_width: int = 5,

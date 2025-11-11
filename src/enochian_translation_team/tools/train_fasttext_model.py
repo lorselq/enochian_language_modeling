@@ -4,20 +4,24 @@ import hashlib
 import logging
 import random
 import numpy as np
-from typing import List
+from typing import List, Optional, Sequence
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from gensim.models import FastText, Word2Vec
 from gensim.utils import simple_preprocess
 from enochian_translation_team.utils.config import get_config_paths
-from enochian_translation_team.utils.dictionary_loader import load_dictionary, Entry
+from enochian_translation_team.utils.dictionary_loader import (
+    load_dictionary,
+    load_dictionary_v2,
+    EntryLike,
+)
 
 # --- Setup logging ---
 logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# --- Data classes for hyperparameters ---
+# --- Data classes ---
 @dataclass
 class FastTextParams:
     vector_size: int = 100
@@ -32,41 +36,45 @@ class FastTextParams:
 
 
 # --- Corpus & caching helpers ---
-def hash_entries(entries: List[Entry]) -> str:
-    # deterministic JSON of the entries (canonical + alternates + senses)
-    simplified = [
+def hash_entries(entries: Sequence[EntryLike]) -> str:
+    """Stable hash for caching—works for both legacy and v2-adapted entries."""
+    import hashlib, json as _json
+    normalized = [
         {
             "canonical": e.canonical,
-            "alts": sorted([a.value for a in e.alternates]),
-            "senses": sorted([s.definition for s in (e.senses or [])]),
+            "alts": sorted([a.value for a in (getattr(e, "alternates", []) or [])]),
+            "senses": sorted([s.definition for s in (getattr(e, "senses", []) or [])]),
         }
         for e in entries
     ]
-    return hashlib.md5(json.dumps(simplified, sort_keys=True).encode()).hexdigest()
+    payload = _json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 # --- Sentence generator ---
-def load_sentences(entries: List[Entry]) -> List[List[str]]:
-    sentences: list[list[str]] = []
+def load_sentences(entries: Sequence[EntryLike]) -> List[List[str]]:
+    """
+    Turn entries into short 'sentences' for FastText by concatenating
+    canonical, alternates, and all definitions as tokens.
+    """
+    sents: List[List[str]] = []
     for e in entries:
-        # context window: canonical + all senses + all alternates
-        parts = [e.canonical]
-        parts += [s.definition for s in (e.senses or [])]
-        parts += [a.value for a in e.alternates]
-        # join into synthetic sentence
-        sent = " ".join(parts)
-        # tokenize using gensim's simple_preprocess (lowercase, remove punctuation/accents)
-        tokens = simple_preprocess(sent, deacc=True, min_len=1)
-        if tokens:
-            sentences.append(tokens)
-    return sentences
+        parts: List[str] = []
+        if getattr(e, "canonical", None):
+            parts.append(e.canonical)
+        parts += [a.value for a in (getattr(e, "alternates", []) or [])]
+        parts += [s.definition for s in (getattr(e, "senses", []) or [])]
+        parts = [p for p in (parts or []) if p]
+        if parts:
+            sents.append(parts)
+    return sents
 
 
 # --- Training & caching ---
 
 
 def train_fasttext_model(
-    entries: List[Entry], out_path: Path, params: FastTextParams
+    entries: Sequence[EntryLike], out_path: Path, params: FastTextParams
 ) -> Word2Vec:
     # reproducibility
     random.seed(params.seed)
@@ -123,8 +131,18 @@ def main():
     model_path = Path(paths.get("model_output", "fasttext.bin"))
 
     logger.info("Loading dictionary entries...")
-    entries = load_dictionary(str(dict_path))
+    entries = None
+    try:
+        # If your legacy loader still works with v1 files, this will succeed.
+        entries = load_dictionary(str(dict_path))
+        logger.info("Loaded dictionary via legacy loader (v1).")
+    except Exception as ex:
+        logger.info(f"Legacy loader failed ({ex}); using v2 adapter.")
+        entries = load_dictionary_v2(str(dict_path))
+
     logger.info(f"Loaded {len(entries)} entries")
+    sentences = load_sentences(entries)
+    logger.info(f"Prepared {len(sentences)} training sentences")
 
     params = FastTextParams()
     logger.info(f"Training with params: {params}")
