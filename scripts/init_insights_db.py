@@ -489,14 +489,14 @@ def init_db(path: str) -> None:
                 "residual_focus_prompt": "TEXT",
             }
             for column, decl in shared_columns.items():
-                _add_column_if_missing(conn, "clusters", f"{column} {decl}")
+                _add_column_if_missing(conn, "clusters", column, decl)
 
             if variant == "debate":
                 debate_columns = {
                     "semantic_cohesion": "REAL",
                 }
                 for column, decl in debate_columns.items():
-                    _add_column_if_missing(conn, "clusters", f"{column} {decl}")
+                    _add_column_if_missing(conn, "clusters", column, decl)
 
         except sqlite3.Error as e:
             raise RuntimeError(f"Database initialization failed: {e}") from e
