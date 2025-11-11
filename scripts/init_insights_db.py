@@ -284,6 +284,22 @@ CREATE TABLE IF NOT EXISTS llm_job (
   finished_at  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS morph_hypotheses (
+  hyp_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  morph            TEXT NOT NULL,          -- the residual (e.g., PSAD)
+  source_word      TEXT NOT NULL,          -- the composite word that revealed it (e.g., NAZPSAD)
+  anchor           TEXT,                   -- chosen anchor morph inside source_word (e.g., NAZ)
+  seed_glosses     TEXT,                   -- JSON array of NN seed gloss labels (optional)
+  proposed_gloss   TEXT,                   -- model-proposed 1-line gloss
+  rationale        TEXT,                   -- model rationale (optional)
+  delta_cosine     REAL,                   -- similarity quality metric for Δ→seed (optional)
+  residual_before  REAL,                   -- from residual_details
+  residual_after   REAL,                   -- recomputed after injecting morph temporarily
+  accepted         INTEGER,                -- 0/1 gate
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE(morph, source_word)
+);
+
 -- Helpful indexes (no FTS)
 CREATE INDEX IF NOT EXISTS idx_clusters_ngram       ON clusters(ngram);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_ngram   ON clusters(run_id, ngram);
@@ -449,6 +465,16 @@ WHERE TRIM(COALESCE(glossator_def, '')) <> ''
   AND glossator_def NOT LIKE 'ERROR%';
 """
 
+_DEF_VIEW_ANCHORS = """
+SELECT ngram, COUNT(*) AS uses, AVG(cohesion) AS avg_coh
+FROM clusters
+WHERE TRIM(glossator_def) <> ''
+  AND COALESCE(cohesion, 0.0) >= 0.40
+GROUP BY ngram
+HAVING COUNT(*) >= 3
+ORDER BY uses DESC, avg_coh DESC;
+"""
+
 # -------------------------
 # Public API
 # -------------------------
@@ -478,6 +504,9 @@ def init_db(path: str) -> None:
                     _DEF_VIEW_SOLO_HEUR if variant == "solo" else _DEF_VIEW_DEBATE_HEUR
                 )
             conn.executescript(ddl)
+
+            # Add anchor view
+            conn.executescript(_DEF_VIEW_ANCHORS)
 
             # Ensure newly introduced columns exist for older databases
             shared_columns = {
