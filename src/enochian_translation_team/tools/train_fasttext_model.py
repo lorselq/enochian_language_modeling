@@ -13,8 +13,8 @@ from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.dictionary_loader import (
     load_dictionary,
     load_dictionary_v2,
-    EntryLike,
 )
+from enochian_translation_team.utils.types_lexicon import EntryRecord, AltRecord, SenseRecord
 
 # --- Setup logging ---
 logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.INFO)
@@ -36,7 +36,7 @@ class FastTextParams:
 
 
 # --- Corpus & caching helpers ---
-def hash_entries(entries: Sequence[EntryLike]) -> str:
+def hash_entries(entries: Sequence[EntryRecord]) -> str:
     """Stable hash for caching—works for both legacy and v2-adapted entries."""
     import hashlib, json as _json
     normalized = [
@@ -52,7 +52,7 @@ def hash_entries(entries: Sequence[EntryLike]) -> str:
 
 
 # --- Sentence generator ---
-def load_sentences(entries: Sequence[EntryLike]) -> List[List[str]]:
+def load_sentences(entries: Sequence[EntryRecord]) -> List[List[str]]:
     """
     Turn entries into short 'sentences' for FastText by concatenating
     canonical, alternates, and all definitions as tokens.
@@ -74,7 +74,7 @@ def load_sentences(entries: Sequence[EntryLike]) -> List[List[str]]:
 
 
 def train_fasttext_model(
-    entries: Sequence[EntryLike], out_path: Path, params: FastTextParams
+    entries: Sequence[EntryRecord], out_path: Path, params: FastTextParams
 ) -> Word2Vec:
     # reproducibility
     random.seed(params.seed)
