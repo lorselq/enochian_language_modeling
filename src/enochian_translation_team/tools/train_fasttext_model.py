@@ -4,17 +4,16 @@ import hashlib
 import logging
 import random
 import numpy as np
-from typing import List, Optional, Sequence
+from typing import List, Sequence
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from gensim.models import FastText, Word2Vec
-from gensim.utils import simple_preprocess
 from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.dictionary_loader import (
     load_dictionary,
     load_dictionary_v2,
 )
-from enochian_translation_team.utils.types_lexicon import EntryRecord, AltRecord, SenseRecord
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 
 # --- Setup logging ---
 logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.INFO)
@@ -37,17 +36,23 @@ class FastTextParams:
 
 # --- Corpus & caching helpers ---
 def hash_entries(entries: Sequence[EntryRecord]) -> str:
-    """Stable hash for caching—works for both legacy and v2-adapted entries."""
-    import hashlib, json as _json
-    normalized = [
-        {
-            "canonical": e.canonical,
-            "alts": sorted([a.value for a in (getattr(e, "alternates", []) or [])]),
-            "senses": sorted([s.definition for s in (getattr(e, "senses", []) or [])]),
-        }
-        for e in entries
-    ]
-    payload = _json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+    """Stable hash for caching across dictionary formats."""
+    normalized = []
+    for e in entries:
+        alternates = sorted(
+            [alt.get("value", "") for alt in e.get("alternates", []) if alt.get("value")]
+        )
+        senses = sorted(
+            [sense.get("definition", "") for sense in e.get("senses", []) if sense.get("definition")]
+        )
+        normalized.append(
+            {
+                "canonical": e.get("canonical", ""),
+                "alts": alternates,
+                "senses": senses,
+            }
+        )
+    payload = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -60,11 +65,12 @@ def load_sentences(entries: Sequence[EntryRecord]) -> List[List[str]]:
     sents: List[List[str]] = []
     for e in entries:
         parts: List[str] = []
-        if getattr(e, "canonical", None):
-            parts.append(e.canonical)
-        parts += [a.value for a in (getattr(e, "alternates", []) or [])]
-        parts += [s.definition for s in (getattr(e, "senses", []) or [])]
-        parts = [p for p in (parts or []) if p]
+        canonical = e.get("canonical")
+        if canonical:
+            parts.append(canonical)
+        parts += [a.get("value", "") for a in e.get("alternates", [])]
+        parts += [s.get("definition", "") for s in e.get("senses", []) or []]
+        parts = [p for p in parts if p]
         if parts:
             sents.append(parts)
     return sents

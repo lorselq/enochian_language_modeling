@@ -21,7 +21,8 @@ from enochian_translation_team.utils.semantic_search import (
 )
 from enochian_translation_team.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_translation_team.utils.def_reducer import consolidate_ngram_senses
-from enochian_translation_team.utils.dictionary_loader import load_dictionary, EntryLike
+from enochian_translation_team.utils.dictionary_loader import load_dictionary
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 from enochian_translation_team.utils.embeddings import (
     get_fasttext_model,
     get_sentence_transformer,
@@ -49,7 +50,7 @@ class RootExtractionCrew:
         self.new_definitions_path = paths[style]
 
         # Load everything
-        self.entries = self.load_entries()
+        self.entries: list[EntryRecord] = self.load_entries()
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.new_definitions_db = sqlite3.connect(paths[style])
         self._prepare_db(self.new_definitions_db)
@@ -186,7 +187,7 @@ class RootExtractionCrew:
         with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
             json.dump(ordered, f, indent=2)
 
-    def load_entries(self) -> List[Entry]:
+    def load_entries(self) -> List[EntryRecord]:
         return load_dictionary(str(self.dictionary_path))
 
     def load_subst_map(self):
@@ -259,11 +260,11 @@ class RootExtractionCrew:
         row = cursor.fetchone()
         return row[0] if row else None
 
-    def dedupe_by_normalized(self, entries):
+    def dedupe_by_normalized(self, entries: list[EntryRecord]):
         seen = set()
         unique = []
         for entry in entries:
-            key = entry.canonical
+            key = entry.get("canonical")
             if key not in seen:
                 seen.add(key)
                 unique.append(entry)
@@ -923,14 +924,20 @@ class RootExtractionCrew:
                         enhanced = sem_entry["enhanced_definition"]
                     else:
                         dict_entry = next(
-                            (e for e in self.entries if e.normalized == norm), None
+                            (
+                                e
+                                for e in self.entries
+                                if e.get("normalized") == norm or e.get("canonical") == norm
+                            ),
+                            None,
                         )
                         if not dict_entry:
                             definition = _get_field(word, "definition", "")
                             enhanced = _get_field(word, "enhanced_definition", "")
                         else:
+                            senses = dict_entry.get("senses") or []
                             definition = "; ".join(
-                                s.definition for s in dict_entry.senses or []
+                                s.get("definition", "") for s in senses if s.get("definition")
                             )
                             cits_for_enh = (
                                 "Possible uses: "

@@ -9,7 +9,7 @@ from pathlib import Path
 from functools import lru_cache
 from gensim.utils import simple_preprocess
 from rapidfuzz import process as rf_process, fuzz
-from enochian_translation_team.utils.dictionary_loader import EntryLike
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 from enochian_translation_team.utils.embeddings import get_fasttext_model
 
 # --- Logging setup ---
@@ -31,7 +31,7 @@ class MorphemeCandidateFinder:
         self,
         ngram_db_path: Path,
         fasttext_model_path: Path,
-        dictionary_entries: Sequence[EntryLike],
+        dictionary_entries: Sequence[EntryRecord],
         weights: tuple[float, float, float] = (0.5, 0.3, 0.2),
         similarity_threshold: float = 0.4,
         edit_threshold: int = 70,
@@ -47,8 +47,12 @@ class MorphemeCandidateFinder:
         # Load FastText model
         self.fasttext_model = get_fasttext_model(fasttext_model_path)
 
-        # Build dictionary: canonical -> Entry
-        self.dictionary = {e.canonical: e for e in dictionary_entries}
+        # Build dictionary: canonical -> EntryRecord mapping
+        self.dictionary = {
+            entry["canonical"]: entry
+            for entry in dictionary_entries
+            if entry.get("canonical")
+        }
         self.known_words = set(self.dictionary.keys())
         self.total_docs = len(self.known_words)
 
@@ -197,10 +201,14 @@ class MorphemeCandidateFinder:
 
         # 3. Confidence weight
         entry = self.dictionary.get(path[-1])
-        if entry and entry.senses:
-            conf = max(s.confidence for s in entry.senses)
+        senses = entry.get("senses") if entry else None
+        if senses:
+            conf = max((s.get("confidence", 0.0) for s in senses), default=1.0)
         elif entry:
-            conf = max((a.confidence for a in entry.alternates), default=1.0)
+            conf = max(
+                (a.get("confidence", 1.0) for a in entry.get("alternates", [])),
+                default=1.0,
+            )
         else:
             conf = 1.0
 
@@ -228,10 +236,14 @@ class MorphemeCandidateFinder:
         """
 
         entry = self.dictionary.get(canonical)
-        if entry and getattr(entry, "senses", None):
-            return max((s.confidence for s in entry.senses), default=0.0)
-        if entry and getattr(entry, "alternates", None):
-            return max((a.confidence for a in entry.alternates), default=0.0)
+        if not entry:
+            return 0.0
+        senses = entry.get("senses")
+        if senses:
+            return max((s.get("confidence", 0.0) for s in senses), default=0.0)
+        alternates = entry.get("alternates")
+        if alternates:
+            return max((a.get("confidence", 0.0) for a in alternates), default=0.0)
         return 0.0
 
     def _build_breakdown(
