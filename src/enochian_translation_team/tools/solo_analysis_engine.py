@@ -2,7 +2,7 @@ import logging
 from typing import Optional, Any
 from crewai import Task
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
-from enochian_translation_team.utils.dictionary_loader import EntryLike
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 from enochian_translation_team.utils.embeddings import (
     get_sentence_transformer,
     select_definitions,
@@ -25,10 +25,10 @@ def _get_field(item, field, default=""):
 
 def solo_agent_ngram_analysis(
     root: str,
-    candidates: list[Entry],
+    candidates: list[EntryRecord],
     stats_summary: str,
     stream_callback=None,
-    root_entry: Optional[Entry] = None,
+    root_entry: Optional[EntryRecord] = None,
     use_remote: bool = True,
     residual_prompt: str | None = None,
     query_db: Any | None = None,

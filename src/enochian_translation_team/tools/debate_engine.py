@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple, Set, Any
 from crewai import Agent, Task, Crew
 from sentence_transformers import util
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
-from enochian_translation_team.utils.dictionary_loader import EntryLike
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 from enochian_translation_team.utils.embeddings import (
     get_sentence_transformer,
     select_definitions,
@@ -181,10 +181,10 @@ def _extract_tasks_from_ruling(ruling_text: str) -> int:
 
 def debate_ngram(
     root: str,
-    candidates: list[Entry],
+    candidates: list[EntryRecord],
     stats_summary: str,
     stream_callback=None,
-    root_entry: Optional[Entry] = None,
+    root_entry: Optional[EntryRecord] = None,
     blind_evaluation: bool = True,
     use_remote: bool = True,
     residual_prompt: str | None = None,
