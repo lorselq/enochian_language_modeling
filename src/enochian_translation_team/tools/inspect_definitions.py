@@ -1,7 +1,8 @@
 from typing import List
 import sys
 import json
-from enochian_translation_team.utils.dictionary_loader import load_dictionary, EntryLike
+from enochian_translation_team.utils.dictionary_loader import load_dictionary
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
 from enochian_translation_team.utils.config import get_config_paths
@@ -26,7 +27,7 @@ def load_substitution_map():
     return subst_map
 
 # === 1. Load Dictionary ===
-def load_entries() -> List[Entry]:
+def load_entries() -> List[EntryRecord]:
     path = get_config_paths()["dictionary"]
     return load_dictionary(str(path))
 
@@ -68,21 +69,48 @@ def definition_similarity(def1, def2, sentence_model):
     return float(util.cos_sim(emb1, emb2))
 
 # === 6. Find Similar Words ===
-def find_semantically_similar_words(ft_model, sent_model, entries, target_word, subst_map, topn=11):
+def _definition_text(entry: EntryRecord) -> str:
+    """Return a human-readable definition string for an entry."""
+    if entry.get("enhanced_definition"):
+        return str(entry.get("enhanced_definition"))
+    senses = entry.get("senses") or []
+    parts = [s.get("definition", "") for s in senses if s.get("definition")]
+    if parts:
+        return "; ".join(parts)
+    return str(entry.get("commentary") or "")
+
+
+def find_semantically_similar_words(
+    ft_model,
+    sent_model,
+    entries: List[EntryRecord],
+    target_word,
+    subst_map,
+    topn=11,
+):
     fasttext_weight = 0.53
     definition_weight = 0.47
     
     normalized_query = normalize_form(target_word)
     variants = generate_variants(normalized_query, subst_map)
 
-    target_entry = next((e for e in entries if normalize_form(e["normalized"]) == normalized_query), None)
+    target_entry = next(
+        (
+            e
+            for e in entries
+            if normalize_form(e.get("normalized", e.get("canonical", "")))
+            == normalized_query
+        ),
+        None,
+    )
     if not target_entry:
         print(f"[!] Word '{target_word}' not found in dictionary.")
         return []
 
     results = []
     for entry in entries:
-        cand_norm = normalize_form(entry["normalized"])
+        norm_value = entry.get("normalized", entry.get("canonical", ""))
+        cand_norm = normalize_form(norm_value)
         if cand_norm == normalized_query:
             continue
 
@@ -96,18 +124,18 @@ def find_semantically_similar_words(ft_model, sent_model, entries, target_word, 
 
         # Semantic similarity (definitions)
         def_score = definition_similarity(
-            target_entry.get("definition", ""),
-            entry.get("definition", ""),
-            sent_model
+            _definition_text(target_entry),
+            _definition_text(entry),
+            sent_model,
         )
 
         # Combined weighted score
         final_score = (fasttext_weight * ft_score) + (definition_weight * def_score)
 
         results.append({
-            "word": entry["word"],
-            "normalized": entry["normalized"],
-            "definition": entry.get("definition", ""),
+            "word": entry.get("canonical", ""),
+            "normalized": norm_value,
+            "definition": _definition_text(entry),
             "fasttext": round(ft_score, 3),
             "semantic": round(def_score, 3),
             "score": round(final_score, 3),
