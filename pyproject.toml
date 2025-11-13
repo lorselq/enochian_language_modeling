@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Small-corpora language modeling"
 authors = ["Forrest Wilbur <forrest.a.wilbur@gmail.com>"]
 readme = "README.md"
-packages = [{ include = "enochian_translation_team", from = "src" }]
+packages = [
+  { include = "enochian_translation_team", from = "src" },
+  { include = "enochian_lm", from = "src" }
+]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
@@ -37,3 +40,4 @@ enochian-build-ngram-index = "enochian_translation_team.utils.build_ngram_index:
 enochian-inspect = "enochian_translation_team.tools.inspect_definitions:main"
 enochian-analysis = "enochian_translation_team.main:main"
 enochian-interpret = "enochian_translation_team.interpretation.cli:main"
+enlm = "enochian_lm.cli:main"
