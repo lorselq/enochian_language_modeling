@@ -200,7 +200,7 @@ The following JSON is a template for what keys there are and what the requiremen
     "residual_drop_mean": 0.0,
     "n_examples": number of examples given
   },
-  "EVIDENCE": """f"{evidence_prompt_portion.join(',\n')}" """
+  "EVIDENCE": """f"{(',\n').join(evidence_prompt_portion)}" """
   "CONFIDENCE": {
     "score": 0.0,
     "drivers": [ one to three short phrases that explain why you are confident in this analysis ],
