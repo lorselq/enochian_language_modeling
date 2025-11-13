@@ -26,6 +26,19 @@ from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
 from enochian_translation_team.utils.variant_utils import generate_variants
 
 
+def _entry_get(entry, field: str, default=None):
+    if isinstance(entry, dict):
+        return entry.get(field, default)
+    return getattr(entry, field, default)
+
+
+def _entry_set(entry, field: str, value) -> None:
+    if isinstance(entry, dict):
+        entry[field] = value
+    else:
+        setattr(entry, field, value)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,14 +100,17 @@ def _batched_cached_embeddings(entries, sentence_model, *, context: str):
     to_encode_indices: List[int] = []
 
     for idx, entry in enumerate(entries):
-        key = (entry.canonical, entry.enhanced_definition)
+        key = (
+            _entry_get(entry, "canonical", ""),
+            _entry_get(entry, "enhanced_definition", ""),
+        )
         cached = embedding_cache.lookup(key)
         if cached is not None:
             embeddings[idx] = cached
             continue
         to_encode_indices.append(idx)
         to_encode_keys.append(key)
-        to_encode_texts.append(entry.enhanced_definition)
+        to_encode_texts.append(_entry_get(entry, "enhanced_definition", ""))
 
     if to_encode_texts:
         encoded_batch = sentence_model.encode(
@@ -481,21 +497,22 @@ def find_semantically_similar_words(
     )
     variants = [v[0] for v in variants_raw]
 
-    entries = [
-        e
-        for e in entries
-        if normalized_query in normalize_form(e.canonical)
-        or any(v in normalize_form(e.canonical) for v in variants)
-    ]
+    filtered_entries = []
+    for e in entries:
+        canon_text = normalize_form(_entry_get(e, "canonical", ""))
+        if normalized_query in canon_text or any(v in canon_text for v in variants):
+            filtered_entries.append(e)
+
+    entries = filtered_entries
 
     for e in entries:
-        e.enhanced_definition = build_enhanced_definition(e)
+        _entry_set(e, "enhanced_definition", build_enhanced_definition(e))
 
     all_roots = [normalized_query] + variants
     index_entries = [
         e
         for e in entries
-        if any(root in normalize_form(e.canonical) for root in all_roots)
+        if any(root in normalize_form(_entry_get(e, "canonical", "")) for root in all_roots)
     ]
     if not index_entries:
         return []
@@ -518,10 +535,10 @@ def find_semantically_similar_words(
     for i, entry in enumerate(
         tqdm(entries, desc="Processing relevant dictionary entries")
     ):
-        cand_norm = normalize_form(entry.canonical)
+        cand_norm = normalize_form(_entry_get(entry, "canonical", ""))
         if (
             cand_norm == normalized_query
-            and entry.canonical.lower() != target_word.lower()
+            and _entry_get(entry, "canonical", "").lower() != target_word.lower()
         ):
             continue
 
@@ -567,7 +584,16 @@ def find_semantically_similar_words(
         if final_score < min_similarity:
             continue
 
-        definition_text = entry.senses[0].definition.lower() if entry.senses else ""
+        senses = _entry_get(entry, "senses") or []
+        if senses:
+            first_sense = senses[0]
+            if isinstance(first_sense, dict):
+                primary_definition = first_sense.get("definition", "")
+            else:
+                primary_definition = getattr(first_sense, "definition", "")
+        else:
+            primary_definition = ""
+        definition_text = primary_definition.lower()
         if (
             "enochian letter" in definition_text
             or "enochian word" in definition_text
@@ -577,9 +603,9 @@ def find_semantically_similar_words(
 
         results.append(
             {
-                "word": entry.canonical,
-                "normalized": entry.canonical.lower(),
-                "definition": entry.senses[0].definition if entry.senses else "",
+                "word": _entry_get(entry, "canonical", ""),
+                "normalized": _entry_get(entry, "canonical", "").lower(),
+                "definition": primary_definition,
                 "enhanced_definition": build_enhanced_definition(entry),
                 "fasttext": round(ft_score, 3),
                 "semantic": round(def_score, 3),
@@ -587,7 +613,7 @@ def find_semantically_similar_words(
                 "priority": priority,
                 "tier": tier,
                 "levenshtein": levenshtein_distance(normalized_query, cand_norm),
-                "citations": getattr(entry, "key_citations", []),
+                "citations": _entry_get(entry, "key_citations", []),
             }
         )
 

@@ -2,7 +2,7 @@ import logging
 from typing import Optional, Any
 from crewai import Task
 from enochian_translation_team.tools.query_model_tool import QueryModelTool
-from enochian_translation_team.utils.dictionary_loader import EntryLike
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 from enochian_translation_team.utils.embeddings import (
     get_sentence_transformer,
     select_definitions,
@@ -25,16 +25,17 @@ def _get_field(item, field, default=""):
 
 def solo_agent_ngram_analysis(
     root: str,
-    candidates: list[Entry],
+    candidates: list[EntryRecord],
     stats_summary: str,
     stream_callback=None,
-    root_entry: Optional[Entry] = None,
+    root_entry: Optional[EntryRecord] = None,
     use_remote: bool = True,
     residual_prompt: str | None = None,
     query_db: Any | None = None,
     query_run_id: Any | None = None
 ):
     joined_defs = []
+    evidence_prompt_portion = []
     candidate_list = ", ".join(_get_field(c, "word", "").upper() for c in candidates)
 
     for c in candidates:
@@ -52,6 +53,18 @@ def solo_agent_ngram_analysis(
                 else ""
             )
             joined_defs.append(line)
+        
+        evidence_prompt_portion.append("{" f""" 
+            "word": "{word}",
+            "sense": "{definition}", 
+            "loc": "dict/corpus",
+            "note": """ "{" f"""
+                "role": must be one of: "prefix", "suffix", "free", "infix" (choose exactly one)
+                "effect": effect of {root.upper()} on {word},
+                "sense_alignment": cosine-ish semantic alignment between the sense of {word} and {root.upper()}'s proposed semantics,
+                "confidence": must be a float between 0.0 and 1.0 (e.g., 0.75, 0.92),
+                "note": breakdown for how {root.upper()} contributes to the sense of {word}
+            """ "}")
     if root_entry is None:
         root_entry = next(
             (
@@ -158,24 +171,41 @@ If "evaluation":"rejected" → populate "reason" with the reason for the rejecti
 If "evaluation":"accepted" → populate "reason" with the reason for acceptance. Fill remaining fields per the schema
 
 Numeric scores are floats 0.00–1.00.
+
+The following JSON is a template for what keys there are and what the requirements are for each value. In all instances but the key-val pairs in CONTRIBUTION, the keys are to remain the same. If the value is a number, it is an example; if the value is a string, it contains instructions; if the value is either an array or an object, the value must have that structure (and again, string values are instructions and numbers are examples).
+
+
 """
             "{\n"
             f'  "ROOT": "{root.upper()}",'
             """
-  "EVALUATION": "<accepted/rejected>",
-  "REASON": "<1-3 sentences explaining the reason for the evaluation selected>",
-  "DEFINITION": "<1-3 sentences of core semantics; no negatives, be as concrete as possible and not vague>",  
-  "EXAMPLE": "<give 1-3 short example sentences of how its English equivalence would be used, marking it in each sentence.">,
-  "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
-  "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
-  "SIGNATURE": {
-    "position": "prefix|infix|suffix|root|particle|variable",
-    "boundness": "bound|clitic|free|unknown",
-    "slot": "initial|medial|final|mixed",
-    "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
-    "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
+  "EVALUATION": "accepted or rejected (choose exactly one)",
+  "REASON": "1-3 sentences explaining the reason for the evaluation selected",
+  "DEFINITION": "1-3 sentences of core semantics; no negatives, be as concrete as possible and not vague",
+  "EXAMPLE": "give 1-3 short example sentences of how its English equivalence would be used, marking it in each sentence",
+  "DECODING_GUIDE": "concrete rules to resolve compound words, <=25 words",
+  "SEMANTIC_CORE": [ "up to three nouns or gerunds that captures the semantics of the root """ f"{root.upper}" """"],
+  "NEGATIVE_CONTRAST": [ "max 4 phrases (e.g., 'non-temporal', 'non-agentive')" ],
+  "CONTRIBUTION": { "lemmas describing ontology of """f"{root.upper()}" """, accompanied by a rating of semantic composition": 0.0 },
+  "POS_BIAS": { "nounness": 0.0, "modifier": 0.0, "verbness": 0.0 },
+  "ATTACHMENT": {
+    "prefix": { "prob": 0.0 },
+    "suffix": { "prob": 0.0 },
+    "free":   { "prob": 0.0 },
+    "productivity": 0.0,
+    "exceptions": [ "descriptions of exceptions found with one string per exception" ]
   },
-  "NEGATIVE_CONTRAST": ["max 4 phrases (e.g., 'non-temporal', 'non-agentive')"]
+  "RESIDUAL_IMPACT": {
+    "coverage_gain_mean": 0.0,
+    "residual_drop_mean": 0.0,
+    "n_examples": number of examples given
+  },
+  "EVIDENCE": """f"{(',\n').join(evidence_prompt_portion)}" """
+  "CONFIDENCE": {
+    "score": 0.0,
+    "drivers": [ one to three short phrases that explain why you are confident in this analysis ],
+    "risks": [ one to three short phrases that explain where your reservations are in this analysis ]
+  }
 }
 
 CONSTRAINTS
@@ -184,24 +214,85 @@ CONSTRAINTS
 - Be concise; no hedging. If any required field cannot be confidently filled, set "evaluation":"rejected"."""
         ),
         expected_output=(
-            "{\n"
-            f'    "ROOT": "{root.upper()}",'
-            """
-    "EVALUATION": "<accepted/rejected>",
-    "REASON": "<1-3 sentences explaining the reason for the evaluation selected>",
-    "DEFINITION": "<1-3 sentences of core semantics; no negatives, be as concrete as possible and not vague>",
-    "EXAMPLE": "<give 1-3 short example sentences of how its English equivalence would be used, marking it in each sentence.>",
-    "DECODING_GUIDE": "<concrete rules to resolve compound words, <=25 words>",
-    "SEMANTIC_CORE": ["<noun/gerund>", "<noun/gerund>", "(optional)"],
-    "SIGNATURE": {
-        "position": "prefix|infix|suffix|root|particle|variable",
-        "boundness": "bound|clitic|free|unknown",
-        "slot": "initial|medial|final|mixed",
-        "contribution": ["bucket[:value]", "bucket[:value]", "bucket[:value]"],
-        "ontology": ["≤3 lemmas, e.g., 'motion','boundary','light'"]
+            """{
+  "ROOT": "MARINE",
+  "EVALUATION": "accepted",
+  "REASON": "The root 'MARINE'  consistently appears in words describing sea-related concepts with clear semantic alignment.",
+  "DEFINITION": "Relating to the sea or saltwater environments; specifically applicable to naval operations, marine biology, and coastal ecosystems.",
+  "EXAMPLE": [
+    "The submarine conducted deep-sea research.",
+    "A seasoned mariner navigated the ship through the channel."
+  ],
+  "DECODING_GUIDE": "Prefix 'sub-' = underwater; suffix '-er' = agent. 'Marine' as base = sea-related. Compounds follow literal structural meaning.",
+  "SEMANTIC_CORE": ["sea", "ocean", "navigation"],
+  "NEGATIVE_CONTRAST": ["freshwater", "terrestrial", "inland", "non-aquatic"],
+  "CONTRIBUTION": {
+    "sea": 0.95,
+    "ocean": 0.9,
+    "saltwater": 0.85,
+    "naval": 0.75
+  },
+  "POS_BIAS": {
+    "nounness": 0.95,
+    "modifier": 0.3,
+    "verbness": 0.05
+  },
+  "ATTACHMENT": {
+    "prefix": {
+      "prob": 0.8
     },
-    "RULES": "Return an ARRAY (not a string) of 2–5 strings. Each string MUST follow: REGEX → +FEATURE[, +FEATURE]. Anchor REGEX to position (^, $). Use <ROOT> to stand for the candidate where applicable (e.g., ^<ROOT>.*). Encode only testable morphotactics and core semantic contributions (no metaphors/speculation). Omit any affix/function you cannot justify with evidence instead of guessing.",
-    "NEGATIVE_CONTRAST": ["max 4 phrases (e.g., 'non-temporal', 'non-agentive')"]
+    "suffix": {
+      "prob": 0.85
+    },
+    "free": {
+      "prob": 0.1
+    },
+    "productivity": 0.75,
+    "exceptions": [
+      "'Maritime' is a distinct adjective form not directly formed with 'marine' as a suffix/prefix"
+    ]
+  },
+  "RESIDUAL_IMPACT": {
+    "coverage_gain_mean": 0.8,
+    "residual_drop_mean": 0.15,
+    "n_examples": 5
+  },
+  "EVIDENCE": [
+    {
+      "word": "submarine",
+      "sense": "An underwater vessel",
+      "loc": "dict/corpus",
+      "note": {
+        "role": "prefix",
+        "effect": "The prefix 'sub-' adds 'underwater' meaning to 'marine'",
+        "sense_alignment": 0.85,
+        "confidence": 0.9,
+        "note": "'Marine' contributes the sea-related aspect; 'sub-' specifies location"
+      }
+    },
+    {
+      "word": "mariner",
+      "sense": "A sailor or navigator",
+      "loc": "dict/corpus",
+      "note": {
+        "role": "suffix",
+        "effect": "The suffix '-er' denotes an agent acting within maritime environments",
+        "sense_alignment": 0.9,
+        "confidence": 0.95,
+        "note": "'Marine' as base refers to sea contexts; '-er' creates an agent noun"
+      }
+    }
+  ],
+  "CONFIDENCE": {
+    "score": 0.92,
+    "drivers": [
+      "strong etymological consistency",
+      "clear semantic alignment in examples"
+    ],
+    "risks": [
+      "overlap with 'maritime' requires manual disambiguation"
+    ]
+  }
 }"""
         ),
     )
