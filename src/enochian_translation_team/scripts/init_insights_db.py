@@ -18,6 +18,7 @@ The script is idempotent and safe to re-run.
 """
 from __future__ import annotations
 from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
+from os import PathLike
 import os
 import sqlite3
 from typing import Dict, Tuple
@@ -122,7 +123,6 @@ CREATE TABLE IF NOT EXISTS clusters (
   sem_count             INTEGER,
   idx_count             INTEGER,
   overlap_count         INTEGER,
-  prevaluation          TEXT,
   action                TEXT,
   reason                TEXT,
   model                 TEXT,
@@ -159,7 +159,6 @@ CREATE TABLE IF NOT EXISTS clusters (
   sem_count             INTEGER,
   idx_count             INTEGER,
   overlap_count         INTEGER,
-  prevaluation          TEXT,
   action                TEXT,
   reason                TEXT,
   model                 TEXT,
@@ -480,7 +479,20 @@ ORDER BY uses DESC, avg_coh DESC;
 # -------------------------
 
 
-def init_db(path: str) -> None:
+def _infer_variant_from_path(path: str | PathLike[str]) -> str:
+    path_l = os.fspath(path).lower()
+    return "solo" if "solo" in path_l else "debate"
+
+def _open(db_path: str | PathLike[str]) -> sqlite3.Connection:
+    db_path = os.fspath(db_path)
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    return conn
+
+def init_db(path: str | PathLike[str]) -> None:
     """Initialize (or migrate) a database at `path`."""
     variant = _infer_variant_from_path(path)
     with _open(path) as conn:
@@ -540,8 +552,8 @@ def init_db(path: str) -> None:
 # -------------------------
 if __name__ == "__main__":
     dbs = [
-        "revised_debate_derived_definitions.sqlite3",
-        "revised_solo_analysis_derived_definitions.sqlite3",
+        "debate_derived_definitions.sqlite3",
+        "solo_analysis_derived_definitions.sqlite3",
     ]
     for name in dbs:
         init_db(DB_PATH(name))

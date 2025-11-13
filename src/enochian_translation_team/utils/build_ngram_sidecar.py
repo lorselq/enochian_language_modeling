@@ -595,7 +595,7 @@ def build_sidecar(
 # ----------------------------- CLI -----------------------------
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", type=Path, default=Path("src/enochian_translation_team/data/ngram_index.sqlite"))
+    ap.add_argument("--db", type=Path, default=Path("src/enochian_translation_team/data/ngram_index.sqlite3"))
     ap.add_argument("--keys", type=Path, default=Path("src/enochian_translation_team/data/enochian_keys.txt"))
     ap.add_argument("--dict", type=Path, default=Path("src/enochian_translation_team/data/dictionary.json"))
     ap.add_argument("--subst", type=Path, default=Path("src/enochian_translation_team/data/substitution_map.json"))

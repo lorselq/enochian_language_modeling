@@ -8,6 +8,7 @@ from typing import List, Sequence
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from gensim.models import FastText, Word2Vec
+from gensim.utils import simple_preprocess
 from enochian_translation_team.utils.config import get_config_paths
 from enochian_translation_team.utils.dictionary_loader import (
     load_dictionary,
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 class FastTextParams:
     vector_size: int = 100
     window: int = 5
-    min_count: int = 2
+    min_count: int = 1
     sg: int = 1
     min_n: int = 3
     max_n: int = 6
@@ -40,10 +41,18 @@ def hash_entries(entries: Sequence[EntryRecord]) -> str:
     normalized = []
     for e in entries:
         alternates = sorted(
-            [alt.get("value", "") for alt in e.get("alternates", []) if alt.get("value")]
+            [
+                alt.get("value", "")
+                for alt in e.get("alternates", [])
+                if alt.get("value")
+            ]
         )
         senses = sorted(
-            [sense.get("definition", "") for sense in e.get("senses", []) if sense.get("definition")]
+            [
+                sense.get("definition", "")
+                for sense in e.get("senses", [])
+                if sense.get("definition")
+            ]
         )
         normalized.append(
             {
@@ -59,17 +68,29 @@ def hash_entries(entries: Sequence[EntryRecord]) -> str:
 # --- Sentence generator ---
 def load_sentences(entries: Sequence[EntryRecord]) -> List[List[str]]:
     """
-    Turn entries into short 'sentences' for FastText by concatenating
-    canonical, alternates, and all definitions as tokens.
+    Turn entries into short 'sentences' for FastText:
+    - canonical token
+    - alternate tokens
+    - tokenized definition words (lowercased, basic cleanup)
     """
     sents: List[List[str]] = []
     for e in entries:
         parts: List[str] = []
-        canonical = e.get("canonical")
+
+        canonical = (e.get("canonical") or "").strip().lower()
         if canonical:
             parts.append(canonical)
-        parts += [a.get("value", "") for a in e.get("alternates", [])]
-        parts += [s.get("definition", "") for s in e.get("senses", []) or []]
+
+        for a in e.get("alternates", []):
+            val = (a.get("value") or "").strip().lower()
+            if val and val != canonical:
+                parts.append(val)
+
+        for s in e.get("senses", []) or []:
+            text = (s.get("definition") or "").strip()
+            if text:
+                parts.extend(simple_preprocess(text, deacc=True, min_len=2))
+
         parts = [p for p in parts if p]
         if parts:
             sents.append(parts)
