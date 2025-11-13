@@ -474,6 +474,72 @@ HAVING COUNT(*) >= 3
 ORDER BY uses DESC, avg_coh DESC;
 """
 
+ANALYSIS_TABLE_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS attribution_marginals (
+      id INTEGER PRIMARY KEY,
+      morph_a TEXT NOT NULL,
+      morph_b TEXT NOT NULL,
+      delta_a_given_b REAL NOT NULL,
+      delta_b_given_a REAL NOT NULL,
+      n_tokens INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS collocation_stats (
+      id INTEGER PRIMARY KEY,
+      morph_left TEXT NOT NULL,
+      morph_right TEXT NOT NULL,
+      count_ab INTEGER NOT NULL,
+      count_a INTEGER NOT NULL,
+      count_b INTEGER NOT NULL,
+      pmi REAL,
+      llr REAL,
+      asym_dep REAL,
+      updated_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS residual_clusters (
+      id INTEGER PRIMARY KEY,
+      cluster_id INTEGER NOT NULL,
+      centroid_json TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS residual_cluster_membership (
+      id INTEGER PRIMARY KEY,
+      residual_span TEXT NOT NULL,
+      cluster_id INTEGER NOT NULL,
+      sim_to_centroid REAL NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS morph_semantic_vectors (
+      id INTEGER PRIMARY KEY,
+      morph TEXT NOT NULL UNIQUE,
+      vector_json TEXT NOT NULL,
+      l2_norm REAL NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS composite_reconstruction (
+      id INTEGER PRIMARY KEY,
+      token TEXT NOT NULL,
+      gold_gloss TEXT,
+      pred_vector_json TEXT NOT NULL,
+      recon_error REAL NOT NULL,
+      used_morphs_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    """,
+)
+
 # -------------------------
 # Public API
 # -------------------------
@@ -538,6 +604,9 @@ def init_db(path: str | PathLike[str]) -> None:
                 }
                 for column, decl in debate_columns.items():
                     _add_column_if_missing(conn, "clusters", column, decl)
+
+            for ddl in ANALYSIS_TABLE_STATEMENTS:
+                conn.execute(ddl)
 
         except sqlite3.Error as e:
             raise RuntimeError(f"Database initialization failed: {e}") from e
