@@ -4,7 +4,7 @@ import hashlib
 import logging
 import random
 import numpy as np
-from typing import List, Optional, Sequence
+from typing import List, Sequence
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from gensim.models import FastText, Word2Vec
@@ -14,7 +14,7 @@ from enochian_translation_team.utils.dictionary_loader import (
     load_dictionary,
     load_dictionary_v2,
 )
-from enochian_translation_team.utils.types_lexicon import EntryRecord, AltRecord, SenseRecord
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 
 # --- Setup logging ---
 logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.INFO)
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class FastTextParams:
     vector_size: int = 100
     window: int = 5
-    min_count: int = 2
+    min_count: int = 1
     sg: int = 1
     min_n: int = 3
     max_n: int = 6
@@ -37,34 +37,61 @@ class FastTextParams:
 
 # --- Corpus & caching helpers ---
 def hash_entries(entries: Sequence[EntryRecord]) -> str:
-    """Stable hash for caching—works for both legacy and v2-adapted entries."""
-    import hashlib, json as _json
-    normalized = [
-        {
-            "canonical": e.canonical,
-            "alts": sorted([a.value for a in (getattr(e, "alternates", []) or [])]),
-            "senses": sorted([s.definition for s in (getattr(e, "senses", []) or [])]),
-        }
-        for e in entries
-    ]
-    payload = _json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+    """Stable hash for caching across dictionary formats."""
+    normalized = []
+    for e in entries:
+        alternates = sorted(
+            [
+                alt.get("value", "")
+                for alt in e.get("alternates", [])
+                if alt.get("value")
+            ]
+        )
+        senses = sorted(
+            [
+                sense.get("definition", "")
+                for sense in e.get("senses", [])
+                if sense.get("definition")
+            ]
+        )
+        normalized.append(
+            {
+                "canonical": e.get("canonical", ""),
+                "alts": alternates,
+                "senses": senses,
+            }
+        )
+    payload = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 # --- Sentence generator ---
 def load_sentences(entries: Sequence[EntryRecord]) -> List[List[str]]:
     """
-    Turn entries into short 'sentences' for FastText by concatenating
-    canonical, alternates, and all definitions as tokens.
+    Turn entries into short 'sentences' for FastText:
+    - canonical token
+    - alternate tokens
+    - tokenized definition words (lowercased, basic cleanup)
     """
     sents: List[List[str]] = []
     for e in entries:
         parts: List[str] = []
-        if getattr(e, "canonical", None):
-            parts.append(e.canonical)
-        parts += [a.value for a in (getattr(e, "alternates", []) or [])]
-        parts += [s.definition for s in (getattr(e, "senses", []) or [])]
-        parts = [p for p in (parts or []) if p]
+
+        canonical = (e.get("canonical") or "").strip().lower()
+        if canonical:
+            parts.append(canonical)
+
+        for a in e.get("alternates", []):
+            val = (a.get("value") or "").strip().lower()
+            if val and val != canonical:
+                parts.append(val)
+
+        for s in e.get("senses", []) or []:
+            text = (s.get("definition") or "").strip()
+            if text:
+                parts.extend(simple_preprocess(text, deacc=True, min_len=2))
+
+        parts = [p for p in parts if p]
         if parts:
             sents.append(parts)
     return sents

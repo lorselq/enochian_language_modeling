@@ -9,11 +9,13 @@ from pathlib import Path
 from functools import lru_cache
 from gensim.utils import simple_preprocess
 from rapidfuzz import process as rf_process, fuzz
-from enochian_translation_team.utils.dictionary_loader import EntryLike
+from enochian_translation_team.utils.types_lexicon import EntryRecord
 from enochian_translation_team.utils.embeddings import get_fasttext_model
 
 # --- Logging setup ---
-logging.basicConfig(format="%(asctime)s %(levelname)s:%(message)s", level=logging.WARNING)
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s:%(message)s", level=logging.WARNING
+)
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,7 @@ class MorphemeCandidateFinder:
         self,
         ngram_db_path: Path,
         fasttext_model_path: Path,
-        dictionary_entries: Sequence[EntryLike],
+        dictionary_entries: Sequence[EntryRecord],
         weights: tuple[float, float, float] = (0.5, 0.3, 0.2),
         similarity_threshold: float = 0.4,
         edit_threshold: int = 70,
@@ -47,8 +49,12 @@ class MorphemeCandidateFinder:
         # Load FastText model
         self.fasttext_model = get_fasttext_model(fasttext_model_path)
 
-        # Build dictionary: canonical -> Entry
-        self.dictionary = {e.canonical: e for e in dictionary_entries}
+        # Build dictionary: canonical -> EntryRecord mapping
+        self.dictionary = {
+            entry["canonical"]: entry
+            for entry in dictionary_entries
+            if entry.get("canonical")
+        }
         self.known_words = set(self.dictionary.keys())
         self.total_docs = len(self.known_words)
 
@@ -68,11 +74,34 @@ class MorphemeCandidateFinder:
         )
 
     def _load_ngram_index(self):
-        """Populate self.ngram_index from the SQLite table."""
-        self.ngram_index: dict[str, list[tuple[str, int, int]]] = {}
-        query = "SELECT ngram, canonical, tf_count, df_count FROM ngrams"
-        for ngram, canon, tf_count, df_count in self.cursor.execute(query):
-            self.ngram_index.setdefault(ngram, []).append((canon, tf_count, df_count))
+        """Populate self.ngram_index using new schema:
+        - TF from ngrams.total_occurrences
+        - DF = count of distinct canonicals in ngram_membership
+        - canonicals from ngram_membership
+        """
+        self.ngram_index = {}
+
+        # 1) TF per ngram
+        tf_map: dict[str, int] = {}
+        for ng, tf in self.cursor.execute(
+            "SELECT ngram, total_occurrences FROM ngrams"
+        ):
+            tf_map[ng] = int(tf or 0)
+
+        # 2) DF per ngram
+        df_map: dict[str, int] = {}
+        for ng, df in self.cursor.execute(
+            "SELECT ngram, COUNT(*) AS df FROM ngram_membership GROUP BY ngram"
+        ):
+            df_map[ng] = int(df or 0)
+
+        # 3) Canonical membership
+        for ng, canon in self.cursor.execute(
+            "SELECT ngram, canonical FROM ngram_membership"
+        ):
+            tf = tf_map.get(ng, 0)
+            df = df_map.get(ng, 0)
+            self.ngram_index.setdefault(ng, []).append((canon, tf, df))
 
     @lru_cache(maxsize=512)
     def get_exact_matches(self, ngram: str) -> list[str]:
@@ -102,7 +131,9 @@ class MorphemeCandidateFinder:
 
     def segment_target(
         self, target: str
-    ) -> list[tuple[list[str], float, dict[str, float], list[dict[str, float | int | str]]]]:
+    ) -> list[
+        tuple[list[str], float, dict[str, float], list[dict[str, float | int | str]]]
+    ]:
         """
         Beam-search segmentation over target string.
         Returns list of (path, cumulative_tfidf, {ngram: tfidf}, coverage_segments).
@@ -197,10 +228,14 @@ class MorphemeCandidateFinder:
 
         # 3. Confidence weight
         entry = self.dictionary.get(path[-1])
-        if entry and entry.senses:
-            conf = max(s.confidence for s in entry.senses)
+        senses = entry.get("senses") if entry else None
+        if senses:
+            conf = max((s.get("confidence", 0.0) for s in senses), default=1.0)
         elif entry:
-            conf = max((a.confidence for a in entry.alternates), default=1.0)
+            conf = max(
+                (a.get("confidence", 1.0) for a in entry.get("alternates", [])),
+                default=1.0,
+            )
         else:
             conf = 1.0
 
@@ -228,10 +263,14 @@ class MorphemeCandidateFinder:
         """
 
         entry = self.dictionary.get(canonical)
-        if entry and getattr(entry, "senses", None):
-            return max((s.confidence for s in entry.senses), default=0.0)
-        if entry and getattr(entry, "alternates", None):
-            return max((a.confidence for a in entry.alternates), default=0.0)
+        if not entry:
+            return 0.0
+        senses = entry.get("senses")
+        if senses:
+            return max((s.get("confidence", 0.0) for s in senses), default=0.0)
+        alternates = entry.get("alternates")
+        if alternates:
+            return max((a.get("confidence", 0.0) for a in alternates), default=0.0)
         return 0.0
 
     def _build_breakdown(
@@ -357,22 +396,19 @@ class MorphemeCandidateFinder:
             [c["normalized"] for c in candidates],
         )
         return candidates
-    
+
     def get_all_ngram_candidates(self, target: str) -> list[dict]:
         """
-        Return every canonical whose normalized form (or variant)
-        contains the exact ngram substrings (via your SQLite ngrams table).
+        Return every canonical whose normalized form contains the exact ngram
+        via the ngram_membership table.
         """
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT DISTINCT canonical FROM ngrams WHERE ngram = ?",
-            (target.lower(),)
+            "SELECT DISTINCT canonical FROM ngram_membership WHERE ngram = ?",
+            (target.lower(),),
         )
         rows = cursor.fetchall()
-        return [
-            {"word": canon.upper(), "normalized": canon}
-            for (canon,) in rows
-        ]
+        return [{"word": canon.upper(), "normalized": canon} for (canon,) in rows]
 
     def close(self):
         self.conn.close()
