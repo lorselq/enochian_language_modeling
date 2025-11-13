@@ -26,35 +26,38 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.WARNING)
 
+
 class Alternate(BaseModel):
     value: str
-    confidence: float
-    direction: Literal['to', 'from', 'both']
+    confidence: float = 1.0
+    direction: Literal["to", "from", "both"] = "both"
 
-    @field_validator('value', mode='before')
+    @field_validator("value", mode="before")
     def normalize_value(cls, v: str) -> str:
-        return unicodedata.normalize('NFKC', v.strip().lower())
+        return unicodedata.normalize("NFKC", v.strip().lower())
 
-    @field_validator('confidence', mode='after')
+    @field_validator("confidence", mode="after")
     def check_confidence(cls, v: float) -> float:
         if not (0.0 <= v <= 1.0):
             logger.warning(f"Alternate confidence {v} out of [0,1]")
         return v
 
+
 class Sense(BaseModel):
     definition: str
-    confidence: float
+    confidence: float = 1.0
 
-    @field_validator('confidence', mode='after')
+    @field_validator("confidence", mode="after")
     def check_confidence(cls, v: float) -> float:
         if not (0.0 <= v <= 1.0):
             logger.warning(f"Sense confidence {v} out of [0,1]")
         return v
 
+
 class Entry(BaseModel):
     canonical: str
-    alternates: List['Alternate'] = Field(default_factory=list)
-    senses: Optional[List['Sense']] = None
+    alternates: List["Alternate"] = Field(default_factory=list)
+    senses: Optional[List["Sense"]] = None
     context_tags: Optional[List[str]] = None
     pos: Optional[str] = None
     normalized: str = ""
@@ -64,16 +67,15 @@ class Entry(BaseModel):
     commentary: Optional[str] = None
     canon_word: Optional[bool] = None
 
-    @field_validator('canonical', mode='before')
+    @field_validator("canonical", mode="before")
     def normalize_canonical(cls, v: str) -> str:
-        return unicodedata.normalize('NFKC', v.strip().lower())
+        return unicodedata.normalize("NFKC", v.strip().lower())
 
-    @field_validator('context_tags', mode='before')
+    @field_validator("context_tags", mode="before")
     def normalize_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
         if v is None:
             return v
         return [tag.strip().lower() for tag in v]
-
 
 
 def load_dictionary(
@@ -88,7 +90,7 @@ def load_dictionary(
     """
     os.makedirs(cache_dir, exist_ok=True)
 
-    with open(json_path, 'rb') as f:
+    with open(json_path, "rb") as f:
         data_bytes = f.read()
 
     raw = json.loads(data_bytes)
@@ -101,7 +103,7 @@ def load_dictionary(
             if not isinstance(item, dict):
                 logger.warning(f"Skipping non-dict entry: {item}")
                 continue
-            key = item.get('canonical') or item.get('word') or ''
+            key = item.get("canonical") or item.get("word") or ""
             items.append((key, item))
     elif isinstance(raw, dict):
         logger.info(f"Loading {len(raw)} entries from dict JSON")
@@ -114,109 +116,87 @@ def load_dictionary(
     # --- Group/merge phase ---
     grouped: Dict[str, Dict[str, Any]] = {}
     for key, val in items:
-        canonical = unicodedata.normalize('NFKC', str(key).strip().lower())
+        canonical = unicodedata.normalize("NFKC", str(key).strip().lower())
         norm = canonical
-        bin = grouped.setdefault(norm, {
-            'canonical': canonical,
-            'alternates': [],
-            'senses': [],
-            'context_tags': [],
-            'key_citations': [],
-            'commentaries': [],
-            'canon_word': False,
-            'pos': None,
-        })
+        bin = grouped.setdefault(
+            norm,
+            {
+                "canonical": canonical,
+                "alternates": [],
+                "senses": [],
+                "context_tags": [],
+                "key_citations": [],
+                "commentaries": [],
+                "canon_word": False,
+                "pos": None,
+            },
+        )
 
-        if val.get('canon_word'):
-            bin['canon_word'] = True
+        if val.get("canon_word"):
+            bin["canon_word"] = True
 
-        if not bin['pos'] and val.get('pos'):
-            bin['pos'] = val.get('pos')
+        if not bin["pos"] and val.get("pos"):
+            bin["pos"] = val.get("pos")
 
-        for tag in val.get('context_tags', []):
+        for tag in val.get("context_tags", []):
             t = (tag or "").strip().lower()
-            if t and t not in bin['context_tags']:
-                bin['context_tags'].append(t)
+            if t and t not in bin["context_tags"]:
+                bin["context_tags"].append(t)
 
-        for cit in val.get('key_citations', []):
-            if cit not in bin['key_citations']:
-                bin['key_citations'].append(cit)
+        for cit in val.get("key_citations", []):
+            if cit not in bin["key_citations"]:
+                bin["key_citations"].append(cit)
 
-        comm = val.get('commentary')
-        if comm and comm not in bin['commentaries']:
-            bin['commentaries'].append(comm)
+        comm = val.get("commentary")
+        if comm and comm not in bin["commentaries"]:
+            bin["commentaries"].append(comm)
 
-        # Senses
-        if 'senses' in val and isinstance(val['senses'], list):
-            for s in val['senses']:
+        # Senses (normalize to plain dict records with default confidence)
+        if "senses" in val and isinstance(val["senses"], list):
+            for s in val["senses"]:
                 try:
-                    bin['senses'].append(Sense(**s))
+                    definition = (s.get("definition") or "").strip()
+                    if not definition:
+                        continue
+                    conf = float(s.get("confidence", 1.0))
+                    bin["senses"].append({"definition": definition, "confidence": conf})
                 except Exception as e:
                     logger.warning(f"Invalid sense for '{canonical}': {s} ({e})")
-        elif 'definition' in val:
+        elif "definition" in val:
             try:
-                bin['senses'].append(
-                    Sense(definition=val['definition'], confidence=1.0)
-                )
+                definition = (val.get("definition") or "").strip()
+                if definition:
+                    bin["senses"].append({"definition": definition, "confidence": 1.0})
             except Exception as e:
                 logger.warning(
                     f"Invalid definition for '{canonical}': {val.get('definition')} ({e})"
                 )
 
-        # Alternates
-        for alt in val.get('alternates', []):
+        # Alternates (normalize to plain dict records with default confidence)
+        for alt in val.get("alternates", []):
             try:
-                a = Alternate(**alt)
+                value = (alt.get("value") or "").strip().lower()
+                if not value:
+                    continue
+                conf = float(alt.get("confidence", 1.0))
                 if all(
-                    a.value != getattr(existing, "value", None)
-                    for existing in bin['alternates']
+                    value != (existing.get("value") or "")
+                    for existing in bin["alternates"]
                 ):
-                    bin['alternates'].append(a)
+                    bin["alternates"].append({"value": value, "confidence": conf})
             except Exception as e:
-                logger.warning(
-                    f"Invalid alternate for '{canonical}': {alt} ({e})"
-                )
+                logger.warning(f"Invalid alternate for '{canonical}': {alt} ({e})")
 
     # --- Build phase (AFTER grouping) ---
     entries: List[EntryRecord] = []
     for norm, data in grouped.items():
-        alternates: List[AltRecord] = []
-        for alt in data["alternates"]:
-            if isinstance(alt, Alternate):
-                alternates.append({
-                    "value": alt.value,
-                    "confidence": float(alt.confidence),
-                })
-            elif isinstance(alt, dict):
-                value = (alt.get("value") or "").strip().lower()
-                if value:
-                    alternates.append({
-                        "value": value,
-                        "confidence": float(alt.get("confidence", 1.0)),
-                    })
-
-        senses: List[SenseRecord] = []
-        for sense in data["senses"]:
-            if isinstance(sense, Sense):
-                senses.append({
-                    "definition": sense.definition,
-                    "confidence": float(sense.confidence),
-                })
-            elif isinstance(sense, dict):
-                definition = (sense.get("definition") or "").strip()
-                if definition:
-                    senses.append({
-                        "definition": definition,
-                        "confidence": float(sense.get("confidence", 1.0)),
-                    })
-
         entry: EntryRecord = {
             "canonical": data["canonical"],
-            "alternates": alternates,
+            "alternates": list(data["alternates"]),
             "normalized": norm,
         }
-        if senses:
-            entry["senses"] = senses
+        if data["senses"]:
+            entry["senses"] = list(data["senses"])
         if data["context_tags"]:
             entry["context_tags"] = list(data["context_tags"])
         if data["pos"]:
@@ -251,7 +231,7 @@ def load_dictionary_v2(json_path: str) -> list[EntryRecord]:
         top = (it.get("definition") or "").strip()
         if top:
             senses.append({"definition": top, "confidence": 1.0})
-        for s in (it.get("senses") or []):
+        for s in it.get("senses") or []:
             d = (s.get("definition") or "").strip()
             if d:
                 c = float(s.get("confidence", 1.0))

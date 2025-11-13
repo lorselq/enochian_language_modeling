@@ -218,16 +218,16 @@ class RootExtractionCrew:
 
     def stream_ngrams_from_sqlite(self, min_freq=2):
         cursor = self.ngram_db.cursor()
+        # DF is the count of canonicals in membership; TF is in ngrams table.
         query = """
-            SELECT
-            ngram,
-            df_count
-            FROM ngrams
-            GROUP BY ngram
+            SELECT n.ngram,
+                COALESCE(COUNT(m.canonical), 0) AS df_count
+            FROM ngrams AS n
+            LEFT JOIN ngram_membership AS m
+                ON m.ngram = n.ngram
+            GROUP BY n.ngram
             HAVING df_count >= ?
-            ORDER BY
-            LENGTH(ngram) DESC,
-            df_count     DESC
+            ORDER BY LENGTH(n.ngram) DESC, df_count DESC
         """
         for ngram, df in cursor.execute(query, (min_freq,)):
             yield ngram, df
@@ -235,27 +235,26 @@ class RootExtractionCrew:
     def is_ngram_in_variants(self, ngram, canonical):
         cursor = self.ngram_db.cursor()
         cursor.execute(
-            "SELECT 1 FROM ngrams WHERE ngram = ? AND canonical = ? LIMIT 1",
-            (ngram, canonical),
+            "SELECT 1 FROM ngram_membership WHERE ngram = ? AND canonical = ? LIMIT 1",
+            (ngram.lower(), canonical.lower()),
         )
         return cursor.fetchone() is not None
 
     def get_matching_variant(self, ngram: str, canonical: str) -> str | None:
         """
-        Look up in the ngrams table which canonical word
-        corresponds to this ngram+canonical pair. Since we've
-        removed the 'variant' column, we now return the 'canonical'.
+        With the new schema, membership stores only (ngram, canonical).
+        Return canonical if the pair exists; otherwise None.
         """
         cursor = self.ngram_db.cursor()
         cursor.execute(
             """
             SELECT canonical
-              FROM ngrams
-             WHERE ngram = ?
-               AND canonical = ?
-             LIMIT 1
+            FROM ngram_membership
+            WHERE ngram = ?
+            AND canonical = ?
+            LIMIT 1
             """,
-            (ngram, canonical),
+            (ngram.lower(), canonical.lower()),
         )
         row = cursor.fetchone()
         return row[0] if row else None
@@ -652,7 +651,7 @@ class RootExtractionCrew:
                 use_remote=self.use_remote,
                 residual_prompt=focus_prompt,
                 query_db=self.new_definitions_db,
-                query_run_id=self.run_id
+                query_run_id=self.run_id,
             )
         else:
             the_result = solo_agent_ngram_analysis(
@@ -664,7 +663,7 @@ class RootExtractionCrew:
                 use_remote=self.use_remote,
                 residual_prompt=focus_prompt,
                 query_db=self.new_definitions_db,
-                query_run_id=self.run_id
+                query_run_id=self.run_id,
             )
 
         if isinstance(the_result, dict):
@@ -927,7 +926,8 @@ class RootExtractionCrew:
                             (
                                 e
                                 for e in self.entries
-                                if e.get("normalized") == norm or e.get("canonical") == norm
+                                if e.get("normalized") == norm
+                                or e.get("canonical") == norm
                             ),
                             None,
                         )
@@ -937,7 +937,9 @@ class RootExtractionCrew:
                         else:
                             senses = dict_entry.get("senses") or []
                             definition = "; ".join(
-                                s.get("definition", "") for s in senses if s.get("definition")
+                                s.get("definition", "")
+                                for s in senses
+                                if s.get("definition")
                             )
                             cits_for_enh = (
                                 "Possible uses: "
@@ -1164,7 +1166,6 @@ class RootExtractionCrew:
                                 sem_count,
                                 idx_count,
                                 overlap_count,
-                                prevaluation,
                                 action,
                                 reason,
                                 model,
@@ -1184,7 +1185,7 @@ class RootExtractionCrew:
                                 residual_ratio,
                                 residual_headline,
                                 residual_focus_prompt
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
@@ -1198,25 +1199,19 @@ class RootExtractionCrew:
                                 _to_text(evaluated["Model"])
                                 or _to_text(evaluated["raw_output"].get("Model")),
                                 # proposal
-                                _to_text(evaluated["Proposal"])
-                                or _to_text(evaluated["raw_output"].get("Proposal")),
+                                _to_text(evaluated["raw_output"].get("Proposal")),
                                 # critique
-                                _to_text(evaluated["Critique"])
-                                or _to_text(evaluated["raw_output"].get("Critique")),
+                                _to_text(evaluated["raw_output"].get("Critique")),
                                 # defense
-                                _to_text(evaluated["Initial_Defense"])
-                                or _to_text(
+                                _to_text(
                                     evaluated["raw_output"].get("Initial_Defense")
                                 ),
                                 # adjudicator_rounds
-                                _to_text(evaluated["Adjudicator"])
-                                or _to_text(evaluated["raw_output"].get("Adjudicator")),
+                                _to_text(evaluated["raw_output"].get("Adjudicator")),
                                 # skeptic_rounds
-                                _to_text(evaluated["Skeptic"])
-                                or _to_text(evaluated["raw_output"].get("Skeptic")),
+                                _to_text(evaluated["raw_output"].get("Skeptic")),
                                 # linguist_rounds
-                                _to_text(evaluated["Linguist"])
-                                or _to_text(evaluated["raw_output"].get("Linguist")),
+                                _to_text(evaluated["raw_output"].get("Linguist")),
                                 # gloss prompt
                                 _to_text(evaluated["Glossator_Prompt"])
                                 or _to_text(
@@ -1254,7 +1249,7 @@ class RootExtractionCrew:
                                 sem_count,
                                 idx_count,
                                 overlap_count,
-                                prevaluation,
+                                action,
                                 reason,
                                 model,
                                 glossator_prompt,
@@ -1267,7 +1262,7 @@ class RootExtractionCrew:
                                 residual_ratio,
                                 residual_headline,
                                 residual_focus_prompt
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
