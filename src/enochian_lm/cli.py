@@ -13,6 +13,7 @@ from typing import Callable, Iterable
 
 from enochian_translation_team.scripts import init_insights_db
 
+from .analysis.attribution import run_leave_one_out
 from .utils.sql import connect_sqlite, ensure_analysis_tables
 from .utils.text import set_global_seeds, utcnow_iso
 
@@ -58,20 +59,37 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def _run_attrib_loo(args: argparse.Namespace) -> None:
-    parses_path = Path(args.parses)
-    _validate_input_file(parses_path, "Parses file")
-    _write_csv_header(
-        Path(args.out),
-        (
-            "morph_a",
-            "morph_b",
-            "delta_a_given_b",
-            "delta_b_given_a",
-            "n_tokens",
-            "updated_at",
-        ),
+    db_path = Path(args.db_path)
+    logger.info(
+        "Running leave-one-out attribution",
+        extra={"db": str(db_path), "limit": args.limit},
     )
-    logger.info("Wrote attribution placeholder", extra={"out": args.out})
+    conn = connect_sqlite(str(db_path))
+    try:
+        ensure_analysis_tables(conn)
+        summary = run_leave_one_out(conn, limit=args.limit)
+    finally:
+        conn.close()
+
+    logger.info(
+        "Leave-one-out summary",
+        extra={
+            "composites": summary.get("composites", 0),
+            "pairs": summary.get("pairs", 0),
+            "unique_pairs": summary.get("unique_pairs", 0),
+            "avg_abs_delta": round(float(summary.get("avg_abs_delta", 0.0)), 4),
+        },
+    )
+
+    print(
+        "[{}] Processed {} composites → {} pairs ({} unique) (avg |Δ| = {:.3f})".format(
+            summary.get("timestamp", utcnow_iso()),
+            summary.get("composites", 0),
+            summary.get("pairs", 0),
+            summary.get("unique_pairs", 0),
+            float(summary.get("avg_abs_delta", 0.0)),
+        )
+    )
 
 
 def _run_colloc(args: argparse.Namespace) -> None:
@@ -121,8 +139,8 @@ def _run_morph_factorize(args: argparse.Namespace) -> None:
 
 def _run_analyze_all(args: argparse.Namespace) -> None:
     combined_args = argparse.Namespace(
-        parses=args.parses,
-        out=args.attrib_out,
+        db_path=args.db_path,
+        limit=None,
     )
     _run_attrib_loo(combined_args)
 
@@ -162,8 +180,9 @@ def _build_parser() -> argparse.ArgumentParser:
     attrib_parser = subparsers.add_parser("attrib", help="Attribution tooling")
     attrib_subparsers = attrib_parser.add_subparsers(dest="attrib_command", required=True)
     attrib_loo = attrib_subparsers.add_parser("loo", help="Leave-one-out attribution")
-    attrib_loo.add_argument("--parses", required=True, help="Path to parses JSONL")
-    attrib_loo.add_argument("--out", required=True, help="Output CSV path")
+    attrib_loo.add_argument(
+        "--limit", type=int, default=None, help="Limit number of composites processed"
+    )
     attrib_loo.set_defaults(handler=_run_attrib_loo)
 
     colloc = subparsers.add_parser("colloc", help="Collocation statistics")
@@ -216,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     set_global_seeds(args.seed)
 
     db_path = Path(args.db).expanduser().resolve()
+    args.db_path = db_path
     init_insights_db.init_db(str(db_path))
 
     conn = connect_sqlite(str(db_path))
