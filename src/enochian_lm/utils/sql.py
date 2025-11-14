@@ -21,6 +21,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
     );
     """,
     """
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_attr_pair
+    ON attribution_marginals(morph_a, morph_b);
+    """,
+    """
     CREATE TABLE IF NOT EXISTS collocation_stats (
       id INTEGER PRIMARY KEY,
       morph_left TEXT NOT NULL,
@@ -120,6 +124,15 @@ def upsert_rows(conn: sqlite3.Connection, table: str, rows: list[dict[str, objec
             f"{col} = excluded.{col}" for col in columns if col not in {"morph", "id"}
         )
         sql = f"{base_sql} ON CONFLICT(morph) DO UPDATE SET {update_assignments}"
+    elif table == "attribution_marginals":
+        update_assignments = ", ".join(
+            f"{col} = excluded.{col}"
+            for col in columns
+            if col not in {"morph_a", "morph_b", "id"}
+        )
+        sql = (
+            f"{base_sql} ON CONFLICT(morph_a, morph_b) DO UPDATE SET {update_assignments}"
+        )
     else:
         sql = base_sql
 
