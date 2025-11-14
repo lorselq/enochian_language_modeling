@@ -52,6 +52,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
     );
     """,
     """
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_residual_cluster_id
+    ON residual_clusters(cluster_id);
+    """,
+    """
     CREATE TABLE IF NOT EXISTS residual_cluster_membership (
       id INTEGER PRIMARY KEY,
       residual_span TEXT NOT NULL,
@@ -59,6 +63,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
       sim_to_centroid REAL NOT NULL,
       updated_at TEXT NOT NULL
     );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_residual_member_cluster
+    ON residual_cluster_membership(cluster_id);
     """,
     """
     CREATE TABLE IF NOT EXISTS morph_semantic_vectors (

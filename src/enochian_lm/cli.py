@@ -15,6 +15,7 @@ from enochian_translation_team.scripts import init_insights_db
 
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
+from .analysis.residuals import cluster_residuals
 from .utils.sql import connect_sqlite, ensure_analysis_tables
 from .utils.text import set_global_seeds, utcnow_iso
 
@@ -136,17 +137,78 @@ def _run_colloc(args: argparse.Namespace) -> None:
     )
 
 
-def _run_residual_cluster(args: argparse.Namespace) -> None:
-    payload = {
-        "k": args.k,
-        "min_df": args.min_df,
-        "created_at": utcnow_iso(),
-    }
-    _write_json(Path(args.out), payload)
-    logger.info(
-        "Wrote residual clustering placeholder",
-        extra={"out": args.out, "k": args.k, "min_df": args.min_df},
+def _print_cluster_summary(summary: dict[str, object]) -> None:
+    timestamp = summary.get("timestamp", utcnow_iso())
+    clusters = int(summary.get("clusters", 0))
+    mean_sim = float(summary.get("mean_sim", 0.0))
+    morphs = int(summary.get("morphs", 0))
+    print(
+        "[{}] Clustered {} morphs into {} clusters (mean sim = {:.3f})".format(
+            timestamp,
+            morphs,
+            clusters,
+            mean_sim,
+        )
     )
+
+    details = summary.get("details", [])
+    if not isinstance(details, list) or not details:
+        print("No clusters to display.")
+        return
+
+    header = f"{'Cluster':>7} | {'Size':>5} | {'MeanSim':>7} | Example Morphs"
+    divider = "-" * len(header)
+    print(divider)
+    print(header)
+    print(divider)
+    for detail in details:
+        cluster_id = int(detail.get("cluster_id", 0))
+        size = int(detail.get("size", 0))
+        cluster_mean = float(detail.get("mean_sim", 0.0))
+        examples = detail.get("examples", [])
+        if isinstance(examples, list):
+            example_str = ", ".join(str(item) for item in examples)
+        else:
+            example_str = str(examples)
+        print(
+            f"{cluster_id:>7} | {size:>5} | {cluster_mean:>7.3f} | {example_str}"
+        )
+
+
+def _run_residual_cluster(args: argparse.Namespace) -> None:
+    db_path = Path(args.db_path)
+    logger.info(
+        "Running residual clustering",
+        extra={
+            "db": str(db_path),
+            "k": args.k,
+            "min_df": args.min_df,
+            "pmi_thresh": args.pmi_thresh,
+        },
+    )
+
+    conn = connect_sqlite(str(db_path))
+    try:
+        ensure_analysis_tables(conn)
+        summary = cluster_residuals(
+            conn,
+            k=args.k,
+            min_df=args.min_df,
+            pmi_thresh=args.pmi_thresh,
+        )
+    finally:
+        conn.close()
+
+    logger.info(
+        "Residual clustering summary",
+        extra={
+            "clusters": summary.get("clusters", 0),
+            "mean_sim": round(float(summary.get("mean_sim", 0.0)), 4),
+            "morphs": summary.get("morphs", 0),
+        },
+    )
+
+    _print_cluster_summary(summary)
 
 
 def _run_morph_factorize(args: argparse.Namespace) -> None:
@@ -176,9 +238,10 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
     _run_colloc(combined_args)
 
     combined_args = argparse.Namespace(
+        db_path=args.db_path,
         k=args.k,
         min_df=args.min_df,
-        out=args.residual_out,
+        pmi_thresh=args.pmi_thresh,
     )
     _run_residual_cluster(combined_args)
 
@@ -218,8 +281,15 @@ def _build_parser() -> argparse.ArgumentParser:
     residual_subparsers = residual.add_subparsers(dest="residual_command", required=True)
     residual_cluster = residual_subparsers.add_parser("cluster", help="Cluster residual spans")
     residual_cluster.add_argument("--k", type=int, default=10, help="Number of clusters")
-    residual_cluster.add_argument("--min-df", type=int, default=2, help="Minimum document frequency")
-    residual_cluster.add_argument("--out", required=True, help="Output JSON path")
+    residual_cluster.add_argument(
+        "--min-df", type=int, default=2, help="Minimum document frequency"
+    )
+    residual_cluster.add_argument(
+        "--pmi-thresh",
+        type=float,
+        default=0.0,
+        help="PMI threshold when computing fallback residuals",
+    )
     residual_cluster.set_defaults(handler=_run_residual_cluster)
 
     morph = subparsers.add_parser("morph", help="Morph semantic tooling")
@@ -239,6 +309,9 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze_all.add_argument("--min-count", type=int, default=5, help="Minimum joint count")
     analyze_all.add_argument("--k", type=int, default=10, help="Number of clusters")
     analyze_all.add_argument("--min-df", type=int, default=2, help="Minimum document frequency")
+    analyze_all.add_argument(
+        "--pmi-thresh", type=float, default=0.0, help="PMI threshold for residual clustering"
+    )
     analyze_all.add_argument("--residual-out", required=True, help="Residual clustering JSON output path")
     analyze_all.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
     analyze_all.add_argument("--morph-out", required=True, help="Morph factorization CSV output path")
