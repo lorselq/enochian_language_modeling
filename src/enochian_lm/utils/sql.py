@@ -39,6 +39,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
     );
     """,
     """
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_colloc_pair
+    ON collocation_stats(morph_left, morph_right);
+    """,
+    """
     CREATE TABLE IF NOT EXISTS residual_clusters (
       id INTEGER PRIMARY KEY,
       cluster_id INTEGER NOT NULL,
@@ -132,6 +136,15 @@ def upsert_rows(conn: sqlite3.Connection, table: str, rows: list[dict[str, objec
         )
         sql = (
             f"{base_sql} ON CONFLICT(morph_a, morph_b) DO UPDATE SET {update_assignments}"
+        )
+    elif table == "collocation_stats":
+        update_assignments = ", ".join(
+            f"{col} = excluded.{col}"
+            for col in columns
+            if col not in {"morph_left", "morph_right", "id"}
+        )
+        sql = (
+            f"{base_sql} ON CONFLICT(morph_left, morph_right) DO UPDATE SET {update_assignments}"
         )
     else:
         sql = base_sql

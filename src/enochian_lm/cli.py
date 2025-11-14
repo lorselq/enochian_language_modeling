@@ -14,6 +14,7 @@ from typing import Callable, Iterable
 from enochian_translation_team.scripts import init_insights_db
 
 from .analysis.attribution import run_leave_one_out
+from .analysis.colloc import compute_collocations
 from .utils.sql import connect_sqlite, ensure_analysis_tables
 from .utils.text import set_global_seeds, utcnow_iso
 
@@ -93,23 +94,46 @@ def _run_attrib_loo(args: argparse.Namespace) -> None:
 
 
 def _run_colloc(args: argparse.Namespace) -> None:
-    morphs_path = Path(args.morphs)
-    _validate_input_file(morphs_path, "Morph list")
-    _write_csv_header(
-        Path(args.out),
-        (
-            "morph_left",
-            "morph_right",
-            "count_ab",
-            "count_a",
-            "count_b",
-            "pmi",
-            "llr",
-            "asym_dep",
-            "updated_at",
-        ),
+    db_path = Path(args.db_path)
+    limit = getattr(args, "limit", None)
+    min_count = getattr(args, "min_count", 5)
+
+    logger.info(
+        "Running collocation statistics",
+        extra={"db": str(db_path), "min_count": min_count, "limit": limit},
     )
-    logger.info("Wrote collocation placeholder", extra={"out": args.out, "min_count": args.min_count})
+
+    conn = connect_sqlite(str(db_path))
+    try:
+        ensure_analysis_tables(conn)
+        summary = compute_collocations(conn, min_count=min_count, limit=limit)
+    finally:
+        conn.close()
+
+    pairs = int(summary.get("pairs", 0))
+    avg_pmi = float(summary.get("avg_pmi", 0.0))
+    avg_llr = float(summary.get("avg_llr", 0.0))
+    avg_asym = float(summary.get("avg_asym", 0.0))
+
+    logger.info(
+        "Collocation summary",
+        extra={
+            "pairs": pairs,
+            "avg_pmi": round(avg_pmi, 3),
+            "avg_llr": round(avg_llr, 3),
+            "avg_asym": round(avg_asym, 3),
+        },
+    )
+
+    print(
+        "[{}] Computed {} collocation pairs (avg PMI = {:.3f}, avg LLR = {:.3f}, avg |asym| = {:.3f})".format(
+            summary.get("timestamp", utcnow_iso()),
+            pairs,
+            avg_pmi,
+            avg_llr,
+            avg_asym,
+        )
+    )
 
 
 def _run_residual_cluster(args: argparse.Namespace) -> None:
@@ -145,9 +169,9 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
     _run_attrib_loo(combined_args)
 
     combined_args = argparse.Namespace(
-        morphs=args.morphs,
-        out=args.colloc_out,
+        db_path=args.db_path,
         min_count=args.min_count,
+        limit=None,
     )
     _run_colloc(combined_args)
 
@@ -186,9 +210,8 @@ def _build_parser() -> argparse.ArgumentParser:
     attrib_loo.set_defaults(handler=_run_attrib_loo)
 
     colloc = subparsers.add_parser("colloc", help="Collocation statistics")
-    colloc.add_argument("--morphs", required=True, help="Path to morph inventory")
-    colloc.add_argument("--out", required=True, help="Output CSV path")
     colloc.add_argument("--min-count", type=int, default=5, help="Minimum joint count")
+    colloc.add_argument("--limit", type=int, default=None, help="Limit number of pairs processed")
     colloc.set_defaults(handler=_run_colloc)
 
     residual = subparsers.add_parser("residual", help="Residual analytics")
