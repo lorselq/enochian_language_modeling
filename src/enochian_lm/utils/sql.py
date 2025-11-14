@@ -21,6 +21,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
     );
     """,
     """
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_attr_pair
+    ON attribution_marginals(morph_a, morph_b);
+    """,
+    """
     CREATE TABLE IF NOT EXISTS collocation_stats (
       id INTEGER PRIMARY KEY,
       morph_left TEXT NOT NULL,
@@ -35,6 +39,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
     );
     """,
     """
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_colloc_pair
+    ON collocation_stats(morph_left, morph_right);
+    """,
+    """
     CREATE TABLE IF NOT EXISTS residual_clusters (
       id INTEGER PRIMARY KEY,
       cluster_id INTEGER NOT NULL,
@@ -44,6 +52,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
     );
     """,
     """
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_residual_cluster_id
+    ON residual_clusters(cluster_id);
+    """,
+    """
     CREATE TABLE IF NOT EXISTS residual_cluster_membership (
       id INTEGER PRIMARY KEY,
       residual_span TEXT NOT NULL,
@@ -51,6 +63,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
       sim_to_centroid REAL NOT NULL,
       updated_at TEXT NOT NULL
     );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_residual_member_cluster
+    ON residual_cluster_membership(cluster_id);
     """,
     """
     CREATE TABLE IF NOT EXISTS morph_semantic_vectors (
@@ -71,6 +87,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
       used_morphs_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_comp_recon_token
+    ON composite_reconstruction(token);
     """,
 )
 
@@ -120,6 +140,24 @@ def upsert_rows(conn: sqlite3.Connection, table: str, rows: list[dict[str, objec
             f"{col} = excluded.{col}" for col in columns if col not in {"morph", "id"}
         )
         sql = f"{base_sql} ON CONFLICT(morph) DO UPDATE SET {update_assignments}"
+    elif table == "attribution_marginals":
+        update_assignments = ", ".join(
+            f"{col} = excluded.{col}"
+            for col in columns
+            if col not in {"morph_a", "morph_b", "id"}
+        )
+        sql = (
+            f"{base_sql} ON CONFLICT(morph_a, morph_b) DO UPDATE SET {update_assignments}"
+        )
+    elif table == "collocation_stats":
+        update_assignments = ", ".join(
+            f"{col} = excluded.{col}"
+            for col in columns
+            if col not in {"morph_left", "morph_right", "id"}
+        )
+        sql = (
+            f"{base_sql} ON CONFLICT(morph_left, morph_right) DO UPDATE SET {update_assignments}"
+        )
     else:
         sql = base_sql
 
