@@ -5,11 +5,12 @@ import argparse
 import csv
 import json
 import logging
+import math
 import os
 import sys
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Iterator, Sequence
 
 from enochian_translation_team.scripts import init_insights_db
 
@@ -54,12 +55,320 @@ def _write_csv_header(path: Path, header: Iterable[str]) -> None:
     _atomic_write(path, writer, newline="")
 
 
+def _write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
+    def writer(tmp: NamedTemporaryFile) -> None:
+        csv_writer = csv.writer(tmp)
+        csv_writer.writerow(list(header))
+        for row in rows:
+            csv_writer.writerow(list(row))
+
+    _atomic_write(path, writer, newline="")
+
+
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     def writer(tmp: NamedTemporaryFile) -> None:
         json.dump(payload, tmp, indent=2, ensure_ascii=False)
         tmp.write("\n")
 
     _atomic_write(path, writer)
+
+
+def _json_safe(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _json_safe(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "item"):
+        try:
+            return value.item()  # numpy scalar compatibility
+        except Exception:
+            pass
+    if isinstance(value, (int, float, str)) or value is None:
+        return value
+    return str(value)
+
+
+def _iter_json_lines(path: Path) -> Iterator[dict[str, object]]:
+    with path.open("r", encoding="utf-8") as handle:
+        for line_no, raw in enumerate(handle, start=1):
+            text = raw.strip()
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Skipping malformed JSONL line",
+                    extra={"path": str(path), "line": line_no},
+                )
+                continue
+            if isinstance(payload, dict):
+                yield payload
+            else:
+                logger.debug(
+                    "Skipping non-dict JSON payload",
+                    extra={"path": str(path), "line": line_no},
+                )
+
+
+def _coerce_token(payload: dict[str, object]) -> str | None:
+    for key in ("token", "word", "surface", "text", "span"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _coerce_optional_str(payload: dict[str, object], keys: Sequence[str]) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _coerce_float_list(raw: object) -> list[float] | None:
+    candidate: object = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                candidate = json.loads(text)
+            except json.JSONDecodeError:
+                return None
+        else:
+            parts = [segment.strip() for segment in text.split(",") if segment.strip()]
+            try:
+                return [float(part) for part in parts]
+            except ValueError:
+                return None
+    if not isinstance(candidate, (list, tuple)):
+        return None
+    values: list[float] = []
+    for item in candidate:
+        try:
+            values.append(float(item))
+        except (TypeError, ValueError):
+            return None
+    return values
+
+
+def _round_vector(values: Sequence[float], places: int = 6) -> list[float]:
+    factor = 10**places
+    return [math.floor(val * factor + 0.5) / factor for val in values]
+
+
+def _coerce_sequence(raw: object) -> list[str]:
+    data: object = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = [segment.strip() for segment in text.split(",") if segment.strip()]
+        else:
+            data = [segment.strip() for segment in text.replace("|", ",").split(",") if segment.strip()]
+    if isinstance(data, (set, tuple)):
+        iterable = list(data)
+    elif isinstance(data, list):
+        iterable = data
+    else:
+        return []
+    results: list[str] = []
+    for item in iterable:
+        if isinstance(item, str):
+            cleaned = item.strip()
+            if cleaned:
+                results.append(cleaned)
+        elif isinstance(item, (int, float)):
+            results.append(str(item))
+    return results
+
+
+def _vector_norm(values: Sequence[float]) -> float:
+    return math.sqrt(sum(float(v) * float(v) for v in values))
+
+
+def _ingest_composite_parses(conn, path: Path) -> int:
+    timestamp = utcnow_iso()
+    rows: list[tuple[str, str | None, str, float, str, str]] = []
+    for payload in _iter_json_lines(path):
+        token = _coerce_token(payload)
+        vector = _coerce_float_list(
+            payload.get("pred_vector")
+            or payload.get("vector")
+            or payload.get("predicted_vector")
+            or payload.get("embedding")
+        )
+        morphs = _coerce_sequence(
+            payload.get("used_morphs")
+            or payload.get("morphs")
+            or payload.get("morphemes")
+            or payload.get("segments")
+            or payload.get("components")
+        )
+        if not token or vector is None:
+            logger.debug(
+                "Skipping parse entry lacking token/vector",
+                extra={"payload_keys": list(payload.keys())},
+            )
+            continue
+        gold_gloss = _coerce_optional_str(payload, ("gold_gloss", "gloss", "definition"))
+        error_raw = payload.get("recon_error") or payload.get("residual") or payload.get("error")
+        try:
+            recon_error = float(error_raw) if error_raw is not None else 0.0
+        except (TypeError, ValueError):
+            recon_error = 0.0
+        rows.append(
+            (
+                token,
+                gold_gloss,
+                json.dumps(_round_vector(vector)),
+                round(recon_error, 4),
+                json.dumps(morphs),
+                timestamp,
+            )
+        )
+
+    conn.execute("DELETE FROM composite_reconstruction")
+    if rows:
+        conn.executemany(
+            """
+            INSERT INTO composite_reconstruction (
+              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    conn.commit()
+    logger.info(
+        "Ingested composite parses",
+        extra={"rows": len(rows), "path": str(path)},
+    )
+    return len(rows)
+
+
+def _ingest_morph_inventory(conn, path: Path) -> int:
+    timestamp = utcnow_iso()
+    rows: list[dict[str, object]] = []
+    for payload in _iter_json_lines(path):
+        morph = _coerce_optional_str(payload, ("morph", "token", "name"))
+        if morph is None:
+            continue
+        vector = _coerce_float_list(payload.get("vector") or payload.get("embedding"))
+        if vector is None:
+            vector_json = payload.get("vector_json")
+            if isinstance(vector_json, str):
+                vector = _coerce_float_list(vector_json)
+        if vector is None:
+            continue
+        norm_raw = payload.get("l2_norm") or payload.get("norm")
+        try:
+            norm = float(norm_raw) if norm_raw is not None else _vector_norm(vector)
+        except (TypeError, ValueError):
+            norm = _vector_norm(vector)
+        rows.append(
+            {
+                "morph": morph,
+                "vector_json": json.dumps(_round_vector(vector)),
+                "l2_norm": round(norm, 4),
+                "updated_at": timestamp,
+            }
+        )
+
+    conn.execute("DELETE FROM morph_semantic_vectors")
+    if rows:
+        conn.executemany(
+            """
+            INSERT INTO morph_semantic_vectors (morph, vector_json, l2_norm, updated_at)
+            VALUES (:morph, :vector_json, :l2_norm, :updated_at)
+            ON CONFLICT(morph) DO UPDATE SET
+              vector_json=excluded.vector_json,
+              l2_norm=excluded.l2_norm,
+              updated_at=excluded.updated_at
+            """,
+            rows,
+        )
+    conn.commit()
+    logger.info(
+        "Ingested morph inventory",
+        extra={"rows": len(rows), "path": str(path)},
+    )
+    return len(rows)
+
+
+def _export_attribution_csv(db_path: Path, out_path: Path) -> None:
+    conn = connect_sqlite(str(db_path))
+    try:
+        query = (
+            "SELECT morph_a, morph_b, delta_a_given_b, delta_b_given_a, n_tokens, updated_at "
+            "FROM attribution_marginals ORDER BY n_tokens DESC, morph_a, morph_b"
+        )
+        rows = conn.execute(query).fetchall()
+    finally:
+        conn.close()
+
+    header = ("morph_a", "morph_b", "delta_a_given_b", "delta_b_given_a", "n_tokens", "updated_at")
+    data = (
+        (
+            row["morph_a"],
+            row["morph_b"],
+            float(row["delta_a_given_b"]),
+            float(row["delta_b_given_a"]),
+            int(row["n_tokens"]),
+            row["updated_at"],
+        )
+        for row in rows
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_csv(out_path, header, data)
+
+
+def _export_collocation_csv(db_path: Path, out_path: Path) -> None:
+    conn = connect_sqlite(str(db_path))
+    try:
+        query = (
+            "SELECT morph_left, morph_right, count_ab, count_a, count_b, pmi, llr, asym_dep, updated_at "
+            "FROM collocation_stats ORDER BY count_ab DESC, morph_left, morph_right"
+        )
+        rows = conn.execute(query).fetchall()
+    finally:
+        conn.close()
+
+    header = (
+        "morph_left",
+        "morph_right",
+        "count_ab",
+        "count_a",
+        "count_b",
+        "pmi",
+        "llr",
+        "asym_dep",
+        "updated_at",
+    )
+    data = (
+        (
+            row["morph_left"],
+            row["morph_right"],
+            int(row["count_ab"]),
+            int(row["count_a"]),
+            int(row["count_b"]),
+            row["pmi"],
+            row["llr"],
+            row["asym_dep"],
+            row["updated_at"],
+        )
+        for row in rows
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_csv(out_path, header, data)
 
 
 def _run_attrib_loo(args: argparse.Namespace) -> None:
@@ -177,7 +486,7 @@ def _print_cluster_summary(summary: dict[str, object]) -> None:
         )
 
 
-def _run_residual_cluster(args: argparse.Namespace) -> None:
+def _run_residual_cluster(args: argparse.Namespace) -> dict[str, object]:
     db_path = Path(args.db_path)
     logger.info(
         "Running residual clustering",
@@ -211,6 +520,7 @@ def _run_residual_cluster(args: argparse.Namespace) -> None:
     )
 
     _print_cluster_summary(summary)
+    return summary
 
 
 def _run_morph_factorize(args: argparse.Namespace) -> None:
@@ -376,11 +686,48 @@ def _run_report_pipeline(args: argparse.Namespace) -> None:
 
 
 def _run_analyze_all(args: argparse.Namespace) -> None:
-    combined_args = argparse.Namespace(
-        db_path=args.db_path,
-        limit=None,
-    )
+    parses_path = Path(args.parses)
+    morphs_path = Path(args.morphs)
+    attrib_out = Path(args.attrib_out)
+    colloc_out = Path(args.colloc_out)
+    residual_out = Path(args.residual_out)
+
+    _validate_input_file(parses_path, "Parses file")
+    _validate_input_file(morphs_path, "Morph inventory")
+
+    attrib_out.parent.mkdir(parents=True, exist_ok=True)
+    colloc_out.parent.mkdir(parents=True, exist_ok=True)
+    residual_out.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = connect_sqlite(str(args.db_path))
+    try:
+        ensure_analysis_tables(conn)
+        for table in (
+            "attribution_marginals",
+            "collocation_stats",
+            "residual_clusters",
+            "residual_cluster_membership",
+        ):
+            conn.execute(f"DELETE FROM {table}")
+        conn.commit()
+
+        ingested_tokens = _ingest_composite_parses(conn, parses_path)
+        ingested_morphs = _ingest_morph_inventory(conn, morphs_path)
+    finally:
+        conn.close()
+
+    if ingested_tokens == 0:
+        raise ValueError(
+            "No composite parses were ingested; check the --parses file contents."
+        )
+    if ingested_morphs == 0:
+        raise ValueError(
+            "No morph semantic vectors were ingested; check the --morphs file contents."
+        )
+
+    combined_args = argparse.Namespace(db_path=args.db_path, limit=None)
     _run_attrib_loo(combined_args)
+    _export_attribution_csv(args.db_path, attrib_out)
 
     combined_args = argparse.Namespace(
         db_path=args.db_path,
@@ -388,6 +735,7 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
         limit=None,
     )
     _run_colloc(combined_args)
+    _export_collocation_csv(args.db_path, colloc_out)
 
     combined_args = argparse.Namespace(
         db_path=args.db_path,
@@ -395,7 +743,11 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
         min_df=args.min_df,
         pmi_thresh=args.pmi_thresh,
     )
-    _run_residual_cluster(combined_args)
+    residual_summary = _run_residual_cluster(combined_args)
+    sanitized_summary = _json_safe(residual_summary)
+    if not isinstance(sanitized_summary, dict):
+        sanitized_summary = {"result": sanitized_summary}
+    _write_json(residual_out, sanitized_summary)
 
     combined_args = argparse.Namespace(
         db_path=args.db_path,
