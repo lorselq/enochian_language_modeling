@@ -15,6 +15,7 @@ from enochian_translation_team.scripts import init_insights_db
 
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
+from .analysis.factorize import factorize_morphemes
 from .analysis.residuals import cluster_residuals
 from .utils.sql import connect_sqlite, ensure_analysis_tables
 from .utils.text import set_global_seeds, utcnow_iso
@@ -212,15 +213,85 @@ def _run_residual_cluster(args: argparse.Namespace) -> None:
 
 
 def _run_morph_factorize(args: argparse.Namespace) -> None:
-    _write_csv_header(
-        Path(args.out),
-        (
-            "morph",
-            "l2_norm",
-            "updated_at",
-        ),
+    db_path = Path(args.db_path)
+    out_dir = Path(args.out)
+    logger.info(
+        "Running morph semantic factorization",
+        extra={
+            "db": str(db_path),
+            "out": str(out_dir),
+            "alpha": args.alpha,
+            "embed": args.embed,
+            "min_morph_count": args.min_morph_count,
+            "min_token_morphs": args.min_token_morphs,
+            "row_norm": args.row_norm,
+            "metric": args.metric,
+            "limit": args.limit,
+        },
     )
-    logger.info("Wrote morph factorization placeholder", extra={"out": args.out, "alpha": args.alpha})
+
+    conn = connect_sqlite(str(db_path))
+    try:
+        ensure_analysis_tables(conn)
+        summary = factorize_morphemes(
+            conn,
+            str(out_dir),
+            alpha=args.alpha,
+            embed=args.embed,
+            min_morph_count=args.min_morph_count,
+            min_token_morphs=args.min_token_morphs,
+            row_norm=args.row_norm,
+            metric=args.metric,
+            limit=args.limit,
+        )
+    finally:
+        conn.close()
+
+    tokens = int(summary.get("tokens", 0))
+    morphs = int(summary.get("morphs", 0))
+    dim = int(summary.get("dim", 0))
+    mean_error = float(summary.get("mean_error", 0.0))
+    median_error = float(summary.get("median_error", 0.0))
+
+    logger.info(
+        "Morph factorization summary",
+        extra={
+            "tokens": tokens,
+            "morphs": morphs,
+            "dim": dim,
+            "alpha": summary.get("alpha", args.alpha),
+            "metric": summary.get("metric", args.metric),
+            "mean_error": mean_error,
+            "median_error": median_error,
+        },
+    )
+
+    written_files = [
+        "morph_vectors.csv",
+        "reconstruction.csv",
+        "summary.json",
+    ]
+    alignment_path = out_dir / "alignment.csv"
+    if alignment_path.exists():
+        written_files.append("alignment.csv")
+
+    print(
+        "[{}] Factorized {} tokens over {} morphs (D={}) | alpha={} | metric={}".format(
+            summary.get("timestamp", utcnow_iso()),
+            tokens,
+            morphs,
+            dim,
+            summary.get("alpha", args.alpha),
+            summary.get("metric", args.metric),
+        )
+    )
+    print(
+        "mean recon_error={:.4f}, median={:.4f} | wrote: {}".format(
+            mean_error,
+            median_error,
+            ", ".join(written_files),
+        )
+    )
 
 
 def _run_analyze_all(args: argparse.Namespace) -> None:
@@ -246,8 +317,15 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
     _run_residual_cluster(combined_args)
 
     combined_args = argparse.Namespace(
-        alpha=args.alpha,
+        db_path=args.db_path,
         out=args.morph_out,
+        alpha=args.alpha,
+        embed=args.embed,
+        min_morph_count=args.min_morph_count,
+        min_token_morphs=args.min_token_morphs,
+        row_norm=args.row_norm,
+        metric=args.metric,
+        limit=None,
     )
     _run_morph_factorize(combined_args)
 
@@ -296,7 +374,42 @@ def _build_parser() -> argparse.ArgumentParser:
     morph_subparsers = morph.add_subparsers(dest="morph_command", required=True)
     morph_factorize = morph_subparsers.add_parser("factorize", help="Factorize morph semantics")
     morph_factorize.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
-    morph_factorize.add_argument("--out", required=True, help="Output CSV path")
+    morph_factorize.add_argument("--out", required=True, help="Output directory for run artifacts")
+    morph_factorize.add_argument(
+        "--embed",
+        choices=["gloss-words", "gloss-chars", "hashing-words"],
+        default="gloss-words",
+        help="Gloss embedding strategy",
+    )
+    morph_factorize.add_argument(
+        "--min-morph-count",
+        type=int,
+        default=3,
+        help="Minimum occurrences for a morph to be included",
+    )
+    morph_factorize.add_argument(
+        "--min-token-morphs",
+        type=int,
+        default=2,
+        help="Minimum morph count per token",
+    )
+    morph_factorize.add_argument(
+        "--row-norm",
+        action="store_true",
+        help="Normalize design matrix rows by sqrt(#morphs)",
+    )
+    morph_factorize.add_argument(
+        "--metric",
+        choices=["mse", "cosine"],
+        default="mse",
+        help="Reconstruction error metric",
+    )
+    morph_factorize.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit number of tokens processed",
+    )
     morph_factorize.set_defaults(handler=_run_morph_factorize)
 
     analyze = subparsers.add_parser("analyze", help="Run all placeholder analytics")
@@ -314,7 +427,38 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     analyze_all.add_argument("--residual-out", required=True, help="Residual clustering JSON output path")
     analyze_all.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
-    analyze_all.add_argument("--morph-out", required=True, help="Morph factorization CSV output path")
+    analyze_all.add_argument(
+        "--embed",
+        choices=["gloss-words", "gloss-chars", "hashing-words"],
+        default="gloss-words",
+        help="Gloss embedding strategy",
+    )
+    analyze_all.add_argument(
+        "--min-morph-count",
+        type=int,
+        default=3,
+        help="Minimum occurrences for a morph to be included",
+    )
+    analyze_all.add_argument(
+        "--min-token-morphs",
+        type=int,
+        default=2,
+        help="Minimum morph count per token",
+    )
+    analyze_all.add_argument(
+        "--row-norm",
+        action="store_true",
+        help="Normalize design matrix rows by sqrt(#morphs)",
+    )
+    analyze_all.add_argument(
+        "--metric",
+        choices=["mse", "cosine"],
+        default="mse",
+        help="Reconstruction error metric",
+    )
+    analyze_all.add_argument(
+        "--morph-out", required=True, help="Morph factorization output directory"
+    )
     analyze_all.set_defaults(handler=_run_analyze_all)
 
     return parser
