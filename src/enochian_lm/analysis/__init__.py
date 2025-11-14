@@ -4,4 +4,5 @@ __all__ = [
     "attribution",
     "colloc",
     "residuals",
+    "factorize",
 ]

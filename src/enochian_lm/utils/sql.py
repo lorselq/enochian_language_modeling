@@ -88,6 +88,10 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
       updated_at TEXT NOT NULL
     );
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_comp_recon_token
+    ON composite_reconstruction(token);
+    """,
 )
 
 
