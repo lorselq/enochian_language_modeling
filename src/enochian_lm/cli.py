@@ -17,6 +17,7 @@ from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
 from .analysis.factorize import factorize_morphemes
 from .analysis.residuals import cluster_residuals
+from .report.pipeline_summary import generate_pipeline_report
 from .utils.sql import connect_sqlite, ensure_analysis_tables
 from .utils.text import set_global_seeds, utcnow_iso
 
@@ -294,6 +295,86 @@ def _run_morph_factorize(args: argparse.Namespace) -> None:
     )
 
 
+def _run_report_pipeline(args: argparse.Namespace) -> None:
+    db_path = Path(args.db_path)
+    out_dir = Path(args.out) if args.out else Path("runs") / f"{utcnow_iso().replace(':', '').replace('-', '')}_pipeline"
+    baseline = args.baseline
+
+    logger.info(
+        "Generating pipeline report",
+        extra={
+            "db": str(db_path),
+            "out": str(out_dir),
+            "baseline": baseline,
+        },
+    )
+
+    conn = connect_sqlite(str(db_path))
+    try:
+        summary = generate_pipeline_report(
+            conn,
+            str(out_dir),
+            db_path=str(db_path),
+            baseline_path=baseline,
+        )
+    finally:
+        conn.close()
+
+    metadata = summary.get("metadata", {})
+    timestamp = metadata.get("timestamp", utcnow_iso())
+
+    coverage = summary.get("coverage", {})
+    attrib = summary.get("attribution", {})
+    clusters = summary.get("residual_clusters", {})
+    factor = summary.get("factorization", {})
+
+    coverage_ratio = coverage.get("coverage_ratio_mean")
+    residual_ratio = coverage.get("residual_ratio_mean")
+    avg_conf = coverage.get("avg_confidence")
+    avg_delta = attrib.get("avg_abs_delta")
+    cluster_count = clusters.get("clusters")
+    mean_sim = clusters.get("mean_sim")
+    mean_error = factor.get("mean_error")
+    median_error = factor.get("median_error")
+
+    logger.info(
+        "Pipeline report summary",
+        extra={
+            "coverage_ratio_mean": coverage_ratio,
+            "residual_ratio_mean": residual_ratio,
+            "avg_confidence": avg_conf,
+            "avg_delta": avg_delta,
+            "clusters": cluster_count,
+            "mean_sim": mean_sim,
+            "mean_error": mean_error,
+            "median_error": median_error,
+        },
+    )
+
+    def _fmt(value: float | None, digits: int = 4) -> str:
+        return "N/A" if value is None else f"{float(value):.{digits}f}"
+
+    print(
+        "[{}] Coverage mean = {} | Residual mean = {} | Avg |Δ| = {}".format(
+            timestamp,
+            _fmt(coverage_ratio),
+            _fmt(residual_ratio),
+            _fmt(avg_delta),
+        )
+    )
+    print(
+        "Residual clusters: {} (mean sim = {}) | Morph factorization mean error = {} (median = {})".format(
+            int(cluster_count or 0),
+            _fmt(mean_sim, 3),
+            _fmt(mean_error),
+            _fmt(median_error),
+        )
+    )
+    print(
+        "Report written to {}".format(out_dir.joinpath("pipeline_report.html"))
+    )
+
+
 def _run_analyze_all(args: argparse.Namespace) -> None:
     combined_args = argparse.Namespace(
         db_path=args.db_path,
@@ -411,6 +492,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Limit number of tokens processed",
     )
     morph_factorize.set_defaults(handler=_run_morph_factorize)
+
+    report = subparsers.add_parser("report", help="Reporting utilities")
+    report_subparsers = report.add_subparsers(dest="report_command", required=True)
+    report_pipeline = report_subparsers.add_parser("pipeline", help="Generate a pipeline report")
+    report_pipeline.add_argument("--out", help="Output directory for the report")
+    report_pipeline.add_argument(
+        "--baseline",
+        help="Optional baseline residual JSONL for comparisons",
+        default=None,
+    )
+    report_pipeline.set_defaults(handler=_run_report_pipeline)
 
     analyze = subparsers.add_parser("analyze", help="Run all placeholder analytics")
     analyze_subparsers = analyze.add_subparsers(dest="analyze_command", required=True)
