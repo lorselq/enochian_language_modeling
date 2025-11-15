@@ -13,6 +13,7 @@ from tempfile import NamedTemporaryFile
 from typing import Callable, Iterable, Iterator, Sequence
 
 from enochian_translation_team.scripts import init_insights_db
+from enochian_translation_team.utils.preanalysis import execute_preanalysis
 
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
@@ -685,6 +686,48 @@ def _run_report_pipeline(args: argparse.Namespace) -> None:
     )
 
 
+def _run_preanalyze(args: argparse.Namespace) -> None:
+    db_path = Path(args.db_path)
+    result = execute_preanalysis(
+        db_path=db_path,
+        stage=args.stage,
+        trusted_path=args.trusted,
+        run_id=args.run_id,
+        refresh=args.refresh,
+    )
+
+    stage = result.get("stage")
+    run_id = result.get("run_id")
+    pre_id = result.get("preanalysis_id")
+    created = result.get("created")
+    trusted_count = result.get("trusted_count")
+    snapshots = result.get("snapshots", [])
+
+    status = "created" if created else "reused"
+    print(
+        f"[{stage}] Pre-analysis {status} for run {run_id} (preanalysis_id={pre_id}; trusted={trusted_count})."
+    )
+
+    for snap in snapshots:
+        if not isinstance(snap, dict):
+            continue
+        ngram = snap.get("ngram")
+        occurrences = snap.get("occurrences")
+        sample = snap.get("sample") or []
+        preview_items: list[str] = []
+        for item in sample[:3]:
+            if not isinstance(item, dict):
+                continue
+            canonical = item.get("canonical")
+            gloss = item.get("gloss")
+            if canonical and gloss:
+                preview_items.append(f"{canonical}:{gloss}")
+            elif canonical:
+                preview_items.append(str(canonical))
+        preview = f" → {', '.join(preview_items)}" if preview_items else ""
+        print(f"- {ngram}: occurrences={occurrences}{preview}")
+
+
 def _run_analyze_all(args: argparse.Namespace) -> None:
     parses_path = Path(args.parses)
     morphs_path = Path(args.morphs)
@@ -774,6 +817,28 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    pre_parser = subparsers.add_parser("preanalyze", help="Pre-analysis safeguards")
+    pre_parser.add_argument(
+        "--stage",
+        choices=["initial", "subsequent"],
+        default="initial",
+        help="Which pre-analysis stage to run",
+    )
+    pre_parser.add_argument(
+        "--run-id",
+        help="Existing translation run id (auto-selects latest when omitted)",
+    )
+    pre_parser.add_argument(
+        "--trusted",
+        help="Optional path to a JSON list of trusted n-grams",
+    )
+    pre_parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Refresh snapshots even if a record already exists",
+    )
+    pre_parser.set_defaults(handler=_run_preanalyze)
 
     attrib_parser = subparsers.add_parser("attrib", help="Attribution tooling")
     attrib_subparsers = attrib_parser.add_subparsers(dest="attrib_command", required=True)
