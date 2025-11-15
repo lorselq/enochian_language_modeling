@@ -40,4 +40,5 @@ enochian-build-ngram-index = "enochian_translation_team.utils.build_ngram_index:
 enochian-inspect = "enochian_translation_team.tools.inspect_definitions:main"
 enochian-analysis = "enochian_translation_team.main:main"
 enochian-interpret = "enochian_translation_team.interpretation.cli:main"
+enochian-apply-analytics = "enochian_translation_team.scripts.apply_analytics_updates:main"
 enlm = "enochian_lm.cli:main"
