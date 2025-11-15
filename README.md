@@ -56,6 +56,51 @@ A simulated AI team operates in two distinct modes:
 - **Agent Modes:** Both Debate and Solo modes fully implemented; comparative analyses planned as future research.
 - **CLI Enhancements:** Improved terminal interface for smoother operation and enhanced readability.
 
+## Analytics integration workflow
+
+Recent updates wire the standalone analytics package (`enlm`) back into the
+interactive translation crew so that debate/solo prompts surface attribution,
+collocation, and residual-cluster priors automatically. To make use of those
+signals:
+
+1. **Run at least one translation session.** Use `poetry run enochian-analysis`
+   and choose whether the crew works in debate or solo mode. This seeds the
+   SQLite insights database at
+   `src/enochian_translation_team/data/debate_derived_definitions.sqlite3` or
+   `src/enochian_translation_team/data/solo_analysis_derived_definitions.sqlite3`
+   depending on the mode (see `utils.config.get_config_paths()` for the exact
+   filenames).
+2. **Populate analytics tables against the same database.** Execute the
+   following commands, swapping the `--db` argument for the debate/solo file you
+   are iterating on:
+
+   ```bash
+   poetry run enlm attrib loo --db src/enochian_translation_team/data/debate_derived_definitions.sqlite3
+   poetry run enlm colloc --db src/enochian_translation_team/data/debate_derived_definitions.sqlite3
+   poetry run enlm residual cluster --db src/enochian_translation_team/data/debate_derived_definitions.sqlite3
+   ```
+
+   These create and fill `attribution_marginals`, `collocation_stats`, and
+   `residual_cluster_*` tables that the crew consults when it prepares prompts.
+   If you already have JSONL exports, you can also run
+   `poetry run enlm analyze all ...` to ingest them and perform the same steps in
+   one pass. The attribution and collocation commands require populated
+   `composite_reconstruction` and `morph_semantic_vectors` tables; ingest those
+   sources first if they are empty.
+3. **Restart the translation crew.** Subsequent `poetry run enochian-analysis`
+   sessions will automatically display “Analytics priors” sections and weave the
+   evidence into the residual-focus prompts.
+4. **Retrofit accepted definitions when analytics shift semantics.** After
+   computing analytics, run `poetry run enochian-apply-analytics --db <same db>`
+   (add `--dry-run` to preview changes). The helper appends an
+   `ANALYTICS_NOTES` block to any accepted definition whose paired morpheme is
+   clearly carrying the semantics, preventing future sessions from repeating the
+   same mistake.
+
+Following this workflow ensures that morphemes like `PRG` receive the fiery
+attribution instead of letting shared tokens skew toward `IAL`, and the team can
+course-correct existing glosses without manual table edits.
+
 ## Future Work and Phased Development
 
 ### Near-Term Development Goals

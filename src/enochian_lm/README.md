@@ -33,6 +33,47 @@ run `enochian_translation_team` workflows first so that the composite parses,
 morph vectors, and residual annotations exist. The analytics will otherwise
 produce empty summaries.
 
+## Feeding analytics back into `enochian_translation_team`
+
+The translation crew now consults the analytics tables at runtime. To activate
+those signals:
+
+1. **Generate base data.** Process at least one n-gram through
+   `poetry run enochian-analysis` so that
+   `src/enochian_translation_team/data/debate_derived_definitions.sqlite3` (or
+   the solo variant `src/enochian_translation_team/data/solo_analysis_derived_definitions.sqlite3`)
+   contains accepted clusters and composite breakdowns. The CLI automatically
+   ensures the shared schema via
+   `scripts.init_insights_db.init_db()`.
+2. **Compute analytics against the same database.** Point `enlm` at the debate
+   or solo database, then run the individual commands:
+
+   ```bash
+   poetry run enlm attrib loo --db src/enochian_translation_team/data/debate_derived_definitions.sqlite3
+   poetry run enlm colloc --db src/enochian_translation_team/data/debate_derived_definitions.sqlite3
+   poetry run enlm residual cluster --db src/enochian_translation_team/data/debate_derived_definitions.sqlite3
+   ```
+
+   These calls create `attribution_marginals`, `collocation_stats`, and
+   `residual_cluster_*` tables. If you maintain JSONL exports of composites and
+   morph vectors, `poetry run enlm analyze all ...` ingests them and runs the same
+   analytics in one sweep. The attribution and collocation steps assume that
+   `composite_reconstruction` and `morph_semantic_vectors` already contain data;
+   ingest JSONL exports first if those tables are empty.
+3. **Re-run the translation crew.** The next `poetry run enochian-analysis`
+   session detects the populated tables and adds an “Analytics priors” section to
+   the agent prompts, along with focus notes that highlight dominant partners or
+   residual clusters.
+4. **Optional: patch existing glosses.** Invoke
+   `poetry run enochian-apply-analytics --db <same db> --dry-run` to preview the
+   prose that will be appended to accepted definitions. Drop the `--dry-run`
+   flag to persist the update with an `ANALYTICS_NOTES` trail inside each JSON
+   definition payload.
+
+If any table is missing, `gather_morph_evidence` simply returns an empty summary
+so the crew keeps functioning—the analytics only appear once the prerequisite
+commands have been executed.
+
 ## Directory layout
 
 ```
