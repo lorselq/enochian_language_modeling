@@ -7,7 +7,7 @@ import statistics as st
 import time
 import uuid, json, sys, platform, datetime
 from typing import List, Optional, Dict, Any, Tuple
-from collections import defaultdict
+from collections import defaultdict, Counter
 from enochian_translation_team.utils.logger import save_log
 from enochian_translation_team.tools.debate_engine import debate_ngram
 from enochian_translation_team.tools.solo_analysis_engine import (
@@ -29,6 +29,7 @@ from enochian_translation_team.utils.embeddings import (
     stream_text,
 )
 from enochian_translation_team.utils.residual_analysis import summarize_residuals
+from enochian_translation_team.utils.analytics_bridge import gather_morph_evidence
 
 GOLD = "\033[38;5;178m"
 GREEN = "\033[38;5;120m"
@@ -572,6 +573,8 @@ class RootExtractionCrew:
         )
 
         residual_inputs = []
+        segment_counter: Counter[str] = Counter()
+        residual_counter: Counter[str] = Counter()
         seen_norms = set()
         for original in cluster:
             norm_form = _get_field(original, "normalized", "").lower()
@@ -596,6 +599,18 @@ class RootExtractionCrew:
                     "coverage_ratio": 0.0,
                     "residual_ratio": 1.0 if uncovered else 0.0,
                 }
+            if breakdown:
+                for seg in breakdown.get("segments", []):
+                    canonical = str(seg.get("canonical", "")).strip()
+                    if canonical and canonical.lower() != ngram_lower:
+                        segment_counter[canonical] += 1
+                for uncovered_entry in breakdown.get("uncovered", []):
+                    if isinstance(uncovered_entry, dict):
+                        frag = str(uncovered_entry.get("text", "")).strip()
+                    else:
+                        frag = str(uncovered_entry).strip()
+                    if frag and frag.lower() != ngram_lower:
+                        residual_counter[frag] += 1
             residual_inputs.append(
                 {
                     "word": display_word,
@@ -608,6 +623,13 @@ class RootExtractionCrew:
         residual_report = summarize_residuals(
             root=ngram_lower,
             analyses=residual_inputs,
+        )
+
+        analytics_summary = gather_morph_evidence(
+            self.new_definitions_db,
+            root=ngram_lower,
+            partner_counts=segment_counter,
+            residual_counts=residual_counter,
         )
 
         # Summarize stats for agents with residual diagnostics
@@ -623,6 +645,23 @@ class RootExtractionCrew:
             stats_lines.append("")
             stats_lines.append("Morphological diagnostics:")
             stats_lines.append(focus_prompt)
+
+        analytics_summary = analytics_summary or {}
+        analytics_lines = analytics_summary.get("summary_lines") or []
+        if analytics_lines:
+            stats_lines.append("")
+            stats_lines.append("Analytics priors:")
+            stats_lines.extend(analytics_lines)
+
+        analytics_focus = analytics_summary.get("focus_lines") or []
+        if analytics_focus:
+            focus_block = "Attribution highlights:\n" + "\n".join(
+                f"- {line}" for line in analytics_focus
+            )
+            if focus_prompt:
+                focus_prompt = f"{focus_prompt}\n\n{focus_block}"
+            else:
+                focus_prompt = focus_block
 
         compact_summary = self._build_stats_summary(
             ngram,  # or ngram if iterating strings
@@ -668,6 +707,7 @@ class RootExtractionCrew:
 
         if isinstance(the_result, dict):
             the_result.setdefault("residual_report", residual_report)
+            the_result.setdefault("analytics_summary", analytics_summary)
 
         # Normalize expected keys (be defensive)
         normalized = {
@@ -679,7 +719,10 @@ class RootExtractionCrew:
             "Archivist": the_result.get("Archivist", "") or "",
             "raw_output": the_result,
         }
+        if isinstance(residual_report, dict):
+            residual_report.setdefault("analytics_summary", analytics_summary)
         normalized["residual_report"] = residual_report
+        normalized["analytics_summary"] = analytics_summary
         return normalized
 
     def process_ngrams(
