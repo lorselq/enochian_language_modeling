@@ -129,3 +129,66 @@ This project is currently configured for a highly customized local development e
 ---
 
 *This project remains experimental and actively evolving. All analyses, definitions, and methodological approaches are speculative, aimed at computational and theoretical exploration rather than definitive linguistic reconstruction.*
+
+### Step-by-step setup and run checklist
+
+The commands below assume `.env_local` / `.env_remote` already exist and that you
+are starting from a clean checkout.
+
+1. **Install dependencies.** Run `poetry install` once to create the virtual
+   environment and pull the shared dependencies for both
+   `enochian_translation_team` and `enochian_lm`.
+2. **Train the FastText embeddings.** Execute `poetry run
+   enochian-build-fasttext` to generate `tools/models/enochian_fasttext.model`
+   from the dictionary corpus. The script hashes dictionary entries and reuses
+   cached vectors when nothing changed, so you can rerun it safely when the
+   lexicon is updated.【F:src/enochian_translation_team/tools/train_fasttext_model.py†L1-L132】【F:src/enochian_translation_team/tools/train_fasttext_model.py†L182-L233】
+3. **Rebuild the n-gram sidecar.** Populate `data/ngram_index.sqlite3` with
+   canonical entries and variant mappings by running `poetry run python
+   src/enochian_translation_team/utils/build_ngram_sidecar.py --db
+   src/enochian_translation_team/data/ngram_index.sqlite3 --keys
+   src/enochian_translation_team/data/enochian_keys.txt`. The remaining
+   arguments default to the dictionary, substitution, and compression JSON files
+   that ship with the repo.【F:src/enochian_translation_team/utils/build_ngram_sidecar.py†L1-L120】【F:src/enochian_translation_team/utils/build_ngram_sidecar.py†L600-L620】
+4. **Initialize the insights databases.** Seed both the debate and solo SQLite
+   files by running `poetry run python
+   src/enochian_translation_team/scripts/init_insights_db.py`. The script
+   creates or migrates the shared schema (runs, clusters, definitions, residual
+   tables, analytics scaffolding) and may be rerun at any time.【F:src/enochian_translation_team/scripts/init_insights_db.py†L1-L609】
+5. **Run a translation session.** Launch `poetry run enochian-analysis` and pick
+   solo or debate mode. `RootExtractionCrew` orchestrates the agents, writes run
+   metadata into the selected insights database, and streams progress to the
+   console.【F:src/enochian_translation_team/main.py†L1-L86】【F:src/enochian_translation_team/crew/root_extraction_crew.py†L34-L115】
+6. **Refresh analytics priors.** After each batch of accepted definitions,
+   compute the supporting tables that the crew will read on the next pass:
+
+   ```bash
+   poetry run enlm morph factorize --db <path-to-solo-or-debate-db> --out artifacts/morph_factorize
+   poetry run enlm attrib loo --db <path-to-solo-or-debate-db>
+   poetry run enlm colloc --db <path-to-solo-or-debate-db>
+   poetry run enlm residual cluster --db <path-to-solo-or-debate-db>
+   ```
+
+   The factorization step updates `morph_semantic_vectors`, the attribution step
+   populates `attribution_marginals`, the collocation step fills
+   `collocation_stats`, and the residual command builds
+   `residual_cluster_*`—all tables that `RootExtractionCrew` consults through
+   `gather_morph_evidence`. Each subcommand invokes
+   `init_insights_db.init_db()` and upgrades the schema if necessary.【F:src/enochian_lm/analysis/factorize.py†L420-L488】【F:src/enochian_lm/analysis/attribution.py†L113-L206】【F:src/enochian_lm/analysis/colloc.py†L1-L200】【F:src/enochian_lm/cli.py†L760-L938】【F:src/enochian_translation_team/utils/analytics_bridge.py†L218-L320】
+7. **Optionally export reports or retrofit glosses.**
+   - `poetry run enlm report pipeline --db <db> --out artifacts/report` produces
+     an HTML/CSV digest of coverage, attribution, residual, and factorization
+     metrics for archival reference.【F:src/enochian_lm/report/pipeline_summary.py†L752-L836】【F:src/enochian_lm/cli.py†L680-L747】
+   - `poetry run enochian-apply-analytics --db <db> --dry-run` appends the
+     analytics notes block to existing definitions so future sessions inherit the
+     latest priors.【F:src/enochian_translation_team/utils/analytics_bridge.py†L218-L320】【F:src/enochian_lm/README.md†L63-L87】
+
+8. **Rerun `poetry run enochian-analysis`.** The crew reads the refreshed tables
+   on startup and surfaces “Analytics priors” inside each prompt, letting the
+   agents leverage attribution deltas, strong collocations, and residual hot
+   spots during the next debate/solo cycle.【F:src/enochian_translation_team/crew/root_extraction_crew.py†L600-L676】【F:src/enochian_translation_team/utils/analytics_bridge.py†L218-L320】
+
+You can replace steps 6–7 with a single `poetry run enlm analyze all ...` pass if
+you maintain JSONL exports of composite reconstructions and morph vectors; the
+driver ingests both files, truncates the analytics tables, reruns every stage,
+and writes attribution/collocation/residual artifacts in one sweep.【F:src/enochian_lm/cli.py†L680-L748】
