@@ -192,7 +192,20 @@ class QueryModelTool(BaseTool):
             role_name=role_name,
         )
     
-    def attach_logging(self, db: sqlite3.Connection, run_id: str):
+    def attach_logging(
+        self,
+        db: sqlite3.Connection | None,
+        run_id: str | None,
+    ) -> None:
+        """Attach optional logging metadata for downstream persistence.
+
+        CrewAI tools derive from :class:`pydantic.BaseModel`, which performs
+        type validation on attribute assignment.  We therefore accept
+        ``None`` values here so callers can skip logging without tripping
+        validation errors when running in contexts where a database handle or
+        run id is unavailable.
+        """
+
         self._db = db
         self._run_id = run_id
 
