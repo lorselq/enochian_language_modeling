@@ -30,6 +30,10 @@ from enochian_translation_team.utils.embeddings import (
 )
 from enochian_translation_team.utils.residual_analysis import summarize_residuals
 from enochian_translation_team.utils.analytics_bridge import gather_morph_evidence
+from enochian_translation_team.utils.preanalysis import (
+    fetch_preanalysis_summary,
+    mark_preanalysis_consumed,
+)
 
 GOLD = "\033[38;5;178m"
 GREEN = "\033[38;5;120m"
@@ -68,6 +72,16 @@ class RootExtractionCrew:
 
         self.run_id = self._begin_run(engine=style)
         self.use_remote = use_remote
+
+    def _record_preanalysis_consumed(self, ngram: str) -> None:
+        try:
+            mark_preanalysis_consumed(
+                self.new_definitions_db,
+                root=ngram,
+                run_id=self.run_id,
+            )
+        except sqlite3.Error:
+            pass
 
     def _prepare_db(self, conn: sqlite3.Connection) -> None:
         """Set pragmatic SQLite settings for long runs."""
@@ -632,6 +646,24 @@ class RootExtractionCrew:
             residual_counts=residual_counter,
         )
 
+        fallback_summary = fetch_preanalysis_summary(
+            self.new_definitions_db,
+            root=ngram_lower,
+        )
+        if fallback_summary:
+            analytics_summary = analytics_summary or {}
+            merged_summary = list(analytics_summary.get("summary_lines") or [])
+            for line in fallback_summary.get("summary_lines", []):
+                if line not in merged_summary:
+                    merged_summary.append(line)
+            analytics_summary["summary_lines"] = merged_summary
+
+            merged_focus = list(analytics_summary.get("focus_lines") or [])
+            for line in fallback_summary.get("focus_lines", []):
+                if line not in merged_focus:
+                    merged_focus.append(line)
+            analytics_summary["focus_lines"] = merged_focus
+
         # Summarize stats for agents with residual diagnostics
         coverage_pct = round(semantic_coverage * 100, 1)
         stats_lines = [
@@ -781,6 +813,7 @@ class RootExtractionCrew:
             if not semantic_candidates or len(semantic_candidates) < 2:
                 self.processed_ngrams.add(ngram[0])
                 self.save_processed_ngrams()
+                self._record_preanalysis_consumed(ngram[0])
                 continue
             else:
                 stream_text(
@@ -887,6 +920,7 @@ class RootExtractionCrew:
                 if not overlap or len(overlap) < 2:
                     self.processed_ngrams.add(ngram[0])
                     self.save_processed_ngrams()
+                    self._record_preanalysis_consumed(ngram[0])
                     stream_text(
                         f"We have skipped cluster #{cluster_id + 1} for {GOLD}{ngram[0].upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things.\n\n"
                     )
@@ -1553,6 +1587,7 @@ class RootExtractionCrew:
 
             self.processed_ngrams.add(ngram[0])
             self.save_processed_ngrams()
+            self._record_preanalysis_consumed(ngram[0])
             seen_words += 1
 
             # consolidate definitions into synth_defs

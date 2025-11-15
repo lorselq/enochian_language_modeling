@@ -14,5 +14,10 @@ def get_config_paths():
         "debate_processed": root / "src" / "enochian_translation_team" / "data" / "debate_processed_ngrams.json",
         "new_definitions": root / "src" / "enochian_translation_team" / "data" / "new_definitions.sqlite3",
         "debate": root / "src" / "enochian_translation_team" / "data" / "debate_derived_definitions.sqlite3",
-        "solo": root / "src" / "enochian_translation_team" / "data" / "solo_analysis_derived_definitions.sqlite3"
+        "solo": root / "src" / "enochian_translation_team" / "data" / "solo_analysis_derived_definitions.sqlite3",
+        "preanalysis_trusted": root
+        / "src"
+        / "enochian_translation_team"
+        / "data"
+        / "trusted_preanalysis_ngrams.json",
     }
