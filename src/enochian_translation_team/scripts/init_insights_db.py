@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS runs (
   engine        TEXT CHECK (engine IN ('debate','solo')) NOT NULL DEFAULT 'debate',
   embedder      TEXT,
   env_json      TEXT,
+  phase         TEXT NOT NULL DEFAULT 'translation',
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -249,6 +250,27 @@ CREATE TABLE IF NOT EXISTS skips (
   idx_count     INTEGER,
   overlap_count INTEGER,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS preanalysis_runs (
+  preanalysis_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id           TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  stage            TEXT NOT NULL CHECK(stage IN ('initial','subsequent')),
+  trusted_count    INTEGER NOT NULL DEFAULT 0,
+  notes            TEXT,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS preanalysis_seeds (
+  seed_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  preanalysis_id   INTEGER NOT NULL REFERENCES preanalysis_runs(preanalysis_id) ON DELETE CASCADE,
+  ngram            TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','skipped')),
+  analytics_payload TEXT,
+  last_run_id      TEXT,
+  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE(preanalysis_id, ngram)
 );
 
 -- raw
@@ -604,6 +626,8 @@ def init_db(path: str | PathLike[str]) -> None:
                 }
                 for column, decl in debate_columns.items():
                     _add_column_if_missing(conn, "clusters", column, decl)
+
+            _add_column_if_missing(conn, "runs", "phase", "TEXT NOT NULL DEFAULT 'translation'")
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)

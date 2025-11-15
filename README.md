@@ -101,6 +101,25 @@ Following this workflow ensures that morphemes like `PRG` receive the fiery
 attribution instead of letting shared tokens skew toward `IAL`, and the team can
 course-correct existing glosses without manual table edits.
 
+### Pre-analysis safeguards
+
+> "We keep the translation → analytics → translation flow tight so each pass inherits better priors."
+
+To honor that cadence, run `poetry run enlm preanalyze --db <path>` before the
+main analytics loop. The command writes an `initial` row to the new
+`preanalysis_runs` table the first time it executes, capturing a trusted seed
+list (the default JSON includes `NAZ`) and the accompanying light diagnostics it
+derives straight from the n-gram index. Subsequent calls with
+`--stage subsequent --run-id <translation-run-id>` append additional rows that
+tie the safeguards to a specific translation session while reusing or refreshing
+the same trusted inventory. Each sweep performs quick pre-analytics—occurrence
+counts and gloss snippets for the trusted n-grams—so those hints populate the
+`preanalysis_seeds` records. When the translation crew starts an LLM pass and
+the heavier analytics tables are still empty, it now pulls the stored seed
+payloads into the prompt, then marks them as consumed once that run processes
+the n-grams, closing the loop back into the full translation → analytics →
+translation workflow.
+
 ## Future Work and Phased Development
 
 ### Near-Term Development Goals
