@@ -482,8 +482,9 @@ Your tone is incisive, precise, and intellectually honest.""",
         else ""
     )
 
-    for _, tool in tools.items():
-        tool.attach_logging(query_db, query_run_id)
+    if query_db is not None and query_run_id is not None:
+        for tool in tools.values():
+            tool.attach_logging(query_db, query_run_id)
 
     tasks = {
         "propose": Task(
