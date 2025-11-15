@@ -33,6 +33,34 @@ run `enochian_translation_team` workflows first so that the composite parses,
 morph vectors, and residual annotations exist. The analytics will otherwise
 produce empty summaries.
 
+### Runtime integration with `RootExtractionCrew`
+
+The translation crew now treats the analytics tables as first-class priors. The
+`RootExtractionCrew` loads evidence for every candidate root by calling
+`analytics_bridge.gather_morph_evidence`, which reads the attribution,
+collocation, and residual-cluster tables and condenses them into focus lines for
+the agents' prompts.【F:src/enochian_translation_team/crew/root_extraction_crew.py†L628-L676】【F:src/enochian_translation_team/utils/analytics_bridge.py†L218-L320】
+This happens inside the same SQLite transaction that writes debate/solo
+decisions, so analytics that were computed with `enlm` immediately influence the
+next conversation.
+
+To refresh those priors you should:
+
+1. Generate or update candidate analyses with `poetry run enochian-analysis`
+   (debate or solo). This seeds `composite_reconstruction`,
+   `morph_semantic_vectors`, and residual breakdown tables that the analytics
+   use as inputs.【F:src/enochian_translation_team/scripts/init_insights_db.py†L455-L609】
+2. Recompute analytics with `poetry run enlm ...` commands. The CLI ensures that
+   `init_insights_db.init_db()` runs before each command and then refreshes the
+   analytics-specific tables.【F:src/enochian_lm/cli.py†L901-L938】
+3. Restart the crew. Every invocation of `RootExtractionCrew.process_ngrams`
+   pulls the latest analytics output and echoes it in the stats block that gets
+   streamed to the agents.【F:src/enochian_translation_team/crew/root_extraction_crew.py†L600-L676】
+
+The pipeline therefore flows “translation → analytics → translation”, ensuring
+that analytic deltas, collocations, and residual clusters continually steer new
+runs.
+
 ## Feeding analytics back into `enochian_translation_team`
 
 The translation crew now consults the analytics tables at runtime. To activate
