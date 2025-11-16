@@ -355,7 +355,7 @@
     },
     {
         "word": "ACAM",
-        "normalized": "acam",
+        "normalized": "7699",
         "canon_word": true,
         "definition": "(the Enochian word for the digits 7699)",
         "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
@@ -3744,7 +3744,7 @@
     },
     {
         "word": "BOOAPIS",
-        "normalized": "booapis",
+        "normalized": "boapis",
         "canon_word": true,
         "definition": "to serve",
         "commentary": "BOAP and BOOAP are both the same root",
@@ -6304,7 +6304,7 @@
     },
     {
         "word": "CRPL",
-        "normalized": "crpl",
+        "normalized": "cripl",
         "canon_word": true,
         "definition": "but one",
         "key_citations": [
@@ -8146,7 +8146,7 @@
     },
     {
         "word": "DSONF",
-        "normalized": "dsonf",
+        "normalized": "dssonf",
         "canon_word": true,
         "definition": "which reign",
         "key_citations": [
@@ -12138,7 +12138,7 @@
     },
     {
         "word": "ILI",
-        "normalized": "ili",
+        "normalized": "ieli",
         "canon_word": true,
         "definition": "(the) first, (at) first",
         "key_citations": [
@@ -13200,7 +13200,7 @@
     },
     {
         "word": "LED",
-        "normalized": "eled",
+        "normalized": "led",
         "canon_word": false,
         "definition": "first, the Daughter of Light to the East",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -13214,7 +13214,7 @@
     },
     {
         "word": "LEFA",
-        "normalized": "elefa",
+        "normalized": "lefa",
         "canon_word": false,
         "definition": "first, the Daughter of Light visits the interior",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -13228,7 +13228,7 @@
     },
     {
         "word": "LEFE",
-        "normalized": "elefe",
+        "normalized": "lefe",
         "canon_word": false,
         "definition": "first, the Daughter of Light appears",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -13266,7 +13266,7 @@
     },
     {
         "word": "LEOHA",
-        "normalized": "eleoha",
+        "normalized": "leoha",
         "canon_word": false,
         "definition": "first, the Daughter of Light in woe",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -13280,7 +13280,7 @@
     },
     {
         "word": "LEOZ",
-        "normalized": "eleoz",
+        "normalized": "leoz",
         "canon_word": false,
         "definition": "first, the Daughter of Light beholds the Son of Son of Light",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -13308,7 +13308,7 @@
     },
     {
         "word": "LESGAMPH",
-        "normalized": "elesgamph",
+        "normalized": "lesgamph",
         "canon_word": false,
         "definition": "first, the watery loins of the Daughter of Light",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -13350,7 +13350,7 @@
     },
     {
         "word": "LESCO",
-        "normalized": "elesco",
+        "normalized": "lesco",
         "canon_word": false,
         "definition": "first, the Daughter of Light with Five",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -13388,7 +13388,7 @@
     },
     {
         "word": "LI",
-        "normalized": "eli",
+        "normalized": "li",
         "canon_word": true,
         "definition": "the first",
         "commentary": "not 100% sure of the source, but the compound word makes sense; according to the archidox dictionary, it is a variation of ILI",
@@ -13402,7 +13402,7 @@
     },
     {
         "word": "LIALPRT",
-        "normalized": "elialprt",
+        "normalized": "lialprt",
         "canon_word": true,
         "definition": "first flame",
         "key_citations": [
@@ -13440,7 +13440,7 @@
     },
     {
         "word": "LIL",
-        "normalized": "lil",
+        "normalized": "elil",
         "canon_word": true,
         "definition": "the first aethyr",
         "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key",
@@ -13530,7 +13530,7 @@
     },
     {
         "word": "LNIBM",
-        "normalized": "lnibm",
+        "normalized": "elnibm",
         "canon_word": true,
         "definition": "one season",
         "key_citations": [
@@ -13796,7 +13796,7 @@
     },
     {
         "word": "LORSLQ",
-        "normalized": "lorslq",
+        "normalized": "lorselq",
         "canon_word": true,
         "definition": "flowers",
         "key_citations": [
@@ -14210,7 +14210,7 @@
     },
     {
         "word": "LZAR",
-        "normalized": "elzar",
+        "normalized": "lzar",
         "canon_word": true,
         "definition": "courses",
         "commentary": "can be derived from compound words",
@@ -14224,7 +14224,7 @@
     },
     {
         "word": "LZIRN",
-        "normalized": "elzirn",
+        "normalized": "lzirn",
         "canon_word": true,
         "definition": "wonders",
         "commentary": "can be derived from a compound word",
@@ -21912,7 +21912,7 @@
     },
     {
         "word": "RIT",
-        "normalized": "rit",
+        "normalized": "mercy",
         "canon_word": true,
         "definition": "mercy",
         "key_citations": [
@@ -23738,7 +23738,7 @@
     },
     {
         "word": "TELOCVOVIM",
-        "normalized": "telocvovim",
+        "normalized": "telochvovim",
         "canon_word": true,
         "definition": "death dragon, Him that has Fallen",
         "commentary": "alternate names for Lucifer/Satan/Devil (which are and are not the same)—CHORONZOM, GITHGULCAG; \"death dragon\" is a more literal translation (allowing that VONIN can become VOVIM)",
