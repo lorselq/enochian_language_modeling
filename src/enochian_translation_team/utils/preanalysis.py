@@ -23,37 +23,52 @@ def load_trusted_ngrams(
     path: str | Path | None = None,
     *,
     dictionary_path: str | Path | None = None,
-    max_length: int | None = None,
+    ngram_index_path: str | Path | None = None,
+    max_length: int | None = 7,
 ) -> list[str]:
-    """Load trusted n-grams from ``path`` or derive them from the dictionary."""
+    """Load trusted n-grams from disk and supplement them with dictionary entries."""
 
+    paths = get_config_paths()
     if path is None:
-        path = get_config_paths()["preanalysis_trusted"]
+        path = paths["preanalysis_trusted"]
+    if dictionary_path is None:
+        dictionary_path = paths["dictionary"]
+    if ngram_index_path is None:
+        ngram_index_path = paths["ngram_index"]
+
+    manual_tokens: list[str] = []
     data_path = Path(path)
     if data_path.exists():
         payload = json.loads(data_path.read_text(encoding="utf-8"))
-        if isinstance(payload, list):
-            result = []
-            for item in payload:
-                text = str(item).strip().upper()
-                if text:
-                    result.append(text)
-            normalized = sorted(set(result))
-            if max_length is not None:
-                normalized = [token for token in normalized if len(token) <= max_length]
-            return normalized
-        raise ValueError(f"Trusted n-gram list must be a JSON array: {data_path}")
+        if not isinstance(payload, list):
+            raise ValueError(f"Trusted n-gram list must be a JSON array: {data_path}")
+        for item in payload:
+            text = str(item).strip().upper()
+            if text:
+                manual_tokens.append(text)
 
-    dict_path = Path(dictionary_path) if dictionary_path else Path(get_config_paths()["dictionary"])
+    dict_path = Path(dictionary_path)
     if not dict_path.exists():
         raise FileNotFoundError(
             "Trusted n-gram list missing and dictionary source not found: "
             f"{dict_path}"
         )
-    return _derive_trusted_from_dictionary(
+
+    dictionary_tokens = _derive_trusted_from_dictionary(
         dictionary_path=dict_path,
-        max_length=max_length,
     )
+
+    if max_length is not None:
+        dictionary_tokens = [tok for tok in dictionary_tokens if len(tok) <= max_length]
+        manual_tokens = [tok for tok in manual_tokens if len(tok) <= max_length]
+
+    ngram_path = Path(ngram_index_path)
+    ngram_filter = _load_short_ngrams(ngram_path, max_length=max_length)
+    if ngram_filter:
+        dictionary_tokens = [tok for tok in dictionary_tokens if tok.lower() in ngram_filter]
+
+    combined = manual_tokens + dictionary_tokens
+    return _normalize_trusted(combined)
 
 
 def _normalize_trusted(values: Iterable[str]) -> list[str]:
@@ -61,7 +76,7 @@ def _normalize_trusted(values: Iterable[str]) -> list[str]:
 
 
 def _derive_trusted_from_dictionary(
-    *, dictionary_path: Path, max_length: int | None
+    *, dictionary_path: Path
 ) -> list[str]:
     """Build trusted n-grams directly from the canonical dictionary entries."""
 
@@ -71,6 +86,9 @@ def _derive_trusted_from_dictionary(
         canonical = str(entry.get("canonical") or "").strip()
         if canonical:
             tokens.append(canonical)
+        normalized_value = str(entry.get("normalized") or "").strip()
+        if normalized_value:
+            tokens.append(normalized_value)
         for alt in entry.get("alternates") or []:
             value: str = ""
             if isinstance(alt, dict):
@@ -80,10 +98,36 @@ def _derive_trusted_from_dictionary(
             if value:
                 tokens.append(value)
 
-    normalized = _normalize_trusted(tokens)
-    if max_length is not None:
-        normalized = [token for token in normalized if len(token) <= max_length]
-    return normalized
+    return _normalize_trusted(tokens)
+
+
+def _load_short_ngrams(
+    ngram_index: Path,
+    *,
+    max_length: int | None,
+) -> set[str]:
+    """Return n-grams from ``ngram_index`` constrained by ``max_length``."""
+
+    if not ngram_index.exists():
+        return set()
+
+    conn = sqlite3.connect(str(ngram_index))
+    conn.row_factory = sqlite3.Row
+    try:
+        if max_length is None:
+            cursor = conn.execute("SELECT ngram FROM ngrams")
+        else:
+            cursor = conn.execute(
+                "SELECT ngram FROM ngrams WHERE LENGTH(ngram) <= ?",
+                (max_length,),
+            )
+        return {
+            str(row[0]).strip().lower()
+            for row in cursor.fetchall()
+            if str(row[0]).strip()
+        }
+    finally:
+        conn.close()
 
 
 @dataclass(slots=True)
