@@ -812,8 +812,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Enochian language modeling CLI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--db", default="enlm_insights.sqlite3", help="Database path")
-    parser.add_argument("--seed", type=int, default=42, help="Global seed")
+    parser.add_argument("--db", default="src/enochian_translation_team/data/solo_analysis_derived_definitions.sqlite3", help="Database path")
+    parser.add_argument("--seed", type=int, default=93, help="Global seed")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
