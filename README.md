@@ -7,6 +7,13 @@ The precise linguistic status of *Liber Loagaeth* remains uncertain. Its linguis
 
 This project does not seek to contest this interpretation. Instead, *Liber Loagaeth* provides a challenging, bounded dataset for exploring how AI systems can infer meaningful semantic relationships and construct speculative lexicons from irregular, anomalous text data. Such experiments offer methodological insights into computational semantic analysis, low-resource language modeling, and broader digital humanities applications.
 
+The repository is organized as a monorepo built with Poetry. Two cooperating packages live under `src/`:
+
+- `enochian_translation_team` — the interactive, agent-driven pipeline that proposes and adjudicates speculative morpheme glosses.
+- `enochian_lm` — the analytics companion that consumes the agents' SQLite logs, recomputes embeddings, and exports attribution/collocation/residual statistics.
+
+All CLIs described below (e.g., `enochian-analysis`, `enochian-build-fasttext`, `enlm`) are registered via `pyproject.toml` and can be executed with `poetry run <command>` once dependencies have been installed.
+
 ## Project Goals
 **Current phase**:
 - Identify plausible root morphemes via examination of semantic clusters within the linguistic corpus.
@@ -148,6 +155,21 @@ This project is currently configured for a highly customized local development e
 ---
 
 *This project remains experimental and actively evolving. All analyses, definitions, and methodological approaches are speculative, aimed at computational and theoretical exploration rather than definitive linguistic reconstruction.*
+
+## Initialization order for databases, caches, and analytics
+
+Because so many scripts share the same SQLite artifacts, tasks must be executed in a predictable order. The sequence below guarantees that every downstream command finds the prerequisites it expects:
+
+1. **Install dependencies** – Run `poetry install` to materialize the virtual environment and install both `enochian_translation_team` and `enochian_lm` dependencies.
+2. **Train FastText embeddings** – Execute `poetry run enochian-build-fasttext` to create `tools/models/enochian_fasttext.model`. The rest of the pipeline assumes these vectors exist when clustering n-grams or reconstructing composites.
+3. **Build the n-gram sidecar** – Populate `data/ngram_index.sqlite3` via `poetry run python src/enochian_translation_team/utils/build_ngram_sidecar.py ...`. This database feeds canonical/variant lookups whenever the crew prepares work queues.
+4. **Initialize the insights databases** – Seed the solo and debate SQLite files by running `poetry run python src/enochian_translation_team/scripts/init_insights_db.py`. This ensures the shared schema (`runs`, `clusters`, `definitions`, `composite_reconstruction`, etc.) exists before any translation or analytics work begins.
+5. **Run at least one translation session** – Launch `poetry run enochian-analysis` in solo or debate mode. Doing so writes the first batches of accepted/rejected glosses plus the composite reconstructions that analytics depend on.
+6. **Refresh analytics tables** – Invoke `poetry run enlm ...` (details in the checklist below) so that attribution, collocation, residual, and factorization tables exist before the next translation run. These tables become the “analytics priors” surfaced in prompts.
+7. **Optionally retrofit glosses** – `poetry run enochian-apply-analytics --db <db>` adds `ANALYTICS_NOTES` to existing definitions, keeping historical glosses synchronized with the latest priors.
+8. **Iterate** – Alternate between translation sessions and analytics refreshes. Every cycle enriches the evidence stored in SQLite, and new analytics output immediately influences subsequent agent debates.
+
+If a step is skipped, later commands typically fail with missing-table errors or silently run without any context, so following this order prevents subtle data gaps.
 
 ### Step-by-step setup and run checklist
 
