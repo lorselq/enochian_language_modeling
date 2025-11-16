@@ -6,7 +6,8 @@ authors = ["Forrest Wilbur <forrest.a.wilbur@gmail.com>"]
 readme = "README.md"
 packages = [
   { include = "enochian_translation_team", from = "src" },
-  { include = "enochian_lm", from = "src" }
+  { include = "enochian_lm", from = "src" },
+  { include = "enochian_common", from = "src" }
 ]
 
 [tool.poetry.dependencies]

@@ -5,7 +5,7 @@ import argparse
 import json
 import logging
 import math
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 import time
 from collections import defaultdict
 from dataclasses import dataclass

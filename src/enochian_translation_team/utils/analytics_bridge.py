@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 
 
 def _casefold(value: str | None) -> str:

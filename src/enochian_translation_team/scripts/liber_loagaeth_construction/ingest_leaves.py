@@ -33,12 +33,11 @@ Usage:
   python ingest_loagaeth.py DB.sqlite INPUT.json --export-prose "Leaf 1a"
 """
 from __future__ import annotations
-from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
 import os
 import json
 import re
 import json
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 import unicodedata
 import sys
 from pathlib import Path

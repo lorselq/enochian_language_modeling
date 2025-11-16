@@ -6,7 +6,7 @@ import io
 import json
 import logging
 import math
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass

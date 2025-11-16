@@ -17,10 +17,9 @@ Design choices per request:
 The script is idempotent and safe to re-run.
 """
 from __future__ import annotations
-from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
 from os import PathLike
 import os
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 from typing import Dict, Tuple
 
 # -------------------------
