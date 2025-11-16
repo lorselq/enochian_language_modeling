@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 

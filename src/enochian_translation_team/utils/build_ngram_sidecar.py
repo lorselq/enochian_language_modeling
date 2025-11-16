@@ -38,7 +38,7 @@ import argparse
 import json
 import math
 import re
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
