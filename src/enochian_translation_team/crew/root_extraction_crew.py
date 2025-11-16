@@ -33,6 +33,7 @@ from enochian_translation_team.utils.analytics_bridge import gather_morph_eviden
 from enochian_translation_team.utils.preanalysis import (
     fetch_preanalysis_summary,
     mark_preanalysis_consumed,
+    load_trusted_ngrams,
 )
 
 GOLD = "\033[38;5;178m"
@@ -51,7 +52,6 @@ class RootExtractionCrew:
         self.subst_map_path = paths["substitution_map"]
         self.output_path = paths["root_word_insights"]
         self.ngram_path = paths["ngram_index"]
-        self.processed_ngrams_path = paths[f"{style}_processed"]
         self.new_definitions_path = paths[style]
 
         # Load everything
@@ -63,7 +63,10 @@ class RootExtractionCrew:
         self.fasttext = get_fasttext_model(self.model_path)
         self.sentence_model_name = "paraphrase-MiniLM-L6-v2"
         self.sentence_model = get_sentence_transformer(self.sentence_model_name)
-        self.processed_ngrams = self.load_processed_ngrams()
+        self.trusted_ngrams = set(load_trusted_ngrams())
+        self._trusted_max_len = max((len(token) for token in self.trusted_ngrams), default=0)
+        self.completed_roots, self.incomplete_roots = self._load_cluster_progress()
+        self.completed_roots |= self._load_root_level_skips()
         self.candidate_finder = MorphemeCandidateFinder(
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=self.model_path,
@@ -179,29 +182,6 @@ class RootExtractionCrew:
         # fallback
         return (None, None)
 
-    def load_processed_ngrams(self):
-        try:
-            with open(self.processed_ngrams_path, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-        except FileNotFoundError:
-            return set()
-        except json.decoder.JSONDecodeError:
-            return set()
-
-    def save_processed_ngrams(self):
-        try:
-            with open(self.processed_ngrams_path, "r", encoding="utf-8") as f:
-                existing = set(json.load(f))
-        except (FileNotFoundError, json.JSONDecodeError):
-            existing = set()
-
-        combined = existing | self.processed_ngrams
-
-        ordered = sorted(combined, key=lambda s: (-len(s), s))
-
-        with open(self.processed_ngrams_path, "w", encoding="utf-8") as f:
-            json.dump(ordered, f, indent=2)
-
     def load_entries(self) -> List[EntryRecord]:
         return load_dictionary(str(self.dictionary_path))
 
@@ -215,9 +195,140 @@ class RootExtractionCrew:
         for n in range(min_n, max_n + 1):
             for i in range(len(word) - n + 1):
                 ngram = word[i : i + n]
-                if ngram not in self.processed_ngrams and not re.search(r"\d", ngram):
+                if not re.search(r"\d", ngram):
                     ngrams.add(ngram)
         return ngrams
+
+    def _normalize_root(self, value: str) -> str:
+        return str(value or "").strip().lower()
+
+    def _load_cluster_progress(self) -> tuple[set[str], set[str]]:
+        cursor = self.new_definitions_db.cursor()
+        status: dict[str, dict[str, bool]] = {}
+        query = """
+            SELECT ngram,
+                   run_id,
+                   MAX(COALESCE(cluster_size, 0)) AS cluster_size,
+                   COUNT(*) AS cluster_count
+            FROM clusters
+            GROUP BY ngram, run_id
+        """
+        try:
+            rows = cursor.execute(query).fetchall()
+        except sqlite3.OperationalError:
+            try:
+                fallback = cursor.execute("SELECT DISTINCT ngram FROM clusters").fetchall()
+            except sqlite3.Error:
+                return set(), set()
+            completed = {
+                self._normalize_root(row[0])
+                for row in fallback
+                if row[0]
+            }
+            return completed, set()
+
+        for row in rows:
+            ngram = self._normalize_root(row[0])
+            if not ngram:
+                continue
+            entry = status.setdefault(ngram, {"complete": False, "incomplete": False})
+            total = int(row[2] or 0)
+            recorded = int(row[3] or 0)
+            if total > 0 and recorded < total:
+                entry["incomplete"] = True
+            else:
+                entry["complete"] = True
+
+        completed = {n for n, flags in status.items() if flags.get("complete")}
+        incomplete = {
+            n
+            for n, flags in status.items()
+            if flags.get("incomplete") and n not in completed
+        }
+        return completed, incomplete
+
+    def _load_root_level_skips(self) -> set[str]:
+        cursor = self.new_definitions_db.cursor()
+        try:
+            rows = cursor.execute(
+                "SELECT DISTINCT ngram FROM skips WHERE cluster_index IS NULL"
+            ).fetchall()
+        except sqlite3.Error:
+            return set()
+        return {
+            self._normalize_root(row[0])
+            for row in rows
+            if row and row[0]
+        }
+
+    def _is_root_processed(self, root: str) -> bool:
+        return self._normalize_root(root) in self.completed_roots
+
+    def _is_root_incomplete(self, root: str) -> bool:
+        return self._normalize_root(root) in self.incomplete_roots
+
+    def _mark_root_complete(self, root: str) -> None:
+        norm = self._normalize_root(root)
+        if norm:
+            self.completed_roots.add(norm)
+            self.incomplete_roots.discard(norm)
+
+    def _fetch_ngram_contexts(self, ngram: str) -> list[str]:
+        cursor = self.ngram_db.cursor()
+        try:
+            rows = cursor.execute(
+                "SELECT DISTINCT canonical FROM ngram_membership WHERE ngram = ?",
+                (str(ngram).lower(),),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [str(row[0]).strip() for row in rows if row and row[0]]
+
+    def _is_text_covered_by_trusted(self, text: str) -> bool:
+        value = str(text or "").strip().upper()
+        if not value:
+            return True
+        if not self.trusted_ngrams:
+            return False
+        length = len(value)
+        max_len = self._trusted_max_len or length
+        dp = [False] * (length + 1)
+        dp[0] = True
+        for i in range(1, length + 1):
+            start = max(0, i - max_len)
+            for j in range(start, i):
+                if dp[j] and value[j:i] in self.trusted_ngrams:
+                    dp[i] = True
+                    break
+        return dp[length]
+
+    def _can_isolate_ngram_in_word(self, ngram: str, word: str) -> bool:
+        target = str(ngram or "").upper()
+        haystack = str(word or "").upper()
+        if not target or not haystack:
+            return False
+        start = 0
+        while start <= len(haystack):
+            idx = haystack.find(target, start)
+            if idx == -1:
+                break
+            prefix = haystack[:idx]
+            suffix = haystack[idx + len(target) :]
+            if self._is_text_covered_by_trusted(prefix) and self._is_text_covered_by_trusted(suffix):
+                return True
+            start = idx + 1
+        return False
+
+    def _should_skip_single_occurrence(self, ngram: str, df_count: int) -> bool:
+        if df_count != 1:
+            return False
+        contexts = self._fetch_ngram_contexts(ngram)
+        if not contexts or not self.trusted_ngrams:
+            return False
+        for word in contexts:
+            if self._can_isolate_ngram_in_word(ngram, word):
+                return False
+        return True
 
     def _extract_evaluation(self, s: str) -> str | None:
         # 1) Try strict JSON first
@@ -775,16 +886,18 @@ class RootExtractionCrew:
         if single_ngram:
             ngrams = [(single_ngram, 9001)]  # Use a fake count
             max_words = 999
-            if single_ngram in self.processed_ngrams:
+            if self._is_root_processed(single_ngram):
                 stream_text(
                     f"[Warning] The ngram {GOLD}{single_ngram.upper()}{RESET} has already been processed, so our work is already done.\n"
                 )
                 time.sleep(0.25)
         else:
-            ngrams = sorted(
-                self.stream_ngrams_from_sqlite(min_freq=2),
-                key=lambda x: (len(x[0]), -x[1], x[0]),
-            )
+            stream = list(self.stream_ngrams_from_sqlite(min_freq=1))
+            pending = [item for item in stream if not self._is_root_processed(item[0])]
+            incomplete_roots = {item[0] for item in pending if self._is_root_incomplete(item[0])}
+            ngrams = [item for item in pending if item[0] in incomplete_roots] + [
+                item for item in pending if item[0] not in incomplete_roots
+            ]
 
         output = []
         seen_words = 0
@@ -796,28 +909,47 @@ class RootExtractionCrew:
         time.sleep(0.25)
 
         for count, ngram in enumerate(ngrams):
-            if ngram[0] in self.processed_ngrams:
+            root_token, df_count = ngram
+            if self._is_root_processed(root_token):
+                continue
+
+            if self._should_skip_single_occurrence(root_token, df_count):
+                stream_text(
+                    f"[⚖️] Skipping {GOLD}{root_token.upper()}{RESET} for now because the surrounding trusted n-grams cannot isolate it yet.\n"
+                )
+                self._insert_skip(
+                    root_token,
+                    reason_code="SINGLE_OCCURRENCE_NOT_ISOLATABLE",
+                    idx_count=df_count,
+                )
+                self._mark_root_complete(root_token)
+                self._record_preanalysis_consumed(root_token)
                 continue
 
             semantic_candidates = find_semantically_similar_words(
                 ft_model=self.fasttext,
                 sentence_model=self.sentence_model,
                 entries=self.entries,
-                target_word=ngram[0],  # or just ngram if you’re iterating strings
+                target_word=root_token,  # or just ngram if you’re iterating strings
                 subst_map=self.subst_map,  # <-- required now
                 min_similarity=min_semantic_similarity,
             )
 
-            index_candidates = self.candidate_finder.get_all_ngram_candidates(ngram[0])
+            index_candidates = self.candidate_finder.get_all_ngram_candidates(root_token)
 
             if not semantic_candidates or len(semantic_candidates) < 2:
-                self.processed_ngrams.add(ngram[0])
-                self.save_processed_ngrams()
-                self._record_preanalysis_consumed(ngram[0])
+                self._insert_skip(
+                    root_token,
+                    reason_code="SEMANTIC_CANDIDATES_LT_TWO",
+                    sem_count=len(semantic_candidates or []),
+                    idx_count=len(index_candidates or []),
+                )
+                self._mark_root_complete(root_token)
+                self._record_preanalysis_consumed(root_token)
                 continue
             else:
                 stream_text(
-                    f"[{GREEN}✓{RESET}] Beginning examination of root-word candidate {GOLD}{ngram[0].upper()}{RESET}.\n",
+                    f"[{GREEN}✓{RESET}] Beginning examination of root-word candidate {GOLD}{root_token.upper()}{RESET}.\n",
                     delay=0.005,
                 )
 
@@ -825,6 +957,7 @@ class RootExtractionCrew:
                 semantic_candidates, self.sentence_model
             )
             clusters = clusters_result["clusters"]
+            total_clusters = len(clusters)
             # dedupe any clusters that are identical up to ordering
             unique, seen_sigs = [], set()
             for cl in clusters:
@@ -837,11 +970,12 @@ class RootExtractionCrew:
             if count_deduped > 1:
                 deduped_clusters_text = (
                     f"[⚠️] Skipping {PINK}{count_deduped}{RESET} duplicate cluster{'s' if count_deduped > 1 else ''}"
-                    f" for '{GOLD}{ngram[0].upper()}{RESET}'; no sense in evaluating if it's the same set of words.\n\n"
+                    f" for '{GOLD}{root_token.upper()}{RESET}'; no sense in evaluating if it's the same set of words.\n\n"
                 )
                 stream_text(deduped_clusters_text)
 
             clusters = unique
+            total_clusters = len(clusters)
             best_config = clusters_result["config"]
 
             if len(clusters) == 0:
@@ -876,7 +1010,7 @@ class RootExtractionCrew:
                 stream_text(
                     f"Now examining cluster #{PINK}{cluster_id + 1}{RESET} of {PINK}{len(clusters)}{RESET} by finding the intersection between "
                     f"the {GREEN}{len(sem_norms)}{RESET} semantic candidates and the {BLUE}{len(index_norms)}{RESET} the words "
-                    f"(and their extended variations) that contain '{GOLD}{ngram[0].upper()}{RESET}' as one of its components.\n"
+                    f"(and their extended variations) that contain '{GOLD}{root_token.upper()}{RESET}' as one of its components.\n"
                 )
                 time.sleep(0.25)
 
@@ -918,14 +1052,11 @@ class RootExtractionCrew:
                 time.sleep(0.25)
 
                 if not overlap or len(overlap) < 2:
-                    self.processed_ngrams.add(ngram[0])
-                    self.save_processed_ngrams()
-                    self._record_preanalysis_consumed(ngram[0])
                     stream_text(
-                        f"We have skipped cluster #{cluster_id + 1} for {GOLD}{ngram[0].upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things.\n\n"
+                        f"We have skipped cluster #{cluster_id + 1} for {GOLD}{root_token.upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things.\n\n"
                     )
                     self._insert_skip(
-                        ngram[0].upper(),
+                        root_token.upper(),
                         reason_code="OVERLAP_LESS_THAN_TWO",
                         cluster_index=cluster_id + 1,
                     )
@@ -961,15 +1092,15 @@ class RootExtractionCrew:
                     if (
                         not sem_entry
                         and index_entry
-                        and norm.lower() != ngram[0].lower()
+                        and norm.lower() != root_token.lower()
                     ):
                         continue
 
-                    if not self.is_ngram_in_variants(ngram[0], norm):
+                    if not self.is_ngram_in_variants(root_token, norm):
                         continue
 
                     if isinstance(norm, str) and norm:
-                        variant_used = self.get_matching_variant(ngram[0], norm)
+                        variant_used = self.get_matching_variant(root_token, norm)
                     else:
                         variant_used = None
 
@@ -1062,18 +1193,18 @@ class RootExtractionCrew:
 
                 if len(merged_cluster) < 2:
                     stream_text(
-                        f"[⚠️] Merged cluster too small for {GOLD}{ngram[0].upper()}{RESET}. Skipping.\n"
+                        f"[⚠️] Merged cluster too small for {GOLD}{root_token.upper()}{RESET}. Skipping.\n"
                     )
                     time.sleep(0.25)
                     self._insert_skip(
-                        ngram[0].upper(),
+                        root_token.upper(),
                         reason_code="MERGED_CLUSTER_LESS_THAN_TWO_MEMBERS",
                         cluster_index=cluster_id + 1,
                     )
                     continue
 
                 stream_text(
-                    f"\n[→] Beginning {GOLD}{ngram[0].upper()}{RESET} via analysis of cluster #{cluster_id + 1} (of {len(clusters)}).\n"
+                    f"\n[→] Beginning {GOLD}{root_token.upper()}{RESET} via analysis of cluster #{cluster_id + 1} (of {len(clusters)}).\n"
                 )
                 time.sleep(0.25)
 
@@ -1115,7 +1246,7 @@ class RootExtractionCrew:
                 )
                 clustering_meta_json = json.dumps(best_config)
                 stats_summary = self._build_stats_summary(
-                    root="asdf",
+                    root=root_token,
                     cluster_size=len(merged_cluster),
                     cohesion_score=cohesion_score,
                     semantic_hits=semantic_hits,
@@ -1126,10 +1257,10 @@ class RootExtractionCrew:
                 )
 
                 prefix_count = sum(
-                    e["normalized"].startswith(ngram[0].lower()) for e in merged_cluster
+                    e["normalized"].startswith(root_token.lower()) for e in merged_cluster
                 )
                 suffix_count = sum(
-                    e["normalized"].endswith(ngram[0].lower()) for e in merged_cluster
+                    e["normalized"].endswith(root_token.lower()) for e in merged_cluster
                 )
                 deriv_patterns = int(prefix_count > 0) + int(suffix_count > 0)
 
@@ -1140,7 +1271,7 @@ class RootExtractionCrew:
                     "coh": cohesion_score,  # 0..1
                     "semantic_hits": semantic_hits,  # raw count
                     "semantic_coverage": semantic_coverage,  # 0..1
-                    "gram_len": len(ngram[0]),  # char length of the n-gram
+                    "gram_len": len(root_token),  # char length of the n-gram
                     # Optional signals derived from entries:
                     "scatter": st.pstdev(sims) if len(sims) > 1 else 0.0,
                     "deriv_patterns": deriv_patterns,
@@ -1150,7 +1281,7 @@ class RootExtractionCrew:
 
                 if prevaluate["needs_llm"]:
                     evaluated = self.evaluate_ngram(
-                        ngram[0],
+                        root_token,
                         cluster=merged_cluster,
                         cohesion_score=cohesion_score,
                         semantic_hits=semantic_hits,
@@ -1172,7 +1303,7 @@ class RootExtractionCrew:
                         save_log(
                             evaluated["Archivist"]
                             or evaluated["raw_output"].get("Archivist"),
-                            label=ngram[0],
+                            label=root_token,
                             cluster_number=str(cluster_id + 1),
                             cluster_total=str(len(clusters)),
                             accepted=len(evaluated["Glossator"]) > 0,
@@ -1187,7 +1318,7 @@ class RootExtractionCrew:
                         save_log(
                             evaluated["Archivist"]
                             or evaluated["raw_output"].get("Archivist"),
-                            label=ngram[0],
+                            label=root_token,
                             cluster_number=str(cluster_id + 1),
                             cluster_total=str(len(clusters)),
                             accepted=verdict,
@@ -1240,6 +1371,7 @@ class RootExtractionCrew:
                                 run_id,
                                 ngram,
                                 cluster_index,
+                                cluster_size,
                                 sem_count,
                                 idx_count,
                                 overlap_count,
@@ -1262,12 +1394,13 @@ class RootExtractionCrew:
                                 residual_ratio,
                                 residual_headline,
                                 residual_focus_prompt
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
-                                ngram[0].upper(),
+                                root_token.upper(),
                                 cluster_id,
+                                total_clusters,
                                 len(sem_norms),
                                 len(index_norms),
                                 evaluated["overlap_count"],
@@ -1323,6 +1456,7 @@ class RootExtractionCrew:
                                 run_id,
                                 ngram,
                                 cluster_index,
+                                cluster_size,
                                 sem_count,
                                 idx_count,
                                 overlap_count,
@@ -1339,12 +1473,13 @@ class RootExtractionCrew:
                                 residual_ratio,
                                 residual_headline,
                                 residual_focus_prompt
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 self.run_id,
-                                ngram[0].upper(),
+                                root_token.upper(),
                                 cluster_id,
+                                total_clusters,
                                 len(sem_norms),
                                 len(index_norms),
                                 evaluated["overlap_count"],
@@ -1503,6 +1638,7 @@ class RootExtractionCrew:
                             run_id,
                             ngram,
                             cluster_index,
+                            cluster_size,
                             sem_count,
                             idx_count,
                             overlap_count,
@@ -1511,12 +1647,13 @@ class RootExtractionCrew:
                             cohesion,
                             semantic_coverage,
                             best_config
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             self.run_id,
-                            ngram[0].upper(),
+                            root_token.upper(),
                             cluster_id,
+                            total_clusters,
                             sem_count,
                             idx_count,
                             overlap_count,
@@ -1585,15 +1722,14 @@ class RootExtractionCrew:
                         # 4) commit once per cluster-member
                         self.new_definitions_db.commit()
 
-            self.processed_ngrams.add(ngram[0])
-            self.save_processed_ngrams()
-            self._record_preanalysis_consumed(ngram[0])
+            self._mark_root_complete(root_token)
+            self._record_preanalysis_consumed(root_token)
             seen_words += 1
 
             # consolidate definitions into synth_defs
             # MAYBE IMPLEMENT LATER AS PART OF A CLEANUP PROCESS ONCE DB IS FINISHED??
             # consolidate_ngram_senses(
-            #     self.new_definitions_db, ngram[0], sentence_model=self.sentence_model
+            #     self.new_definitions_db, root_token, sentence_model=self.sentence_model
             # )
 
             if max_words and seen_words >= max_words:
