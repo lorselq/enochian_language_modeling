@@ -6,7 +6,7 @@ import json
 import logging
 import math
 import os
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path

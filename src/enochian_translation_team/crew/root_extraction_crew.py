@@ -1,7 +1,6 @@
-from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
 import re
 import json
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 import random
 import statistics as st
 import time
