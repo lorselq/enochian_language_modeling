@@ -19,26 +19,71 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
 
 
-def load_trusted_ngrams(path: str | Path | None = None) -> list[str]:
-    """Load trusted n-grams from ``path`` (defaulting to the project list)."""
+def load_trusted_ngrams(
+    path: str | Path | None = None,
+    *,
+    dictionary_path: str | Path | None = None,
+    max_length: int | None = None,
+) -> list[str]:
+    """Load trusted n-grams from ``path`` or derive them from the dictionary."""
+
     if path is None:
         path = get_config_paths()["preanalysis_trusted"]
     data_path = Path(path)
-    if not data_path.exists():
-        raise FileNotFoundError(f"Trusted n-gram list not found: {data_path}")
-    payload = json.loads(data_path.read_text(encoding="utf-8"))
-    if isinstance(payload, list):
-        result = []
-        for item in payload:
-            text = str(item).strip().upper()
-            if text:
-                result.append(text)
-        return sorted(set(result))
-    raise ValueError(f"Trusted n-gram list must be a JSON array: {data_path}")
+    if data_path.exists():
+        payload = json.loads(data_path.read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            result = []
+            for item in payload:
+                text = str(item).strip().upper()
+                if text:
+                    result.append(text)
+            normalized = sorted(set(result))
+            if max_length is not None:
+                normalized = [token for token in normalized if len(token) <= max_length]
+            return normalized
+        raise ValueError(f"Trusted n-gram list must be a JSON array: {data_path}")
+
+    dict_path = Path(dictionary_path) if dictionary_path else Path(get_config_paths()["dictionary"])
+    if not dict_path.exists():
+        raise FileNotFoundError(
+            "Trusted n-gram list missing and dictionary source not found: "
+            f"{dict_path}"
+        )
+    return _derive_trusted_from_dictionary(
+        dictionary_path=dict_path,
+        max_length=max_length,
+    )
 
 
 def _normalize_trusted(values: Iterable[str]) -> list[str]:
     return sorted({str(v).strip().upper() for v in values if str(v).strip()})
+
+
+def _derive_trusted_from_dictionary(
+    *, dictionary_path: Path, max_length: int | None
+) -> list[str]:
+    """Build trusted n-grams directly from the canonical dictionary entries."""
+
+    entries = load_dictionary(str(dictionary_path))
+    tokens: list[str] = []
+    for entry in entries:
+        canonical = str(entry.get("canonical") or "").strip()
+        if canonical:
+            tokens.append(canonical)
+        for alt in entry.get("alternates") or []:
+            value: str = ""
+            if isinstance(alt, dict):
+                value = str(alt.get("value") or "").strip()
+            else:
+                value = str(alt).strip()
+            if value:
+                tokens.append(value)
+
+    normalized = _normalize_trusted(tokens)
+    if max_length is not None:
+        normalized = [token for token in normalized if len(token) <= max_length]
+    return normalized
 
 
 @dataclass(slots=True)
