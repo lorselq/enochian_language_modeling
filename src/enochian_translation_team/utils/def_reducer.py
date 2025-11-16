@@ -1,6 +1,5 @@
-from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
 import re, json
-import sqlite3, json
+from enochian_common.sqlite_bootstrap import sqlite3
 import numpy as np
 from typing import List, Optional, Tuple
 

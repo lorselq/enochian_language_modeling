@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
+from enochian_common.sqlite_bootstrap import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone

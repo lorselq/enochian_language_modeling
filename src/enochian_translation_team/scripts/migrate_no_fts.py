@@ -1,6 +1,6 @@
 from __future__ import annotations
-from enochian_translation_team.utils import sqlite_bootstrap  # noqa: F401
-import sqlite3, sys
+from enochian_common.sqlite_bootstrap import sqlite3
+import sys
 from pathlib import Path
 
 TABLES_ORDER = [
