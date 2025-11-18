@@ -1004,7 +1004,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args.handler(args)
     except (FileNotFoundError, OSError, ValueError) as error:
-        logger.error("Command failed", exc_info=False, extra={"error": str(error)})
+        logger.error(f"Command failed. Reason: {str(error)}", exc_info=False, extra={"error": str(error)})
         return 2
 
     return 0
