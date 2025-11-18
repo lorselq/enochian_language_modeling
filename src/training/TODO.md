@@ -11,19 +11,19 @@ This is the end-to-end plan:
 
 ## Phase 0 · Repo & scaffolding
 
-- [ ] **0.1 Create training package structure**
+- [x] **0.1 Create training package structure**
   - [ ] Under `src/`, create:
-    - [ ] `training/__init__.py`
-    - [ ] `training/datasets/` (for scripts that *create* data)
-    - [ ] `training/models/` (for training/eval code)
-    - [ ] `training/config/` (YAML/TOML configs later)
+    - [x] `training/__init__.py`
+    - [x] `training/datasets/` (for scripts that *create* data)
+    - [x] `training/models/` (for training/eval code)
+    - [x] `training/config/` (YAML/TOML configs later)
 - [ ] **0.2 Wire up editable install**
   - [ ] Confirm `pyproject.toml` exposes `training` as the main package
   - [ ] In repo root: `pip install -e .` works
 - [ ] **0.3 Decide where dictionary lives**
-  - [ ] Confirm single source-of-truth dictionary path, e.g.  
+  - [ ] Confirm single source-of-truth dictionary path, e.g.
         `src/enochian_lm/root_extraction/data/dictionary.json`
-  - [ ] Add a note in the top-level `README.md` pointing to it
+  - [x] Add a note in the top-level `README.md` pointing to it
 
 ---
 
@@ -31,69 +31,69 @@ This is the end-to-end plan:
 
 ### 1A. Design schema additions
 
-- [ ] **1.1 Define new fields for each sense**
-  - [ ] `parts_of_speech`: `List[str]` (e.g. `["NOUN"]`, `["AUX", "PRON"]`)
-  - [ ] `semantic_domains`: `List[str]` (e.g. `["PLANT"]`, `["DIVINE", "ABSTRACT"]`)
-  - [ ] `is_copula`: `bool` (true for “to be” / “which are”-style lemmas)
-  - [ ] `is_compound_standing_for_phrase`: `bool` (e.g. DSCHIS = “which are”)
-  - [ ] (optional) `notes_pos`: `str` for human comments
-- [ ] **1.2 Document schema**
-  - [ ] Create `docs/dictionary_schema.md` describing each field and examples
+- [x] **1.1 Define new fields for each sense**
+  - [x] `parts_of_speech`: `List[str]` (e.g. `["NOUN"]`, `["AUX", "PRON"]`)
+  - [x] `semantic_domains`: `List[str]` (e.g. `["PLANT"]`, `["DIVINE", "ABSTRACT"]`)
+  - [x] `is_copula`: `bool` (true for “to be” / “which are”-style lemmas)
+  - [x] `is_compound_standing_for_phrase`: `bool` (e.g. DSCHIS = “which are”)
+  - [x] (optional) `notes_pos`: `str` for human comments
+- [x] **1.2 Document schema**
+  - [x] Create `docs/dictionary_schema.md` describing each field and examples
 
 ### 1B. Implement gloss-based POS heuristics (in Python)
 
-- [ ] **1.3 Create script** `training/datasets/enrich_dictionary_pos.py`
-- [ ] **1.4 Load dictionary.json**
-  - [ ] Read the existing JSON into Python as a list of entries
-- [ ] **1.5 Implement basic POS heuristics**
-  - [ ] If gloss starts with `"to be "` or equals forms like `"am"`, `"are"`, `"is"`  
-        → `parts_of_speech` includes `"AUX"`, `is_copula = true`
-  - [ ] If gloss starts with `"to <verb>"` (regex: `^to\s+\w+`)  
-        → `parts_of_speech` includes `"VERB"`
-  - [ ] If gloss is a single preposition (`"of"`, `"from"`, `"in"`, `"amongst"` etc)  
-        → `parts_of_speech` includes `"ADP"`
-  - [ ] If gloss is a coordinator (`"and"`, `"or"`, `"but"`)  
-        → `parts_of_speech` includes `"CCONJ"`
-  - [ ] If gloss includes `","` or `" / "` and clearly stands for multiple words (e.g. `"which are"`, `"that which is"`)  
-        → set `is_compound_standing_for_phrase = true`, allow multiple POS tags
-  - [ ] Fallback: default to `"NOUN"` if no other rule hits (to be reviewed later)
-- [ ] **1.6 (Optional) Hook in an English POS tagger**
+- [x] **1.3 Create script** `training/datasets/enrich_dictionary_pos.py`
+- [x] **1.4 Load dictionary.json**
+  - [x] Read the existing JSON into Python as a list of entries
+- [x] **1.5 Implement basic POS heuristics**
+  - [x] If gloss starts with `"to be "` or equals forms like `"am"`, `"are"`, `"is"`
+          → `parts_of_speech` includes `"AUX"`, `is_copula = true`
+  - [x] If gloss starts with `"to <verb>"` (regex: `^to\s+\w+`)
+          → `parts_of_speech` includes `"VERB"`
+  - [x] If gloss is a single preposition (`"of"`, `"from"`, `"in"`, `"amongst"` etc)
+          → `parts_of_speech` includes `"ADP"`
+  - [x] If gloss is a coordinator (`"and"`, `"or"`, `"but"`)
+          → `parts_of_speech` includes `"CCONJ"`
+  - [x] If gloss includes `","` or `" / "` and clearly stands for multiple words (e.g. `"which are"`, `"that which is"`)
+          → set `is_compound_standing_for_phrase = true`, allow multiple POS tags
+  - [x] Fallback: default to `"NOUN"` if no other rule hits (to be reviewed later)
+- [ ] **1.6 (Optional) Hook in an English POS tagger** *(deferred—heuristics currently sufficient and avoid extra runtime deps)*
   - [ ] Add a function `infer_pos_with_tagger(gloss)` that:
     - [ ] Takes the last content word (head)
     - [ ] Maps its POS to one of: `NOUN`, `VERB`, `ADJ`, `ADV`, `ADP`, `PRON`, etc.
   - [ ] Use this only when heuristics return `None`
-- [ ] **1.7 Write out enriched dictionary**
-  - [ ] Save as `dictionary_enriched.json`
-  - [ ] Add CLI flag or guard so you don't clobber the original by accident
+- [x] **1.7 Write out enriched dictionary**
+  - [x] Save as `dictionary_enriched.json`
+  - [x] Add CLI flag or guard so you don't clobber the original by accident
 
 ### 1C. Add semantic domains
 
-- [ ] **1.8 Create mapping file** `training/config/semantic_domains.yml`
-  - [ ] Define a small set of domain labels:
-    - [ ] `DIVINE`
-    - [ ] `CELESTIAL`
-    - [ ] `MORAL`
-    - [ ] `MENTAL`
-    - [ ] `SPEECH`
-    - [ ] `SOCIAL`
-    - [ ] `ACTION`
-    - [ ] `QUALITY`
-	- [ ] `QUANTITY`
-	- [ ] `SPACE`
-	- [ ] `TIME`
-    - [ ] `RELATION`
-    - [ ] `PHYSICAL`
-  - [ ] Map common gloss headwords to these domains
-- [ ] **1.9 Implement domain assignment** in `enrich_dictionary_pos.py`
-  - [ ] Extract gloss “head” word (e.g. from `"voice of God"` → `"voice"`)
-  - [ ] Look up in `semantic_domains.yml`
-  - [ ] If unknown, leave `semantic_domains = []` for later manual tagging
-- [ ] **1.10 Manual review pass**
-  - [ ] Write a quick script to print:
-    - [ ] all lemmas with `is_copula = true`
-    - [ ] all lemmas with multiple POS tags
-    - [ ] all lemmas with no `semantic_domains`
-  - [ ] Manually adjust the worst offenders and re-run enrichment if needed
+- [x] **1.8 Create mapping file** `training/config/semantic_domains.yml`
+    - [x] Define a small set of domain labels:
+      - [x] `DIVINE`
+      - [x] `CELESTIAL`
+      - [x] `MORAL`
+      - [x] `MENTAL`
+      - [x] `SPEECH`
+      - [x] `SOCIAL`
+      - [x] `ACTION`
+      - [x] `QUALITY`
+          - [x] `QUANTITY`
+          - [x] `SPACE`
+          - [x] `TIME`
+      - [x] `RELATION`
+      - [x] `PHYSICAL`
+    - [x] Map common gloss headwords to these domains
+- [x] **1.9 Implement domain assignment** in `enrich_dictionary_pos.py`
+    - [x] Extract gloss “head” word (e.g. from `"voice of God"` → `"voice"`)
+    - [x] Look up in `semantic_domains.yml`
+    - [x] If unknown, leave `semantic_domains = []` for later manual tagging
+- [x] **1.10 Manual review pass**
+  - [x] Write a quick script to print:
+    - [x] all lemmas with `is_copula = true`
+    - [x] all lemmas with multiple POS tags
+    - [x] all lemmas with no `semantic_domains`
+  - [x] Manually adjust the worst offenders and re-run enrichment if needed *(see `runs/dictionary_enrichment_report.txt` for triage list)*
 
 ---
 

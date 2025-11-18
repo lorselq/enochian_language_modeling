@@ -66,6 +66,14 @@ A simulated AI team operates in two distinct modes:
 - **Agent Modes:** Both Debate and Solo modes fully implemented; comparative analyses planned as future research.
 - **CLI Enhancements:** Improved terminal interface for smoother operation and enhanced readability.
 
+### Canonical dictionary location
+
+The authoritative dictionary source checked into this repo lives at
+`src/enochian_lm/root_extraction/data/dictionary.json`. Running the enrichment
+script (`python src/training/datasets/enrich_dictionary_pos.py`) produces
+`dictionary_enriched.json` in the same folder, adding POS tags, semantic
+domains, and guard-rail metadata that downstream datasets rely upon.
+
 ### Pre-analysis safeguards
 
 Run `poetry run enlm preanalyze --db <path>` before the
