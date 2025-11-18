@@ -2,21 +2,25 @@ domains:
   DIVINE: "Deities, angelic beings, and sacred power"
   CELESTIAL: "Sky, stellar, or astrological entities"
   MORAL: "Ethics, virtue, sin, and judgment"
+  HARMFUL: "Nouns which do harm unto another"
   MENTAL: "Thought, knowledge, memory, and perception"
+  FIRE: "Fire, flame, burning, pyre, and all other fiery words"
   SPEECH: "Speech acts, names, proclamations, and writing"
   SOCIAL: "People, ranks, offices, and collective bodies"
   ACTION: "Movement, work, battle, and change verbs"
   QUALITY: "States, descriptions, and inherent attributes"
   QUANTITY: "Numbers, measures, and magnitude"
+  SHAPE: "Abstract shapes"
   SPACE: "Locations, spatial relations, and direction"
   TIME: "Temporal notions such as day, age, hour"
   RELATION: "Kinship, belonging, ownership, and logical linkage"
-  PHYSICAL: "Body parts, natural substances, and tangible matter"
+  PHYSICAL: "Natural substances and tangible matter"
+  BODY_PARTS: "Body parts, literal or metaphorical"
   PLANT: "Plants, crops, and botanical imagery"
+  LIFEFORM: "Form of life that is not a plant, including humans"
 
 headword_to_domains:
   angel: [DIVINE, CELESTIAL]
-  archangel: [DIVINE, CELESTIAL]
   god: [DIVINE]
   lord: [DIVINE]
   king: [SOCIAL]
@@ -51,16 +55,16 @@ headword_to_domains:
   strength: [QUALITY, ACTION]
   glory: [QUALITY, DIVINE]
   light: [CELESTIAL, PHYSICAL]
-  fire: [PHYSICAL]
+  fire: [FIRE, PHYSICAL]
   water: [PHYSICAL]
   air: [PHYSICAL]
   earth: [PHYSICAL]
   stone: [PHYSICAL]
   iron: [PHYSICAL]
-  body: [PHYSICAL]
-  bone: [PHYSICAL]
-  blood: [PHYSICAL]
-  flesh: [PHYSICAL]
+  body: [BODY_PARTS]
+  bone: [BODY_PARTS]
+  blood: [BODY_PARTS]
+  flesh: [BODY_PARTS]
   seed: [PHYSICAL, PLANT]
   tree: [PHYSICAL]
   leaf: [PHYSICAL]
@@ -101,10 +105,12 @@ headword_to_domains:
   eight: [QUANTITY]
   nine: [QUANTITY]
   ten: [QUANTITY]
+  hundred: [QUANTITY]
+  thousand: [QUANTITY]
   place: [SPACE]
   field: [SPACE]
   land: [SPACE]
-  earths: [SPACE]
+  earth: [SPACE]
   sea: [PHYSICAL, SPACE]
   ocean: [PHYSICAL, SPACE]
   heaven: [CELESTIAL, DIVINE]
@@ -179,3 +185,10 @@ headword_to_domains:
   wind: [CELESTIAL, PHYSICAL]
   seasoner: [ACTION, PHYSICAL]
   watcher: [SOCIAL, CELESTIAL]
+  harlot: [MORAL, SOCIAL]
+  among: [SPACE]
+  amongst: [SPACE]
+  provide: [ACTION, SOCIAL, RELATION]
+  diamond: [PHYSICAL]
+  augoeides: [CELESTIAL, DIVINE]
+

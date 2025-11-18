@@ -6,7 +6,8 @@ from pathlib import Path
 def get_config_paths() -> dict[str, Path]:
     """Return canonical on-disk locations for shared corpora and artifacts."""
 
-    root_extraction = Path(__file__).resolve().parents[2]
+    enochian_lm = Path(__file__).resolve().parents[2]
+    root_extraction = enochian_lm / "root_extraction"
     data_dir = root_extraction / "data"
     tools_dir = root_extraction / "tools"
     interpretation_dir = root_extraction / "interpretation"
