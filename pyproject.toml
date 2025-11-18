@@ -40,9 +40,9 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 enochian-build-fasttext = "enochian_lm.root_extraction.tools.train_fasttext_model:main"
-enochian-build-ngram-index = "enochian_lm.root_extraction.utils.build_ngram_index:main"
+enochian-build-ngram-index = "enochian_lm.root_extraction.utils.build_ngram_sidecar:main"
 enochian-inspect = "enochian_lm.root_extraction.tools.inspect_definitions:main"
 enochian-analysis = "enochian_lm.root_extraction.main:main"
-enochian-interpret = "enochian_lm.translation.interpretation.cli:main"
+enochian-interpret = "translation.cli:main"
 enochian-apply-analytics = "enochian_lm.root_extraction.scripts.apply_analytics_updates:main"
 enlm = "enochian_lm.analysis.cli:main"

@@ -19,8 +19,12 @@ The script is idempotent and safe to re-run.
 from __future__ import annotations
 from os import PathLike
 import os
-from common.sqlite_bootstrap import sqlite3
+from pathlib import Path
 from typing import Dict, Tuple
+
+from enochian_lm.common.sqlite_bootstrap import sqlite3
+
+INTERPRETATION_DIR = Path(__file__).resolve().parents[2] / "interpretation"
 
 # -------------------------
 # Paths
@@ -34,15 +38,7 @@ def DB_PATH(file_name: str = "debate_derived_definitions.sqlite3") -> str:
         DB_PATH("raw_solo_analysis_derived_definitions.sqlite3")
         DB_PATH("processed_debate_derived_definitions.sqlite3")
     """
-    return os.path.abspath(
-        os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),  # up from scripts/
-            "src",
-            "enochian_translation_team",
-            "data",
-            file_name,
-        )
-    )
+    return str((INTERPRETATION_DIR / file_name).resolve())
 
 
 # -------------------------
