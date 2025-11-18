@@ -37,7 +37,7 @@ import os
 import json
 import re
 import json
-from common.sqlite_bootstrap import sqlite3
+from enochian_lm.common.sqlite_bootstrap import sqlite3
 import unicodedata
 import sys
 from pathlib import Path
@@ -53,6 +53,8 @@ from typing import (
     NoReturn,
     Sequence,
 )
+
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 # -----------------------------
 # Regexes / token peelers
@@ -989,17 +991,7 @@ def main():
 
     # db_path = Path(args.db)
     file_name = "liber_loagaeth.sqlite3"
-    db_path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(
-                os.path.dirname(os.path.dirname(__file__))
-            ),  # Go up from scripts directory
-            "src",
-            "enochian_translation_team",
-            "data",
-            file_name,
-        )
-    )
+    db_path = (DATA_DIR / file_name).resolve()
     js_path = Path(args.json)
     if not js_path.exists():
         raise SystemExit(f"JSON not found: {js_path}")

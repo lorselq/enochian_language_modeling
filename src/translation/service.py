@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numbers
 from pathlib import Path
+from types import TracebackType
 from typing import Dict, Iterable, List, Optional, Set
 
 from enochian_lm.root_extraction.utils.config import get_config_paths
@@ -67,7 +68,12 @@ class InterpretationService:
     def __enter__(self) -> "InterpretationService":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.close()
 
     def interpret_text(

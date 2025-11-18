@@ -11,7 +11,7 @@ class SenseRecord(TypedDict):
 class EntryRecord(TypedDict):
     canonical: str
     alternates: List[AltRecord]
-    senses: NotRequired[List[SenseRecord]]  
+    senses: NotRequired[List[SenseRecord]]
     context_tags: NotRequired[List[str]]
     pos: NotRequired[str]
     normalized: NotRequired[str]

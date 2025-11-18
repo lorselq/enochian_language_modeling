@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from common.sqlite_bootstrap import sqlite3
+from enochian_lm.common.sqlite_bootstrap import sqlite3
 from pathlib import Path
 from typing import Sequence
 
