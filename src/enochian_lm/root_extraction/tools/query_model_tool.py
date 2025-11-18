@@ -155,7 +155,7 @@ class QueryModelTool(BaseTool):
                         "  👉👈  🥺",
                         "  👉👈  🥺",
                         " 👉  👈 🥺",
-                    ],  # type: ignore
+                    ],
                     175,
                 ),
                 text=chosen_shy_text,

@@ -8,8 +8,11 @@
 import os
 import sys
 import argparse
-from common.sqlite_bootstrap import sqlite3
 from pathlib import Path
+
+from enochian_lm.common.sqlite_bootstrap import sqlite3
+
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 DDL = r"""
 PRAGMA foreign_keys=ON;
@@ -334,15 +337,7 @@ def main():
         description="Initialize a human-literate SQLite DB for Liber Loagaeth."
     )
     # ap.add_argument("db_path", help="Path to the .sqlite file to create")
-    path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # Go up from scripts directory
-            "src",
-            "enochian_translation_team",
-            "data",
-            file_name,
-        )
-    )
+    path = (DATA_DIR / file_name).resolve()
     ap.add_argument(
         "--overwrite", action="store_true", help="Overwrite existing DB file if present"
     )

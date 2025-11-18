@@ -1,5 +1,5 @@
 from __future__ import annotations
-from common.sqlite_bootstrap import sqlite3
+from enochian_lm.common.sqlite_bootstrap import sqlite3
 import sys
 from pathlib import Path
 
