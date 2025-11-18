@@ -1,20 +1,25 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-def get_config_paths():
-    root = Path(__file__).resolve().parents[3]  # gets you to project root
+
+def get_config_paths() -> dict[str, Path]:
+    """Return canonical on-disk locations for shared corpora and artifacts."""
+
+    root_extraction = Path(__file__).resolve().parents[2]
+    data_dir = root_extraction / "data"
+    tools_dir = root_extraction / "tools"
+    interpretation_dir = root_extraction / "interpretation"
+
     return {
-        "dictionary": root / "src" / "enochian_translation_team" / "data" / "dictionary.json",
-        "substitution_map": root / "src" / "enochian_translation_team" / "data" / "substitution_map.json",
-        "sequence_compressions": root / "src" / "enochian_translation_team" / "data" / "sequence_compressions.json",
-        "model_output": root / "src" / "enochian_translation_team" / "tools" / "models" / "enochian_fasttext.model",
-        "ngram_index": root / "src" / "enochian_translation_team" / "data" / "ngram_index.sqlite3",
-        "root_word_insights": root / "src" / "enochian_translation_team" / "data" / "root_word_insights.json",
-        "new_definitions": root / "src" / "enochian_translation_team" / "data" / "new_definitions.sqlite3",
-        "debate": root / "src" / "enochian_translation_team" / "data" / "debate_derived_definitions.sqlite3",
-        "solo": root / "src" / "enochian_translation_team" / "data" / "solo_analysis_derived_definitions.sqlite3",
-        "preanalysis_trusted": root
-        / "src"
-        / "enochian_translation_team"
-        / "data"
-        / "trusted_preanalysis_ngrams.json",
+        "dictionary": data_dir / "dictionary.json",
+        "substitution_map": data_dir / "substitution_map.json",
+        "sequence_compressions": data_dir / "sequence_compressions.json",
+        "model_output": tools_dir / "models" / "enochian_fasttext.model",
+        "ngram_index": data_dir / "ngram_index.sqlite3",
+        "root_word_insights": data_dir / "root_word_insights.json",
+        "new_definitions": interpretation_dir / "new_definitions.sqlite3",
+        "debate": interpretation_dir / "revised_debate_derived_definitions.sqlite3",
+        "solo": interpretation_dir / "revised_solo_analysis_derived_definitions.sqlite3",
+        "preanalysis_trusted": data_dir / "trusted_preanalysis_ngrams.json",
     }

@@ -5,11 +5,11 @@ import argparse
 import json
 import logging
 import math
-from common.sqlite_bootstrap import sqlite3
+from enochian_lm.common.sqlite_bootstrap import sqlite3
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List
 
 try:  # pragma: no cover - optional dependency guard
     import numpy as _np
@@ -17,9 +17,11 @@ except Exception:  # pragma: no cover - fallback path when numpy missing
     _np = None
 
 try:  # pragma: no cover - sklearn may be unavailable in minimal installs
-    from sklearn.cluster import KMeans  # type: ignore
+    from sklearn.cluster import KMeans as _SklearnKMeans
 except Exception:  # pragma: no cover - fallback implementation will be used
-    KMeans = None  # type: ignore
+    _SklearnKMeans = None
+
+KMeans: Any | None = _SklearnKMeans
 
 from ..utils.sql import ensure_analysis_tables
 from ..utils.text import utcnow_iso
