@@ -1,0 +1,44 @@
+[
+  {
+    "from": "pirg",
+    "to": "prg",
+    "confidence": "high",
+    "direction": "from"
+  },
+  {
+    "from": "purg",
+    "to": "prg",
+    "confidence": "high",
+    "direction": "from"
+  },
+  {
+    "from": "na",
+    "to": "enai",
+    "confidence": "low",
+    "direction": "to"
+  },
+  {
+    "from": "qu",
+    "to": "q",
+    "confidence": "high",
+    "direction": "both"
+  },
+  {
+    "from": "em",
+    "to": "m",
+    "confidence": "medium",
+    "direction": "both"
+  },
+  {
+    "from": "en",
+    "to": "n",
+    "confidence": "medium",
+    "direction": "both"
+  },
+  {
+    "from": "el",
+    "to": "l",
+    "confidence": "high",
+    "direction": "both"
+  }
+]

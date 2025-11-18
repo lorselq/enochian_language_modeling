@@ -1,13 +1,14 @@
 [tool.poetry]
-name = "enochian_translation_team"
-version = "0.1.0"
+name = "enochian_language_modeling"
+version = "0.1.8"
 description = "Small-corpora language modeling with a particular focus on the Enochian language—and some puzzles related to its corpora."
 authors = ["Forrest Wilbur <forrest.a.wilbur@gmail.com>"]
 readme = "README.md"
 packages = [
-  { include = "enochian_translation_team", from = "src" },
   { include = "enochian_lm", from = "src" },
-  { include = "enochian_common", from = "src" }
+  { include = "loagaeth", from = "src" },
+  { include = "translation", from = "src" },
+  { include = "training", from = "src" }
 ]
 
 [tool.poetry.dependencies]
@@ -38,10 +39,10 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-enochian-build-fasttext = "enochian_translation_team.tools.train_fasttext_model:main"
-enochian-build-ngram-index = "enochian_translation_team.utils.build_ngram_index:main"
-enochian-inspect = "enochian_translation_team.tools.inspect_definitions:main"
-enochian-analysis = "enochian_translation_team.main:main"
-enochian-interpret = "enochian_translation_team.interpretation.cli:main"
-enochian-apply-analytics = "enochian_translation_team.scripts.apply_analytics_updates:main"
-enlm = "enochian_lm.cli:main"
+enochian-build-fasttext = "enochian_lm.root_extraction.tools.train_fasttext_model:main"
+enochian-build-ngram-index = "enochian_lm.root_extraction.utils.build_ngram_index:main"
+enochian-inspect = "enochian_lm.root_extraction.tools.inspect_definitions:main"
+enochian-analysis = "enochian_lm.root_extraction.main:main"
+enochian-interpret = "enochian_lm.translation.interpretation.cli:main"
+enochian-apply-analytics = "enochian_lm.root_extraction.scripts.apply_analytics_updates:main"
+enlm = "enochian_lm.analysis.cli:main"
