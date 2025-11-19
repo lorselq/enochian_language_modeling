@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS runs (
   embedder      TEXT,
   env_json      TEXT,
   phase         TEXT NOT NULL DEFAULT 'translation',
+  queue_cycle   INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -625,6 +626,7 @@ def init_db(path: str | PathLike[str]) -> None:
                     _add_column_if_missing(conn, "clusters", column, decl)
 
             _add_column_if_missing(conn, "runs", "phase", "TEXT NOT NULL DEFAULT 'translation'")
+            _add_column_if_missing(conn, "runs", "queue_cycle", "INTEGER NOT NULL DEFAULT 0")
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)
