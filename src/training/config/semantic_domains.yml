@@ -19,6 +19,28 @@ domains:
   PLANT: "Plants, crops, and botanical imagery"
   LIFEFORM: "Form of life that is not a plant, including humans"
 
+headword_stopwords:
+  - a
+  - an
+  - the
+  - ye
+  - o
+  - my
+  - mine
+  - thy
+  - thine
+  - his
+  - her
+  - hers
+  - its
+  - our
+  - ours
+  - your
+  - yours
+  - their
+  - theirs
+  - whose
+
 headword_to_domains:
   angel: [DIVINE, CELESTIAL]
   god: [DIVINE]

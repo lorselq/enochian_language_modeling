@@ -58,6 +58,10 @@ class RootExtractionCrew:
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.new_definitions_db = sqlite3.connect(paths[style])
         self._prepare_db(self.new_definitions_db)
+        self._init_queue_table()
+        self._ngram_inventory: list[tuple[str, int]] = []
+        self._ngram_df: dict[str, int] = {}
+        self._refresh_ngram_inventory()
         self.subst_map = self.load_subst_map()
         self.fasttext = get_fasttext_model(self.model_path)
         self.sentence_model_name = "paraphrase-MiniLM-L6-v2"
@@ -66,6 +70,7 @@ class RootExtractionCrew:
         self._trusted_max_len = max((len(token) for token in self.trusted_ngrams), default=0)
         self.completed_roots, self.incomplete_roots = self._load_cluster_progress()
         self.completed_roots |= self._load_root_level_skips()
+        self._breakdown_cache: dict[str, dict | None] = {}
         self.candidate_finder = MorphemeCandidateFinder(
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=self.model_path,
@@ -201,6 +206,94 @@ class RootExtractionCrew:
     def _normalize_root(self, value: str) -> str:
         return str(value or "").strip().lower()
 
+    @staticmethod
+    def _get_field_value(item, field: str, default=""):
+        if isinstance(item, dict):
+            return item.get(field, default)
+        return getattr(item, field, default)
+
+    def _init_queue_table(self) -> None:
+        cursor = self.new_definitions_db.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ngram_queue (
+                ngram TEXT PRIMARY KEY,
+                queue_index INTEGER NOT NULL,
+                cycles_completed INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        self.new_definitions_db.commit()
+
+    def _refresh_ngram_inventory(self) -> None:
+        inventory = [
+            (self._normalize_root(ngram), int(df or 0))
+            for ngram, df in self.stream_ngrams_from_sqlite(min_freq=1)
+        ]
+        self._ngram_inventory = inventory
+        self._ngram_df = {ngram: df for ngram, df in inventory}
+        self._sync_queue_with_inventory()
+
+    def _sync_queue_with_inventory(self) -> None:
+        cursor = self.new_definitions_db.cursor()
+        rows = cursor.execute("SELECT ngram, queue_index FROM ngram_queue").fetchall()
+        seen = {self._normalize_root(row[0]): int(row[1]) for row in rows if row and row[0]}
+        inserts = []
+        for idx, (ngram, _) in enumerate(self._ngram_inventory):
+            if not ngram or ngram in seen:
+                continue
+            inserts.append((ngram, idx))
+        if inserts:
+            cursor.executemany(
+                """
+                INSERT INTO ngram_queue (ngram, queue_index, cycles_completed)
+                VALUES (?, ?, 0)
+                """,
+                inserts,
+            )
+            self.new_definitions_db.commit()
+
+    def _load_queue_order(self) -> list[tuple[str, int]]:
+        cursor = self.new_definitions_db.cursor()
+        rows = cursor.execute(
+            "SELECT ngram, queue_index, cycles_completed FROM ngram_queue "
+            "ORDER BY cycles_completed ASC, queue_index ASC"
+        ).fetchall()
+        ordered: list[tuple[str, int]] = []
+        for row in rows:
+            norm = self._normalize_root(row[0])
+            if not norm:
+                continue
+            ordered.append((norm, self._ngram_df.get(norm, 0)))
+        return ordered
+
+    def _get_current_cycle(self) -> int:
+        cursor = self.new_definitions_db.cursor()
+        row = cursor.execute(
+            "SELECT MIN(cycles_completed) FROM ngram_queue"
+        ).fetchone()
+        if not row or row[0] is None:
+            return 0
+        return int(row[0])
+
+    def _advance_queue(self, root_norm: str) -> None:
+        if not root_norm:
+            return
+        cursor = self.new_definitions_db.cursor()
+        cursor.execute(
+            "UPDATE ngram_queue SET cycles_completed = cycles_completed + 1 WHERE ngram = ?",
+            (root_norm,),
+        )
+        if cursor.rowcount == 0:
+            cursor.execute(
+                """
+                INSERT INTO ngram_queue (ngram, queue_index, cycles_completed)
+                VALUES (?, ?, 1)
+                """,
+                (root_norm, len(self._ngram_inventory)),
+            )
+        self.new_definitions_db.commit()
+
     def _load_cluster_progress(self) -> tuple[set[str], set[str]]:
         cursor = self.new_definitions_db.cursor()
         status: dict[str, dict[str, bool]] = {}
@@ -271,6 +364,50 @@ class RootExtractionCrew:
         if norm:
             self.completed_roots.add(norm)
             self.incomplete_roots.discard(norm)
+            self._advance_queue(norm)
+
+    def _get_candidate_breakdown(self, word: str) -> dict | None:
+        norm = self._normalize_root(word)
+        if not norm:
+            return None
+        if norm in self._breakdown_cache:
+            return self._breakdown_cache[norm]
+        candidates = self.candidate_finder.find_candidates(norm, top_k=1)
+        breakdown = None
+        if candidates:
+            top_candidate = candidates[0]
+            breakdown = top_candidate.get("breakdown") if top_candidate else None
+        self._breakdown_cache[norm] = breakdown
+        return breakdown
+
+    def _has_residual_fragments(self, breakdown: dict | None, root_norm: str) -> bool:
+        if not breakdown:
+            return False
+        segments = breakdown.get("segments") or []
+        if not segments:
+            return False
+        uncovered = breakdown.get("uncovered") or []
+        for frag in uncovered:
+            text = frag.get("text") if isinstance(frag, dict) else frag
+            text = str(text or "").strip()
+            if text and text.lower() != root_norm:
+                return True
+        return False
+
+    def _cluster_supports_residual_override(self, cluster, root_token: str) -> bool:
+        root_norm = self._normalize_root(root_token)
+        if not root_norm:
+            return False
+        for entry in cluster:
+            norm_value = self._normalize_root(
+                self._get_field_value(entry, "normalized", "")
+            )
+            if not norm_value or norm_value == root_norm:
+                continue
+            breakdown = self._get_candidate_breakdown(norm_value)
+            if self._has_residual_fragments(breakdown, root_norm):
+                return True
+        return False
 
     def _fetch_ngram_contexts(self, ngram: str) -> list[str]:
         cursor = self.ngram_db.cursor()
@@ -706,11 +843,7 @@ class RootExtractionCrew:
                 continue
             seen_norms.add(norm_form)
             display_word = _get_field(original, "word", norm_form)
-            candidate_breakdowns = self.candidate_finder.find_candidates(
-                norm_form, top_k=1
-            )
-            top_candidate = candidate_breakdowns[0] if candidate_breakdowns else None
-            breakdown = top_candidate.get("breakdown") if top_candidate else None
+            breakdown = self._get_candidate_breakdown(norm_form)
             if not breakdown:
                 uncovered = (
                     [{"span": [0, len(norm_form)], "text": norm_form}]
@@ -843,6 +976,11 @@ class RootExtractionCrew:
                 root_entry=None,
                 use_remote=self.use_remote,
                 residual_prompt=focus_prompt,
+                residual_guidance=(
+                    residual_report.get("residual_guidance_json")
+                    if residual_report
+                    else None
+                ),
                 query_db=self.new_definitions_db,
                 query_run_id=self.run_id,
             )
@@ -876,11 +1014,7 @@ class RootExtractionCrew:
         min_semantic_similarity: float = 0.60,
     ):
         def _get_field(item, field, default=""):
-            # Unified accessor for Entry objects and dicts.
-            if isinstance(item, dict):
-                return item.get(field, default)
-            else:
-                return getattr(item, field, default)
+            return self._get_field_value(item, field, default)
 
         if single_ngram:
             ngrams = [(single_ngram, 9001)]  # Use a fake count
@@ -891,12 +1025,20 @@ class RootExtractionCrew:
                 )
                 time.sleep(0.25)
         else:
-            stream = list(self.stream_ngrams_from_sqlite(min_freq=1))
+            self._refresh_ngram_inventory()
+            stream = self._load_queue_order()
             pending = [item for item in stream if not self._is_root_processed(item[0])]
             incomplete_roots = {item[0] for item in pending if self._is_root_incomplete(item[0])}
             ngrams = [item for item in pending if item[0] in incomplete_roots] + [
                 item for item in pending if item[0] not in incomplete_roots
             ]
+            current_cycle = self._get_current_cycle()
+            cycle_msg = (
+                f"♻️ Continuing queue cycle #{current_cycle + 1}; prior passes remain archived and new analyses append to them.\n\n"
+                if current_cycle > 0
+                else "♻️ Beginning the first full queue cycle across all n-grams.\n\n"
+            )
+            stream_text(cycle_msg)
 
         output = []
         seen_words = 0
@@ -1050,7 +1192,17 @@ class RootExtractionCrew:
                 )
                 time.sleep(0.25)
 
-                if not overlap or len(overlap) < 2:
+                residual_override = False
+                if len(overlap) < 2 and style == "solo":
+                    residual_override = self._cluster_supports_residual_override(
+                        cluster, root_token
+                    )
+                    if residual_override:
+                        stream_text(
+                            f"[ℹ️] Proceeding with {GOLD}{root_token.upper()}{RESET} despite thin overlap because residual fragments can be interrogated.\n"
+                        )
+
+                if (not overlap or len(overlap) < 2) and not residual_override:
                     stream_text(
                         f"We have skipped cluster #{cluster_id + 1} for {GOLD}{root_token.upper()}{RESET} because not enough words (or their variants) in the cluster contained the ngram while also meaning similar things.\n\n"
                     )
