@@ -71,12 +71,14 @@ class RootExtractionCrew:
         self.completed_roots, self.incomplete_roots = self._load_cluster_progress()
         self.completed_roots |= self._load_root_level_skips()
         self._breakdown_cache: dict[str, dict | None] = {}
+        self._cycle_map: dict[str, int] = {}
         self.candidate_finder = MorphemeCandidateFinder(
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=self.model_path,
             dictionary_entries=self.entries,
         )
 
+        self._upgrade_run_schema()
         self.run_id = self._begin_run(engine=style)
         self.use_remote = use_remote
 
@@ -104,6 +106,7 @@ class RootExtractionCrew:
         run_id = uuid.uuid4().hex
         # Try to recover a readable embedder name
         embedder = self.sentence_model_name
+        current_cycle = self._get_current_cycle()
 
         env_json = {
             "python": sys.version.split()[0],
@@ -113,19 +116,35 @@ class RootExtractionCrew:
         }
 
         with self.new_definitions_db:
-            self.new_definitions_db.execute(
-                """
-                INSERT INTO runs (run_id, run_name, engine, embedder, env_json)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    run_id,
-                    f"{engine}-{datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}Z",
-                    engine,  # 'debate' or 'solo'
-                    embedder,
-                    json.dumps(env_json),
-                ),
-            )
+            try:
+                self.new_definitions_db.execute(
+                    """
+                    INSERT INTO runs (run_id, run_name, engine, embedder, env_json, queue_cycle)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        f"{engine}-{datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}Z",
+                        engine,  # 'debate' or 'solo'
+                        embedder,
+                        json.dumps(env_json),
+                        current_cycle,
+                    ),
+                )
+            except sqlite3.Error:
+                self.new_definitions_db.execute(
+                    """
+                    INSERT INTO runs (run_id, run_name, engine, embedder, env_json)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        f"{engine}-{datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}Z",
+                        engine,  # 'debate' or 'solo'
+                        embedder,
+                        json.dumps(env_json),
+                    ),
+                )
         self.run_id = run_id
         return run_id
 
@@ -225,6 +244,17 @@ class RootExtractionCrew:
         )
         self.new_definitions_db.commit()
 
+    def _upgrade_run_schema(self) -> None:
+        """Add newer optional columns without dropping user data."""
+
+        cursor = self.new_definitions_db.cursor()
+        try:
+            cursor.execute("ALTER TABLE runs ADD COLUMN queue_cycle INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            # Column already exists or table missing; ignore to stay backward compatible.
+            pass
+        self.new_definitions_db.commit()
+
     def _refresh_ngram_inventory(self) -> None:
         inventory = [
             (self._normalize_root(ngram), int(df or 0))
@@ -253,18 +283,18 @@ class RootExtractionCrew:
             )
             self.new_definitions_db.commit()
 
-    def _load_queue_order(self) -> list[tuple[str, int]]:
+    def _load_queue_order(self) -> list[tuple[str, int, int]]:
         cursor = self.new_definitions_db.cursor()
         rows = cursor.execute(
             "SELECT ngram, queue_index, cycles_completed FROM ngram_queue "
             "ORDER BY cycles_completed ASC, queue_index ASC"
         ).fetchall()
-        ordered: list[tuple[str, int]] = []
+        ordered: list[tuple[str, int, int]] = []
         for row in rows:
             norm = self._normalize_root(row[0])
             if not norm:
                 continue
-            ordered.append((norm, self._ngram_df.get(norm, 0)))
+            ordered.append((norm, self._ngram_df.get(norm, 0), int(row[2] or 0)))
         return ordered
 
     def _get_current_cycle(self) -> int:
@@ -275,6 +305,23 @@ class RootExtractionCrew:
         if not row or row[0] is None:
             return 0
         return int(row[0])
+
+    def _get_cycles_completed(self, root_norm: str) -> int:
+        if not root_norm:
+            return 0
+        if root_norm in self._cycle_map:
+            return self._cycle_map[root_norm]
+        cursor = self.new_definitions_db.cursor()
+        try:
+            row = cursor.execute(
+                "SELECT cycles_completed FROM ngram_queue WHERE ngram = ?",
+                (root_norm,),
+            ).fetchone()
+        except sqlite3.Error:
+            return 0
+        value = int(row[0]) if row and row[0] is not None else 0
+        self._cycle_map[root_norm] = value
+        return value
 
     def _advance_queue(self, root_norm: str) -> None:
         if not root_norm:
@@ -293,6 +340,7 @@ class RootExtractionCrew:
                 (root_norm, len(self._ngram_inventory)),
             )
         self.new_definitions_db.commit()
+        self._cycle_map[root_norm] = self._get_cycles_completed(root_norm)
 
     def _load_cluster_progress(self) -> tuple[set[str], set[str]]:
         cursor = self.new_definitions_db.cursor()
@@ -353,8 +401,15 @@ class RootExtractionCrew:
             if row and row[0]
         }
 
-    def _is_root_processed(self, root: str) -> bool:
-        return self._normalize_root(root) in self.completed_roots
+    def _is_root_processed(self, root: str, *, current_cycle: int | None = None) -> bool:
+        norm = self._normalize_root(root)
+        if not norm:
+            return False
+
+        cycle = self._get_cycles_completed(norm)
+        if current_cycle is None:
+            current_cycle = self._get_current_cycle()
+        return cycle > current_cycle
 
     def _is_root_incomplete(self, root: str) -> bool:
         return self._normalize_root(root) in self.incomplete_roots
@@ -1017,22 +1072,32 @@ class RootExtractionCrew:
             return self._get_field_value(item, field, default)
 
         if single_ngram:
+            self._refresh_ngram_inventory()
+            stream = self._load_queue_order()
+            self._cycle_map = {ng: cyc for ng, _, cyc in stream}
+            current_cycle = self._get_current_cycle()
             ngrams = [(single_ngram, 9001)]  # Use a fake count
             max_words = 999
-            if self._is_root_processed(single_ngram):
+            if self._is_root_processed(single_ngram, current_cycle=current_cycle):
                 stream_text(
-                    f"[Warning] The ngram {GOLD}{single_ngram.upper()}{RESET} has already been processed, so our work is already done.\n"
+                    f"[Warning] The ngram {GOLD}{single_ngram.upper()}{RESET} has already been processed in cycle #{current_cycle + 1}.\n"
                 )
                 time.sleep(0.25)
         else:
             self._refresh_ngram_inventory()
             stream = self._load_queue_order()
-            pending = [item for item in stream if not self._is_root_processed(item[0])]
+            self._cycle_map = {ng: cyc for ng, _, cyc in stream}
+            current_cycle = self._get_current_cycle()
+            pending = [
+                (ngram, df)
+                for ngram, df, cycles in stream
+                if cycles <= current_cycle
+                and not self._is_root_processed(ngram, current_cycle=current_cycle)
+            ]
             incomplete_roots = {item[0] for item in pending if self._is_root_incomplete(item[0])}
             ngrams = [item for item in pending if item[0] in incomplete_roots] + [
                 item for item in pending if item[0] not in incomplete_roots
             ]
-            current_cycle = self._get_current_cycle()
             cycle_msg = (
                 f"♻️ Continuing queue cycle #{current_cycle + 1}; prior passes remain archived and new analyses append to them.\n\n"
                 if current_cycle > 0
@@ -1051,7 +1116,7 @@ class RootExtractionCrew:
 
         for count, ngram in enumerate(ngrams):
             root_token, df_count = ngram
-            if self._is_root_processed(root_token):
+            if self._is_root_processed(root_token, current_cycle=current_cycle if 'current_cycle' in locals() else None):
                 continue
 
             if self._should_skip_single_occurrence(root_token, df_count):
