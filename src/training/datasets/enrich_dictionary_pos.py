@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
@@ -242,6 +244,150 @@ def singularize(token: str) -> str:
     return token
 
 
+def _normalize_vector(vector: List[float]) -> List[float]:
+    norm = math.sqrt(sum(value * value for value in vector))
+    if not norm:
+        return vector
+    return [value / norm for value in vector]
+
+
+def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    if not vec_a or not vec_b:
+        return 0.0
+    return sum(a * b for a, b in zip(vec_a, vec_b))
+
+
+class TextEmbedder:
+    """Abstract text embedder interface."""
+
+    def embed(self, texts: Sequence[str]) -> List[List[float]]:
+        raise NotImplementedError
+
+    def embed_one(self, text: str) -> List[float]:
+        return self.embed([text])[0]
+
+
+class SentenceTransformerEmbedder(TextEmbedder):
+    """Encode text using a sentence-transformers model if available."""
+
+    def __init__(self, model_name: str) -> None:
+        if importlib.util.find_spec("sentence_transformers") is None:
+            raise RuntimeError(
+                "sentence-transformers is required for --embedding-fallback when "
+                "using the sentence-transformers backend. Install it or choose --embedding-backend glove."
+            )
+        from sentence_transformers import SentenceTransformer
+
+        self._model = SentenceTransformer(model_name)
+
+    def embed(self, texts: Sequence[str]) -> List[List[float]]:
+        embeddings = self._model.encode(
+            list(texts), show_progress_bar=False, normalize_embeddings=True
+        )
+        return [list(vector) for vector in embeddings]
+
+
+class GloveAveragingEmbedder(TextEmbedder):
+    """Average GloVe token vectors to represent short glosses."""
+
+    def __init__(self, model_name: str = "glove-wiki-gigaword-50") -> None:
+        if importlib.util.find_spec("gensim") is None:
+            raise RuntimeError(
+                "gensim is required for --embedding-backend glove. Install it or choose "
+                "--embedding-backend sentence-transformers."
+            )
+        import gensim.downloader as api
+
+        self._model = api.load(model_name)
+        self._dimension = int(self._model.vector_size)
+
+    def embed(self, texts: Sequence[str]) -> List[List[float]]:
+        vectors: List[List[float]] = []
+        for text in texts:
+            tokens = [token.lower() for token in extract_tokens(text)]
+            if not tokens:
+                vectors.append([0.0 for _ in range(self._dimension)])
+                continue
+            summed: List[float] = [0.0 for _ in range(self._dimension)]
+            count = 0
+            for token in tokens:
+                if token not in self._model:
+                    continue
+                count += 1
+                word_vector = self._model[token]
+                for idx in range(self._dimension):
+                    summed[idx] += float(word_vector[idx])
+            if not count:
+                vectors.append([0.0 for _ in range(self._dimension)])
+                continue
+            averaged = [value / count for value in summed]
+            vectors.append(_normalize_vector(averaged))
+        return vectors
+
+
+def build_embedder(backend: str, model_name: str) -> TextEmbedder:
+    if backend == "sentence-transformers":
+        return SentenceTransformerEmbedder(model_name)
+    if backend == "glove":
+        return GloveAveragingEmbedder(model_name=model_name)
+    raise RuntimeError(f"Unknown embedding backend '{backend}'")
+
+
+def build_domain_embeddings(domain_config: DomainConfig, embedder: TextEmbedder) -> Dict[str, List[float]]:
+    seeds: Dict[str, List[str]] = {label.upper(): [] for label in domain_config.domains}
+    for headword, labels in domain_config.headword_to_domains.items():
+        for label in labels:
+            seeds.setdefault(label.upper(), []).append(headword)
+    domain_texts: List[str] = []
+    ordered_labels: List[str] = []
+    for label, description in domain_config.domains.items():
+        label_upper = label.upper()
+        domain_texts.append(f"{label_upper}: {description} {' '.join(seeds.get(label_upper, []))}")
+        ordered_labels.append(label_upper)
+    vectors = embedder.embed(domain_texts)
+    return {label: vector for label, vector in zip(ordered_labels, vectors)}
+
+
+def gather_sense_text(sense: Dict) -> str:
+    parts: List[str] = []
+    definition = sense.get("definition")
+    if isinstance(definition, str):
+        parts.append(definition)
+    examples: Iterable[str] = []
+    raw_examples = sense.get("example_sentences") or sense.get("examples")
+    if isinstance(raw_examples, str):
+        examples = [raw_examples]
+    elif isinstance(raw_examples, (list, tuple)):
+        examples = [text for text in raw_examples if isinstance(text, str)]
+    parts.extend(examples)
+    return " ".join(part for part in parts if part).strip()
+
+
+def select_embedding_domains(
+    sense_text: str,
+    *,
+    embedder: TextEmbedder,
+    domain_embeddings: Dict[str, List[float]],
+    min_similarity: float,
+    similarity_band: float,
+) -> List[str]:
+    if not sense_text:
+        return []
+    sense_vector = embedder.embed_one(sense_text)
+    scored: List[Tuple[str, float]] = []
+    for label, vector in domain_embeddings.items():
+        similarity = _cosine_similarity(sense_vector, vector)
+        scored.append((label, similarity))
+    scored.sort(key=lambda item: item[1], reverse=True)
+    if not scored:
+        return []
+    _, top_score = scored[0]
+    if top_score < min_similarity:
+        return []
+    threshold = max(min_similarity, top_score - similarity_band)
+    return [label for label, score in scored if score >= threshold]
+
+
 def extract_tokens(gloss: str) -> List[str]:
     return [match.group(0).lower() for match in RE_TOKENS.finditer(gloss or "")]
 
@@ -416,6 +562,8 @@ def enrich_senses(
     entry: Dict,
     domain_config: DomainConfig,
     citation_tagger: Optional[CitationTagger] = None,
+    *,
+    embedding_fallback: Optional[Dict] = None,
 ) -> None:
     for sense in entry.get("senses", []):
         gloss = sense.get("definition", "")
@@ -442,6 +590,18 @@ def enrich_senses(
         if citation_note:
             notes_components.append(citation_note)
         notes_pos = ";".join(notes_components) if notes_components else None
+
+        if not domains and embedding_fallback:
+            sense_text = gather_sense_text(sense)
+            fallback_domains = select_embedding_domains(
+                sense_text,
+                embedder=embedding_fallback["embedder"],
+                domain_embeddings=embedding_fallback["domain_embeddings"],
+                min_similarity=embedding_fallback["min_similarity"],
+                similarity_band=embedding_fallback["similarity_band"],
+            )
+            if fallback_domains:
+                domains = fallback_domains
 
         sense["parts_of_speech"] = combined_pos or pos
         sense["semantic_domains"] = domains
@@ -542,6 +702,34 @@ def parse_args() -> argparse.Namespace:
         default="en_core_web_sm",
         help="spaCy model used when --citation-tagger=spacy",
     )
+    parser.add_argument(
+        "--embedding-fallback",
+        action="store_true",
+        help="Enable embedding-based semantic domain suggestions for senses that lack domains",
+    )
+    parser.add_argument(
+        "--embedding-backend",
+        choices=["sentence-transformers", "glove"],
+        default="sentence-transformers",
+        help="Embedding backend used when --embedding-fallback is enabled",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        help="Model name used by the embedding backend",
+    )
+    parser.add_argument(
+        "--embedding-min-similarity",
+        type=float,
+        default=0.35,
+        help="Minimum cosine similarity required before adding a semantic domain via the embedding fallback",
+    )
+    parser.add_argument(
+        "--embedding-similarity-band",
+        type=float,
+        default=0.05,
+        help="Similarity band beneath the top score to include additional domains",
+    )
     return parser.parse_args()
 
 
@@ -569,8 +757,22 @@ def main() -> None:
         args.domains, dictionary_tokens=vocab
     )
     citation_tagger = build_citation_tagger(args.citation_tagger, args.spacy_model)
+    embedding_fallback: Optional[Dict] = None
+    if args.embedding_fallback:
+        embedder = build_embedder(args.embedding_backend, args.embedding_model)
+        embedding_fallback = {
+            "embedder": embedder,
+            "domain_embeddings": build_domain_embeddings(domain_config, embedder),
+            "min_similarity": args.embedding_min_similarity,
+            "similarity_band": args.embedding_similarity_band,
+        }
     for entry in entries:
-        enrich_senses(entry, domain_config, citation_tagger=citation_tagger)
+        enrich_senses(
+            entry,
+            domain_config,
+            citation_tagger=citation_tagger,
+            embedding_fallback=embedding_fallback,
+        )
 
     args.output.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n")
     report_text = review(entries)
