@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
@@ -14,6 +15,7 @@ import yaml
 
 RE_VERB = re.compile(r"^to\s+(?P<lemma>[a-z][a-z\-']*)", re.IGNORECASE)
 RE_TOKENS = re.compile(r"[a-zA-Z]+")
+RE_EMPHASIS = re.compile(r"\*([^*]+)\*")
 COPULA_FORMS = {"am", "art", "are", "be", "being", "been", "is", "was", "were"}
 PREPOSITIONS = {
     "of",
@@ -199,7 +201,99 @@ def infer_pos(gloss: str, tokens: Sequence[str]) -> Tuple[List[str], bool, bool,
     return pos, is_copula, detect_compound(gloss, tokens), notes
 
 
-def enrich_senses(entry: Dict, domain_config: DomainConfig) -> None:
+class CitationTagger:
+    """Abstract base class for POS taggers operating on citation snippets."""
+
+    def tag_phrase(self, phrase: str) -> List[str]:
+        raise NotImplementedError
+
+    def tag_phrases(self, phrases: Sequence[str]) -> List[str]:
+        tags: List[str] = []
+        for phrase in phrases:
+            if not phrase:
+                continue
+            tags.extend(self.tag_phrase(phrase))
+        return tags
+
+
+class SpacyCitationTagger(CitationTagger):
+    """spaCy-backed citation tagger that emits coarse POS labels."""
+
+    def __init__(self, model: str = "en_core_web_sm") -> None:
+        try:
+            import spacy
+        except ImportError as exc:  # pragma: no cover - import guard
+            raise RuntimeError(
+                "spaCy is required for citation tagging. Install it in your environment "
+                "(e.g., `pip install spacy`) or set --citation-tagger none to skip citation POS enrichment."
+            ) from exc
+
+        try:
+            self._nlp = spacy.load(model, disable=["ner", "parser"])
+        except OSError as exc:  # pragma: no cover - model lookup
+            raise RuntimeError(
+                f"Unable to load spaCy model '{model}'. Install it with `python -m spacy download {model}` "
+                "or choose a different model via --spacy-model."
+            ) from exc
+
+    def tag_phrase(self, phrase: str) -> List[str]:
+        doc = self._nlp(phrase)
+        return [token.pos_.upper() for token in doc if token.is_alpha]
+
+
+def extract_emphasized_phrases(text: str) -> List[str]:
+    return [match.group(1).strip() for match in RE_EMPHASIS.finditer(text or "") if match.group(1)]
+
+
+def infer_citation_votes(sense: Dict, citation_tagger: Optional[CitationTagger]) -> Counter:
+    if not citation_tagger:
+        return Counter()
+    phrases: List[str] = []
+    for citation in sense.get("key_citations", []) or []:
+        if not isinstance(citation, dict):
+            continue
+        phrases.extend(extract_emphasized_phrases(str(citation.get("context", ""))))
+    if not phrases:
+        return Counter()
+    tags = citation_tagger.tag_phrases(phrases)
+    return Counter(tag for tag in tags if tag)
+
+
+def combine_pos_labels(heuristic_pos: Sequence[str], citation_votes: Counter) -> List[str]:
+    if not heuristic_pos and not citation_votes:
+        return []
+    order: Dict[str, int] = {}
+    votes: Counter = Counter()
+    citation_sources: Set[str] = set()
+
+    def register(label: str, weight: float = 1.0, *, source: Optional[str] = None) -> None:
+        if not label:
+            return
+        votes[label] += weight
+        if label not in order:
+            order[label] = len(order)
+        if source == "citation":
+            citation_sources.add(label)
+
+    for label in heuristic_pos:
+        register(label, 1.0, source="heuristic")
+    for label, count in citation_votes.items():
+        register(label, float(count), source="citation")
+
+    def sort_key(item: Tuple[str, float]) -> Tuple[float, int, int]:
+        label, vote = item
+        citation_rank = 0 if label in citation_sources else 1
+        return (-vote, citation_rank, order.get(label, len(order)))
+
+    sorted_labels = sorted(votes.items(), key=sort_key)
+    return [label for label, _ in sorted_labels]
+
+
+def enrich_senses(
+    entry: Dict,
+    domain_config: DomainConfig,
+    citation_tagger: Optional[CitationTagger] = None,
+) -> None:
     for sense in entry.get("senses", []):
         gloss = sense.get("definition", "")
         tokens = extract_tokens(gloss)
@@ -208,11 +302,29 @@ def enrich_senses(entry: Dict, domain_config: DomainConfig) -> None:
             gloss, ignore_tokens=domain_config.headword_stopwords
         )
         domains = domain_config.lookup(headword)
-        sense["parts_of_speech"] = pos
+        citation_votes = infer_citation_votes(sense, citation_tagger)
+        combined_pos = combine_pos_labels(pos, citation_votes)
+        citation_note = None
+        if citation_votes:
+            details = []
+            for label, count in citation_votes.most_common():
+                details.append(f"{label}({int(count)})" if count > 1 else label)
+            citation_note = "citation:" + ",".join(details)
+
+        notes_components: List[str] = []
+        if notes:
+            notes_components.append(notes)
+        if pos:
+            notes_components.append("heuristic:" + ",".join(pos))
+        if citation_note:
+            notes_components.append(citation_note)
+        notes_pos = ";".join(notes_components) if notes_components else None
+
+        sense["parts_of_speech"] = combined_pos or pos
         sense["semantic_domains"] = domains
         sense["is_copula"] = is_copula
         sense["is_compound_standing_for_phrase"] = is_compound
-        sense["notes_pos"] = notes
+        sense["notes_pos"] = notes_pos
 
 
 def review(enriched_entries: Sequence[Dict]) -> str:
@@ -296,7 +408,29 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to save the manual review report",
     )
+    parser.add_argument(
+        "--citation-tagger",
+        choices=["spacy", "none"],
+        default="spacy",
+        help="Backend used to POS-tag emphasized citation snippets",
+    )
+    parser.add_argument(
+        "--spacy-model",
+        default="en_core_web_sm",
+        help="spaCy model used when --citation-tagger=spacy",
+    )
     return parser.parse_args()
+
+
+def build_citation_tagger(name: str, spacy_model: str) -> Optional[CitationTagger]:
+    if name == "none":
+        return None
+    if name == "spacy":
+        try:
+            return SpacyCitationTagger(model=spacy_model)
+        except RuntimeError as exc:
+            raise SystemExit(str(exc))
+    raise SystemExit(f"Unknown citation tagger '{name}'")
 
 
 def main() -> None:
@@ -311,8 +445,9 @@ def main() -> None:
     domain_config = DomainConfig.load(
         args.domains, dictionary_tokens=vocab
     )
+    citation_tagger = build_citation_tagger(args.citation_tagger, args.spacy_model)
     for entry in entries:
-        enrich_senses(entry, domain_config)
+        enrich_senses(entry, domain_config, citation_tagger=citation_tagger)
 
     args.output.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n")
     report_text = review(entries)
