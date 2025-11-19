@@ -104,6 +104,7 @@ class DomainConfig:
     _domain_norms: Dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _domain_idf: Dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _default_idf: float = field(default=1.0, init=False, repr=False)
+    _wordnet_download_attempted: bool = field(default=False, init=False, repr=False)
 
     @classmethod
     def load(
@@ -196,9 +197,16 @@ class DomainConfig:
         try:
             synsets = self._lookup_wordnet_synsets(wn, normalized, pos_filters)
         except LookupError:
-            self._wordnet_missing_corpus = True
-            self._wordnet_cache[key] = ([], None)
-            return [], None
+            if not self._ensure_wordnet_corpus():
+                self._wordnet_missing_corpus = True
+                self._wordnet_cache[key] = ([], None)
+                return [], None
+            try:
+                synsets = self._lookup_wordnet_synsets(wn, normalized, pos_filters)
+            except LookupError:
+                self._wordnet_missing_corpus = True
+                self._wordnet_cache[key] = ([], None)
+                return [], None
 
         inferred: List[str] = []
         notes: Optional[str] = None
@@ -242,6 +250,22 @@ class DomainConfig:
 
         self._wordnet_cache[key] = (inferred, notes)
         return inferred, notes
+
+    def _ensure_wordnet_corpus(self) -> bool:
+        if self._wordnet_download_attempted:
+            return not self._wordnet_missing_corpus
+        self._wordnet_download_attempted = True
+        try:
+            import nltk
+        except ImportError:
+            return False
+
+        try:
+            nltk.download("wordnet", quiet=True, raise_on_error=True)
+            nltk.download("omw-1.4", quiet=True, raise_on_error=True)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _lookup_wordnet_synsets(wn, headword: str, pos_filters: Set[str]):
