@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
@@ -41,6 +41,24 @@ PREPOSITIONS = {
 }
 COORDINATORS = {"and", "or", "but", "nor"}
 STOPWORDS = {"the", "a", "an"}
+POSSESSIVE_PRONOUNS = {
+    "my",
+    "mine",
+    "thy",
+    "thine",
+    "his",
+    "her",
+    "hers",
+    "its",
+    "our",
+    "ours",
+    "your",
+    "yours",
+    "their",
+    "theirs",
+    "whose",
+}
+ADDITIONAL_IGNORE_TOKENS = {"ye", "o"}
 
 
 @dataclass
@@ -49,15 +67,35 @@ class DomainConfig:
 
     domains: Dict[str, str]
     headword_to_domains: Dict[str, List[str]]
+    headword_stopwords: Set[str]
 
     @classmethod
-    def load(cls, path: Path) -> "DomainConfig":
+    def load(
+        cls,
+        path: Path,
+        *,
+        dictionary_tokens: Optional[Set[str]] = None,
+    ) -> "DomainConfig":
         data = yaml.safe_load(path.read_text())
-        headword_map = {
-            key.lower(): [label.upper() for label in value]
-            for key, value in data.get("headword_to_domains", {}).items()
+        configured_stopwords = {
+            str(token).lower()
+            for token in data.get("headword_stopwords", [])
+            if token
         }
-        return cls(domains=data.get("domains", {}), headword_to_domains=headword_map)
+        vocab = {token.lower() for token in dictionary_tokens or set()}
+        headword_map: Dict[str, List[str]] = {}
+        for key, value in data.get("headword_to_domains", {}).items():
+            hw = str(key or "").lower()
+            if not hw or hw in configured_stopwords:
+                continue
+            if vocab and hw not in vocab:
+                continue
+            headword_map[hw] = [label.upper() for label in value]
+        return cls(
+            domains=data.get("domains", {}),
+            headword_to_domains=headword_map,
+            headword_stopwords=configured_stopwords,
+        )
 
     def lookup(self, headword: Optional[str]) -> List[str]:
         if not headword:
@@ -83,7 +121,11 @@ def extract_tokens(gloss: str) -> List[str]:
     return [match.group(0).lower() for match in RE_TOKENS.finditer(gloss or "")]
 
 
-def extract_headword(gloss: str) -> Optional[str]:
+def extract_headword(
+    gloss: str,
+    *,
+    ignore_tokens: Optional[Sequence[str]] = None,
+) -> Optional[str]:
     tokens = extract_tokens(gloss)
     if not tokens:
         return None
@@ -91,7 +133,12 @@ def extract_headword(gloss: str) -> Optional[str]:
     idx = 0
     if tokens[0] == "to" and len(tokens) > 1:
         idx = 1
-    while idx < len(tokens) and tokens[idx] in STOPWORDS:
+    ignore = set(STOPWORDS)
+    ignore |= POSSESSIVE_PRONOUNS
+    ignore |= ADDITIONAL_IGNORE_TOKENS
+    if ignore_tokens:
+        ignore |= {tok.lower() for tok in ignore_tokens}
+    while idx < len(tokens) and tokens[idx] in ignore:
         idx += 1
     return tokens[idx] if idx < len(tokens) else None
 
@@ -157,7 +204,9 @@ def enrich_senses(entry: Dict, domain_config: DomainConfig) -> None:
         gloss = sense.get("definition", "")
         tokens = extract_tokens(gloss)
         pos, is_copula, is_compound, notes = infer_pos(gloss, tokens)
-        headword = extract_headword(gloss)
+        headword = extract_headword(
+            gloss, ignore_tokens=domain_config.headword_stopwords
+        )
         domains = domain_config.lookup(headword)
         sense["parts_of_speech"] = pos
         sense["semantic_domains"] = domains
@@ -193,6 +242,24 @@ def review(enriched_entries: Sequence[Dict]) -> str:
     lines.append(f"Senses without semantic domains: {len(missing_domains)}")
     lines.extend(missing_domains)
     return "\n".join(lines)
+
+
+def collect_gloss_vocabulary(entries: Sequence[Dict]) -> Set[str]:
+    vocab: Set[str] = set()
+    for entry in entries:
+        top_gloss = entry.get("definition")
+        if isinstance(top_gloss, str):
+            for token in extract_tokens(top_gloss):
+                vocab.add(token)
+                vocab.add(singularize(token))
+        for sense in entry.get("senses", []):
+            definition = sense.get("definition")
+            if not isinstance(definition, str):
+                continue
+            for token in extract_tokens(definition):
+                vocab.add(token)
+                vocab.add(singularize(token))
+    return {tok for tok in vocab if tok}
 
 
 def parse_args() -> argparse.Namespace:
@@ -240,7 +307,10 @@ def main() -> None:
         )
 
     entries = json.loads(args.input.read_text())
-    domain_config = DomainConfig.load(args.domains)
+    vocab = collect_gloss_vocabulary(entries)
+    domain_config = DomainConfig.load(
+        args.domains, dictionary_tokens=vocab
+    )
     for entry in entries:
         enrich_senses(entry, domain_config)
 
