@@ -35,6 +35,7 @@ def solo_agent_ngram_analysis(
     root_entry: Optional[EntryRecord] = None,
     use_remote: bool = True,
     residual_prompt: str | None = None,
+    residual_guidance: dict | None = None,
     query_db: Any | None = None,
     query_run_id: Any | None = None
 ):
@@ -108,6 +109,14 @@ def solo_agent_ngram_analysis(
         if residual_prompt
         else ""
     )
+    residual_guidance_section = ""
+    if residual_guidance:
+        residual_guidance_section = (
+            "Residual fragment dataset (treat as a second micro-prompt to decode leftover pieces):\n"
+            + json.dumps(residual_guidance, ensure_ascii=False, indent=2)
+            + "\n"
+        )
+    combined_residual_section = residual_section + residual_guidance_section
 
     # === AGENT ===
     lexicographer = QueryModelTool(
@@ -210,7 +219,7 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
 
         Stats summary: {stats_summary}
 
-        {residual_section}
+        {combined_residual_section}
 
         Metrics: {about_metrics}
 
