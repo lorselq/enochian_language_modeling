@@ -17,7 +17,8 @@ domains:
   PHYSICAL: "Natural substances and tangible matter"
   BODY_PARTS: "Body parts, literal or metaphorical"
   PLANT: "Plants, crops, and botanical imagery"
-  LIFEFORM: "Form of life that is not a plant, including humans"
+  CREATURE: "Form of life that is neither plant nor human"
+  PERSON: "Persons, titles of persons, kinds of persons"
 
 wordnet_lexname_to_domains:
   noun.person: [SOCIAL]
@@ -233,6 +234,9 @@ headword_to_domains:
   storm: [CELESTIAL, PHYSICAL]
   cloud: [CELESTIAL, PHYSICAL]
   wind: [CELESTIAL, PHYSICAL]
+  fire: [FIRE]
+  flame: [FIRE]
+  fiery: [FIRE]
   seasoner: [ACTION, PHYSICAL]
   watcher: [SOCIAL, CELESTIAL]
   harlot: [MORAL, SOCIAL]
@@ -241,4 +245,23 @@ headword_to_domains:
   provide: [ACTION, SOCIAL, RELATION]
   diamond: [PHYSICAL]
   augoeides: [CELESTIAL, DIVINE]
-
+  dragon: [CREATURE]
+  stoop: [ACTION]
+  moss: [PLANT]
+  crown: [SOCIAL, DIVINE]
+  horn: [PHYSICAL]
+  sword: [PHYSICAL, HARMFUL]
+  aethyr: [DIVINE, SPACE]
+  pentagram: [SHAPE]
+  hexagram: [SHAPE]
+  worshiper: [SOCIAL, RELATION]
+  deliverer: [SOCIAL, RELATION]
+  sing: [ACTION]
+  beast: [CREATURE]
+  twice: [QUANTITY]
+  twin: [RELATION]
+  completion: [TIME]
+  coitus: [SOCIAL, RELATION]
+  visitation: [SOCIAL, RELATION]
+  confound: [ACTION, MENTAL]
+  trinity: [DIVINE]

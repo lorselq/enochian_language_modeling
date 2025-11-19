@@ -66,7 +66,9 @@
         "parts_of_speech": [
           "ADP"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -105,7 +107,9 @@
         "parts_of_speech": [
           "ADP"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -136,7 +140,9 @@
         "parts_of_speech": [
           "ADP"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -200,7 +206,9 @@
         "parts_of_speech": [
           "ADP"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -252,7 +260,10 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "MORAL",
+          "SOCIAL"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -273,7 +284,9 @@
         "parts_of_speech": [
           "VERB"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "ACTION"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -375,7 +388,11 @@
         "parts_of_speech": [
           "VERB"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "ACTION",
+          "SOCIAL",
+          "RELATION"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": null
@@ -513,7 +530,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "PHYSICAL"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -534,7 +553,10 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "CELESTIAL",
+          "DIVINE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -1028,7 +1050,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -1385,7 +1409,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "DIVINE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -1406,7 +1432,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "DIVINE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -1960,7 +1988,9 @@
         "parts_of_speech": [
           "ADP"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -2706,7 +2736,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "FIRE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
@@ -2813,7 +2843,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "CREATURE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -4762,7 +4792,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPEECH"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -5463,7 +5495,10 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "QUALITY",
+          "DIVINE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -5996,7 +6031,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "SPACE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -6029,7 +6064,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "SPACE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -6094,7 +6129,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "SPACE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -6127,7 +6162,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "SPACE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -7553,7 +7588,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "BODY_PARTS"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -8639,7 +8674,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -9011,7 +9048,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "QUANTITY"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -9032,7 +9071,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "QUANTITY"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -11138,7 +11179,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "BODY_PARTS"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
@@ -11161,7 +11202,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "BODY_PARTS"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
@@ -11183,7 +11224,9 @@
         "parts_of_speech": [
           "ADP"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -11204,7 +11247,10 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "DIVINE",
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -11778,7 +11824,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "QUANTITY"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -12077,7 +12125,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "MENTAL"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -12955,10 +13005,7 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [
-          "DIVINE",
-          "CELESTIAL"
-        ],
+        "semantic_domains": [],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -15924,7 +15971,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "FIRE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -18152,7 +18201,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "CREATURE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
@@ -18727,7 +18776,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "QUALITY"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -19589,7 +19640,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "DIVINE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -19935,7 +19988,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "FIRE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -21112,7 +21167,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "PLANT"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -21144,7 +21201,8 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "SOCIAL"
+          "SOCIAL",
+          "DIVINE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -21167,7 +21225,8 @@
           "VERB"
         ],
         "semantic_domains": [
-          "SOCIAL"
+          "SOCIAL",
+          "DIVINE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -21327,7 +21386,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "PHYSICAL"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -21446,7 +21507,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "FIRE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -21620,7 +21683,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "SPACE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -21652,7 +21715,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "QUALITY"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -21705,8 +21770,8 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "ACTION",
-          "PHYSICAL"
+          "PHYSICAL",
+          "HARMFUL"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -21739,8 +21804,8 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "ACTION",
-          "PHYSICAL"
+          "PHYSICAL",
+          "HARMFUL"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -21956,8 +22021,8 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "ACTION",
-          "PHYSICAL"
+          "PHYSICAL",
+          "HARMFUL"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -22427,7 +22492,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SHAPE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -22683,7 +22750,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SHAPE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -23207,7 +23276,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SHAPE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -23294,7 +23365,9 @@
         "parts_of_speech": [
           "ADP"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SPACE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -24188,7 +24261,9 @@
         "parts_of_speech": [
           "VERB"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "ACTION"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": null
@@ -25135,7 +25210,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "MENTAL"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -25177,7 +25254,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "TIME"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -25429,7 +25508,10 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "SOCIAL",
+          "RELATION"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -26231,7 +26313,10 @@
         "parts_of_speech": [
           "VERB"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "ACTION",
+          "MENTAL"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": null
@@ -27222,7 +27307,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "FIRE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
@@ -27244,7 +27329,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "QUANTITY"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": true,
         "notes_pos": "fallback:noun_default"
@@ -28087,7 +28174,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "DIVINE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -28914,7 +29003,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "FIRE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -28946,7 +29037,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "FIRE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -28979,7 +29070,7 @@
           "NOUN"
         ],
         "semantic_domains": [
-          "PHYSICAL"
+          "FIRE"
         ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
@@ -31110,7 +31201,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "DIVINE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -34356,7 +34449,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "FIRE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -35082,7 +35177,10 @@
         "parts_of_speech": [
           "VERB"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "ACTION",
+          "MENTAL"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": null
@@ -35405,7 +35503,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "CREATURE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -35698,7 +35798,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "CREATURE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -35729,7 +35831,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "CREATURE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
@@ -36624,7 +36728,9 @@
         "parts_of_speech": [
           "NOUN"
         ],
-        "semantic_domains": [],
+        "semantic_domains": [
+          "FIRE"
+        ],
         "is_copula": false,
         "is_compound_standing_for_phrase": false,
         "notes_pos": "fallback:noun_default"
