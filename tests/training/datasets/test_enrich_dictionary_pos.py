@@ -29,7 +29,9 @@ def test_citation_pos_overrides_default_noun():
             }
         ],
     }
-    domain_config = module.DomainConfig(domains={}, headword_to_domains={}, headword_stopwords=set())
+    domain_config = module.DomainConfig(
+        domains={}, headword_to_domains={}, headword_stopwords=set()
+    )
 
     module.enrich_senses(entry, domain_config, citation_tagger=MockCitationTagger())
 
@@ -57,9 +59,10 @@ def test_wordnet_synonym_infers_domain():
         headword_stopwords=set(),
     )
 
-    result = domain_config.lookup("sovereigns", heuristic_pos=["NOUN"])
+    result, notes = domain_config.lookup("sovereigns", heuristic_pos=["NOUN"])
 
     assert result == ["SOCIAL"]
+    assert notes is None
 
 
 def test_wordnet_lexname_mapping_used_when_no_synonym_match():
@@ -71,6 +74,24 @@ def test_wordnet_lexname_mapping_used_when_no_synonym_match():
         wordnet_lexname_to_domains={"noun.person": ["SOCIAL"]},
     )
 
-    result = domain_config.lookup("astronaut", heuristic_pos=["NOUN"])
+    result, notes = domain_config.lookup("astronaut", heuristic_pos=["NOUN"])
 
     assert result == ["SOCIAL"]
+    assert notes == "wordnet_lexname"
+
+
+def test_wordnet_gloss_similarity_used_when_enabled():
+    _require_wordnet()
+    domain_config = module.DomainConfig(
+        domains={"SPACE": "space travel cosmos", "ACTION": "movement work"},
+        headword_to_domains={},
+        headword_stopwords=set(),
+        wordnet_lexname_to_domains={},
+        use_wordnet_gloss_similarity=True,
+        wordnet_gloss_similarity_threshold=0.05,
+    )
+
+    result, notes = domain_config.lookup("astronaut", heuristic_pos=["NOUN"])
+
+    assert result == ["SPACE"]
+    assert notes and notes.startswith("wordnet_gloss:")
