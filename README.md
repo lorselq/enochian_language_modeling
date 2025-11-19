@@ -81,6 +81,16 @@ two disagree. By default it expects [`spaCy`](https://spacy.io/) with the
 spacy download en_core_web_sm`). Pass `--spacy-model` to switch models or
 `--citation-tagger none` to bypass the dependency entirely.
 
+Semantic domain coverage now also benefits from an optional WordNet lookup.
+When a gloss headword is not explicitly listed inside
+`src/training/config/semantic_domains.yml`, the enrichment script can query
+WordNet for synonyms, lemma names, and nearby hypernyms, then reuse any of the
+project's curated headword mappings or fall back to a configurable
+`wordnet_lexname_to_domains` table. Install the extra dependency with `poetry
+install -E wordnet` (or add `wordnet` to `poetry install --with ...`) and make
+sure the corpus itself exists via `python -m nltk.downloader wordnet omw-1.4`.
+Results are cached in-memory per run so repeated lookups stay fast.
+
 ### Pre-analysis safeguards
 
 Run `poetry run enlm preanalyze --db <path>` before the

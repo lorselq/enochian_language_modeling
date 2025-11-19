@@ -19,6 +19,34 @@ domains:
   PLANT: "Plants, crops, and botanical imagery"
   LIFEFORM: "Form of life that is not a plant, including humans"
 
+wordnet_lexname_to_domains:
+  noun.person: [SOCIAL]
+  noun.group: [SOCIAL]
+  noun.body: [BODY_PARTS]
+  noun.animal: [LIFEFORM]
+  noun.plant: [PLANT]
+  noun.food: [PHYSICAL]
+  noun.substance: [PHYSICAL]
+  noun.object: [PHYSICAL]
+  noun.artifact: [PHYSICAL]
+  noun.attribute: [QUALITY]
+  noun.state: [QUALITY]
+  noun.feeling: [QUALITY]
+  noun.cognition: [MENTAL]
+  noun.communication: [SPEECH]
+  noun.relation: [RELATION]
+  noun.quantity: [QUANTITY]
+  noun.time: [TIME]
+  noun.location: [SPACE]
+  noun.shape: [SHAPE]
+  noun.process: [ACTION]
+  noun.act: [ACTION]
+  noun.event: [ACTION]
+  noun.motive: [ACTION]
+  noun.phenomenon: [CELESTIAL]
+  noun.possession: [RELATION]
+  noun.tops: [PHYSICAL]
+
 headword_stopwords:
   - a
   - an
