@@ -72,7 +72,14 @@ The authoritative dictionary source checked into this repo lives at
 `src/enochian_lm/root_extraction/data/dictionary.json`. Running the enrichment
 script (`python src/training/datasets/enrich_dictionary_pos.py`) produces
 `dictionary_enriched.json` in the same folder, adding POS tags, semantic
-domains, and guard-rail metadata that downstream datasets rely upon.
+domains, and guard-rail metadata that downstream datasets rely upon. The
+script also inspects any emphasized tokens inside each sense's citations
+(`*highlighted words*`) and funnels them through a lightweight English POS
+tagger so citation evidence can outweigh ambiguous gloss heuristics when the
+two disagree. By default it expects [`spaCy`](https://spacy.io/) with the
+`en_core_web_sm` model available (e.g., `pip install spacy` then `python -m
+spacy download en_core_web_sm`). Pass `--spacy-model` to switch models or
+`--citation-tagger none` to bypass the dependency entirely.
 
 ### Pre-analysis safeguards
 
