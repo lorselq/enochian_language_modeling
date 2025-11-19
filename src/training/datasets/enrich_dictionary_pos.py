@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -91,11 +92,17 @@ class DomainConfig:
     headword_to_domains: Dict[str, List[str]]
     headword_stopwords: Set[str]
     wordnet_lexname_to_domains: Dict[str, List[str]] = field(default_factory=dict)
-    _wordnet_cache: Dict[Tuple[str, Tuple[str, ...]], List[str]] = field(
+    use_wordnet_gloss_similarity: bool = False
+    wordnet_gloss_similarity_threshold: float = 0.0
+    _wordnet_cache: Dict[Tuple[str, Tuple[str, ...]], Tuple[List[str], Optional[str]]] = field(
         default_factory=dict, init=False, repr=False
     )
     _wordnet_import_failed: bool = field(default=False, init=False, repr=False)
     _wordnet_missing_corpus: bool = field(default=False, init=False, repr=False)
+    _domain_tfidf: Dict[str, Dict[str, float]] = field(default_factory=dict, init=False, repr=False)
+    _domain_norms: Dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _domain_idf: Dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _default_idf: float = field(default=1.0, init=False, repr=False)
 
     @classmethod
     def load(
@@ -125,18 +132,27 @@ class DomainConfig:
             if not lexname:
                 continue
             lexname_mapping[lexname] = [str(label).upper() for label in value or []]
+        gloss_similarity_cfg = data.get("wordnet_gloss_similarity", {}) or {}
+        use_wordnet_gloss_similarity = bool(gloss_similarity_cfg.get("enabled", False))
+        threshold = float(gloss_similarity_cfg.get("threshold", 0.0))
         return cls(
             domains=data.get("domains", {}),
             headword_to_domains=headword_map,
             headword_stopwords=configured_stopwords,
             wordnet_lexname_to_domains=lexname_mapping,
+            use_wordnet_gloss_similarity=use_wordnet_gloss_similarity,
+            wordnet_gloss_similarity_threshold=threshold,
         )
+
+    def __post_init__(self) -> None:
+        if self.use_wordnet_gloss_similarity:
+            self._initialize_domain_similarity()
 
     def lookup(
         self, headword: Optional[str], *, heuristic_pos: Optional[Sequence[str]] = None
-    ) -> List[str]:
+    ) -> Tuple[List[str], Optional[str]]:
         if not headword:
-            return []
+            return [], None
         hw = headword.lower()
         candidates = [hw]
         singular = singularize(hw)
@@ -144,33 +160,33 @@ class DomainConfig:
             candidates.append(singular)
         for candidate in candidates:
             if candidate in self.headword_to_domains:
-                return self.headword_to_domains[candidate]
+                return self.headword_to_domains[candidate], None
         for candidate in candidates:
-            inferred = self.infer_domains_via_wordnet(
+            inferred, notes = self.infer_domains_via_wordnet(
                 candidate, heuristic_pos=heuristic_pos
             )
             if inferred:
-                return inferred
-        return []
+                return inferred, notes
+        return [], None
 
     def infer_domains_via_wordnet(
         self, headword: Optional[str], *, heuristic_pos: Optional[Sequence[str]] = None
-    ) -> List[str]:
+    ) -> Tuple[List[str], Optional[str]]:
         if not headword:
-            return []
+            return [], None
         normalized = headword.lower()
         key = (normalized, tuple(heuristic_pos or []))
         if key in self._wordnet_cache:
             return self._wordnet_cache[key]
         if self._wordnet_import_failed or self._wordnet_missing_corpus:
-            self._wordnet_cache[key] = []
-            return []
+            self._wordnet_cache[key] = ([], None)
+            return [], None
         try:
             from nltk.corpus import wordnet as wn  # type: ignore
         except ImportError:
             self._wordnet_import_failed = True
-            self._wordnet_cache[key] = []
-            return []
+            self._wordnet_cache[key] = ([], None)
+            return [], None
 
         pos_filters: Set[str] = set()
         for label in heuristic_pos or []:
@@ -180,10 +196,11 @@ class DomainConfig:
             synsets = self._lookup_wordnet_synsets(wn, normalized, pos_filters)
         except LookupError:
             self._wordnet_missing_corpus = True
-            self._wordnet_cache[key] = []
-            return []
+            self._wordnet_cache[key] = ([], None)
+            return [], None
 
         inferred: List[str] = []
+        notes: Optional[str] = None
         candidate_tokens: Set[str] = set()
         lexname_domains: List[str] = []
         for synset in synsets:
@@ -208,11 +225,22 @@ class DomainConfig:
                     if label not in inferred:
                         inferred.append(label)
 
-        if not inferred:
-            inferred = lexname_domains
+        if not inferred and self.use_wordnet_gloss_similarity:
+            gloss_texts: List[str] = []
+            for synset in synsets:
+                gloss_texts.append(synset.definition())
+                gloss_texts.extend(synset.examples())
+            gloss_inferred, gloss_notes = self._infer_domains_from_glosses(gloss_texts)
+            if gloss_inferred:
+                inferred = gloss_inferred
+                notes = gloss_notes
 
-        self._wordnet_cache[key] = inferred
-        return inferred
+        if not inferred and lexname_domains:
+            inferred = lexname_domains
+            notes = "wordnet_lexname"
+
+        self._wordnet_cache[key] = (inferred, notes)
+        return inferred, notes
 
     @staticmethod
     def _lookup_wordnet_synsets(wn, headword: str, pos_filters: Set[str]):
@@ -230,6 +258,84 @@ class DomainConfig:
                     seen.add(synset.name())
                     synsets.append(synset)
         return synsets
+
+    def _initialize_domain_similarity(self) -> None:
+        documents: Dict[str, List[str]] = {}
+        for label, description in self.domains.items():
+            tokens = extract_tokens(description)
+            if tokens:
+                documents[label.upper()] = tokens
+        if not documents:
+            self.use_wordnet_gloss_similarity = False
+            return
+
+        doc_freq: Counter[str] = Counter()
+        for tokens in documents.values():
+            doc_freq.update(set(tokens))
+        num_docs = len(documents)
+        self._default_idf = math.log((1 + num_docs) / 1) + 1.0
+        for token, count in doc_freq.items():
+            self._domain_idf[token] = math.log((1 + num_docs) / (1 + count)) + 1.0
+
+        for label, tokens in documents.items():
+            vec = self._tfidf_vector(tokens)
+            norm = math.sqrt(sum(weight * weight for weight in vec.values()))
+            if norm:
+                self._domain_tfidf[label] = vec
+                self._domain_norms[label] = norm
+
+        if not self._domain_tfidf:
+            self.use_wordnet_gloss_similarity = False
+
+    def _tfidf_vector(self, tokens: Sequence[str]) -> Dict[str, float]:
+        vec: Dict[str, float] = {}
+        if not tokens:
+            return vec
+        token_counts = Counter(tokens)
+        total = sum(token_counts.values())
+        for token, count in token_counts.items():
+            idf = self._domain_idf.get(token, self._default_idf)
+            vec[token] = (count / total) * idf
+        return vec
+
+    def _infer_domains_from_glosses(self, gloss_texts: Sequence[str]) -> Tuple[List[str], Optional[str]]:
+        if not self.use_wordnet_gloss_similarity or not self._domain_tfidf:
+            return [], None
+        gloss_tokens: List[str] = []
+        for text in gloss_texts:
+            gloss_tokens.extend(extract_tokens(text))
+        if not gloss_tokens:
+            return [], None
+        gloss_vec = self._tfidf_vector(gloss_tokens)
+        gloss_norm = math.sqrt(sum(weight * weight for weight in gloss_vec.values()))
+        if not gloss_norm:
+            return [], None
+
+        scores: Dict[str, float] = {}
+        for label, domain_vec in self._domain_tfidf.items():
+            denom = gloss_norm * self._domain_norms.get(label, 0.0)
+            if not denom:
+                continue
+            score = 0.0
+            for token, weight in gloss_vec.items():
+                if token in domain_vec:
+                    score += weight * domain_vec[token]
+            if score:
+                scores[label] = score / denom
+
+        if not scores:
+            return [], None
+
+        max_score = max(scores.values())
+        if max_score < self.wordnet_gloss_similarity_threshold:
+            return [], None
+
+        best_domains = [label for label, score in scores.items() if score == max_score]
+        best_domains.sort()
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        top_notes = [f"{label}={score:.3f}" for label, score in ranked[:3]]
+        note = "wordnet_gloss:" + ",".join(top_notes)
+        return best_domains, note
 
 
 def singularize(token: str) -> str:
@@ -424,7 +530,7 @@ def enrich_senses(
         headword = extract_headword(
             gloss, ignore_tokens=domain_config.headword_stopwords
         )
-        domains = domain_config.lookup(headword, heuristic_pos=pos)
+        domains, notes_semantic = domain_config.lookup(headword, heuristic_pos=pos)
         citation_votes = infer_citation_votes(sense, citation_tagger)
         combined_pos = combine_pos_labels(pos, citation_votes)
         citation_note = None
@@ -448,6 +554,7 @@ def enrich_senses(
         sense["is_copula"] = is_copula
         sense["is_compound_standing_for_phrase"] = is_compound
         sense["notes_pos"] = notes_pos
+        sense["notes_semantic"] = notes_semantic
 
 
 def review(enriched_entries: Sequence[Dict]) -> str:
