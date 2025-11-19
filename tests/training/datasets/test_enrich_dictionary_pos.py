@@ -1,6 +1,8 @@
 import pathlib
 import sys
 
+import pytest
+
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -34,3 +36,41 @@ def test_citation_pos_overrides_default_noun():
     sense = entry["senses"][0]
     assert sense["parts_of_speech"][0] == "VERB"
     assert "citation:VERB" in (sense["notes_pos"] or "")
+
+
+def _require_wordnet():
+    nltk = pytest.importorskip("nltk")
+    from nltk.corpus import wordnet as wn
+
+    try:
+        wn.ensure_loaded()
+    except LookupError:
+        pytest.skip("WordNet corpus is not available. Run `python -m nltk.downloader wordnet`.")
+    return wn
+
+
+def test_wordnet_synonym_infers_domain():
+    _require_wordnet()
+    domain_config = module.DomainConfig(
+        domains={"SOCIAL": "people"},
+        headword_to_domains={"monarch": ["SOCIAL"]},
+        headword_stopwords=set(),
+    )
+
+    result = domain_config.lookup("sovereigns", heuristic_pos=["NOUN"])
+
+    assert result == ["SOCIAL"]
+
+
+def test_wordnet_lexname_mapping_used_when_no_synonym_match():
+    _require_wordnet()
+    domain_config = module.DomainConfig(
+        domains={"SOCIAL": "people"},
+        headword_to_domains={},
+        headword_stopwords=set(),
+        wordnet_lexname_to_domains={"noun.person": ["SOCIAL"]},
+    )
+
+    result = domain_config.lookup("astronaut", heuristic_pos=["NOUN"])
+
+    assert result == ["SOCIAL"]

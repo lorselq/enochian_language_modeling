@@ -6,7 +6,7 @@ import argparse
 import json
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -63,6 +63,26 @@ POSSESSIVE_PRONOUNS = {
 ADDITIONAL_IGNORE_TOKENS = {"ye", "o"}
 
 
+WORDNET_POS_BY_LABEL = {
+    "NOUN": ("n",),
+    "VERB": ("v",),
+    "AUX": ("v",),
+    "ADJ": ("a", "s"),
+    "ADVERB": ("r",),
+    "ADV": ("r",),
+}
+
+
+def _normalize_wordnet_candidate(token: Optional[str]) -> Optional[str]:
+    if not token:
+        return None
+    cleaned = token.replace("_", " ").replace("-", " ").strip().lower()
+    if not cleaned:
+        return None
+    primary = cleaned.split()[0]
+    return singularize(primary)
+
+
 @dataclass
 class DomainConfig:
     """Semantic domain configuration loaded from YAML."""
@@ -70,6 +90,12 @@ class DomainConfig:
     domains: Dict[str, str]
     headword_to_domains: Dict[str, List[str]]
     headword_stopwords: Set[str]
+    wordnet_lexname_to_domains: Dict[str, List[str]] = field(default_factory=dict)
+    _wordnet_cache: Dict[Tuple[str, Tuple[str, ...]], List[str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _wordnet_import_failed: bool = field(default=False, init=False, repr=False)
+    _wordnet_missing_corpus: bool = field(default=False, init=False, repr=False)
 
     @classmethod
     def load(
@@ -93,20 +119,117 @@ class DomainConfig:
             if vocab and hw not in vocab:
                 continue
             headword_map[hw] = [label.upper() for label in value]
+        lexname_mapping: Dict[str, List[str]] = {}
+        for key, value in data.get("wordnet_lexname_to_domains", {}).items():
+            lexname = str(key or "").strip()
+            if not lexname:
+                continue
+            lexname_mapping[lexname] = [str(label).upper() for label in value or []]
         return cls(
             domains=data.get("domains", {}),
             headword_to_domains=headword_map,
             headword_stopwords=configured_stopwords,
+            wordnet_lexname_to_domains=lexname_mapping,
         )
 
-    def lookup(self, headword: Optional[str]) -> List[str]:
+    def lookup(
+        self, headword: Optional[str], *, heuristic_pos: Optional[Sequence[str]] = None
+    ) -> List[str]:
         if not headword:
             return []
         hw = headword.lower()
-        if hw in self.headword_to_domains:
-            return self.headword_to_domains[hw]
+        candidates = [hw]
         singular = singularize(hw)
-        return self.headword_to_domains.get(singular, [])
+        if singular != hw:
+            candidates.append(singular)
+        for candidate in candidates:
+            if candidate in self.headword_to_domains:
+                return self.headword_to_domains[candidate]
+        for candidate in candidates:
+            inferred = self.infer_domains_via_wordnet(
+                candidate, heuristic_pos=heuristic_pos
+            )
+            if inferred:
+                return inferred
+        return []
+
+    def infer_domains_via_wordnet(
+        self, headword: Optional[str], *, heuristic_pos: Optional[Sequence[str]] = None
+    ) -> List[str]:
+        if not headword:
+            return []
+        normalized = headword.lower()
+        key = (normalized, tuple(heuristic_pos or []))
+        if key in self._wordnet_cache:
+            return self._wordnet_cache[key]
+        if self._wordnet_import_failed or self._wordnet_missing_corpus:
+            self._wordnet_cache[key] = []
+            return []
+        try:
+            from nltk.corpus import wordnet as wn  # type: ignore
+        except ImportError:
+            self._wordnet_import_failed = True
+            self._wordnet_cache[key] = []
+            return []
+
+        pos_filters: Set[str] = set()
+        for label in heuristic_pos or []:
+            pos_filters.update(WORDNET_POS_BY_LABEL.get(str(label).upper(), ()))
+
+        try:
+            synsets = self._lookup_wordnet_synsets(wn, normalized, pos_filters)
+        except LookupError:
+            self._wordnet_missing_corpus = True
+            self._wordnet_cache[key] = []
+            return []
+
+        inferred: List[str] = []
+        candidate_tokens: Set[str] = set()
+        lexname_domains: List[str] = []
+        for synset in synsets:
+            for lemma in synset.lemma_names():
+                normalized_lemma = _normalize_wordnet_candidate(lemma)
+                if normalized_lemma:
+                    candidate_tokens.add(normalized_lemma)
+            for hypernym in synset.hypernyms():
+                for lemma in hypernym.lemma_names():
+                    normalized_hypernym = _normalize_wordnet_candidate(lemma)
+                    if normalized_hypernym:
+                        candidate_tokens.add(normalized_hypernym)
+            lex_domains = self.wordnet_lexname_to_domains.get(synset.lexname(), [])
+            for label in lex_domains:
+                upper = label.upper()
+                if upper not in lexname_domains:
+                    lexname_domains.append(upper)
+
+        for token in candidate_tokens:
+            if token in self.headword_to_domains:
+                for label in self.headword_to_domains[token]:
+                    if label not in inferred:
+                        inferred.append(label)
+
+        if not inferred:
+            inferred = lexname_domains
+
+        self._wordnet_cache[key] = inferred
+        return inferred
+
+    @staticmethod
+    def _lookup_wordnet_synsets(wn, headword: str, pos_filters: Set[str]):
+        synsets = []
+        seen: Set[str] = set()
+        if pos_filters:
+            for pos in pos_filters:
+                for synset in wn.synsets(headword, pos=pos):
+                    if synset.name() not in seen:
+                        seen.add(synset.name())
+                        synsets.append(synset)
+        else:
+            for synset in wn.synsets(headword):
+                if synset.name() not in seen:
+                    seen.add(synset.name())
+                    synsets.append(synset)
+        return synsets
 
 
 def singularize(token: str) -> str:
@@ -301,7 +424,7 @@ def enrich_senses(
         headword = extract_headword(
             gloss, ignore_tokens=domain_config.headword_stopwords
         )
-        domains = domain_config.lookup(headword)
+        domains = domain_config.lookup(headword, heuristic_pos=pos)
         citation_votes = infer_citation_votes(sense, citation_tagger)
         combined_pos = combine_pos_labels(pos, citation_votes)
         citation_note = None
