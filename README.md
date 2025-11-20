@@ -213,16 +213,30 @@ src/enochian_lm/root_extraction/data/ngram_index.sqlite3 --keys
 src/enochian_lm/root_extraction/data/enochian_keys.txt`. The remaining
    arguments default to the dictionary, substitution, and compression JSON files
    that ship with the repo.【F:src/enochian_lm/root_extraction/utils/build_ngram_sidecar.py†L1-L120】【F:src/enochian_lm/root_extraction/utils/build_ngram_sidecar.py†L600-L620】
-4. **Initialize the insights databases.** Seed both the debate and solo SQLite
+4. **Export fine-tuning windows.** Produce sliding 5-gram slices of the Keys
+   paired with dictionary gloss tokens and citation contexts via
+
+   ```bash
+   poetry run python tools/generate_key_windows.py \
+     --keys src/enochian_lm/root_extraction/data/enochian_keys.txt \
+     --dictionary src/enochian_lm/root_extraction/data/dictionary_enriched.json \
+     --window-size 5 --stride 1 --format jsonl --output keys_windows.jsonl \
+     --max-windows 200
+   ```
+
+   Each record includes parallel Enochian, definition, and citation token
+    sequences. Use `--no-lowercase`, `--keep-punctuation`, `--max-windows`, or
+    `--format csv` to tweak the emitted examples.【F:tools/generate_key_windows.py†L1-L234】
+5. **Initialize the insights databases.** Seed both the debate and solo SQLite
    files by running `poetry run python
 src/enochian_lm/root_extraction/scripts/init_insights_db.py`. The script
    creates or migrates the shared schema (runs, clusters, definitions, residual
    tables, analytics scaffolding) and may be rerun at any time.【F:src/enochian_lm/root_extraction/scripts/init_insights_db.py†L1-L609】
-5. **Run a translation session.** Launch `poetry run enochian-analysis` and pick
+6. **Run a translation session.** Launch `poetry run enochian-analysis` and pick
    solo or debate mode. `RootExtractionCrew` orchestrates the agents, writes run
    metadata into the selected insights database, and streams progress to the
    console.【F:src/enochian_lm/root_extraction/main.py†L1-L86】【F:src/enochian_lm/root_extraction/pipeline/run_root_extraction.py†L34-L115】
-6. **Refresh analytics priors.** After each batch of accepted definitions,
+7. **Refresh analytics priors.** After each batch of accepted definitions,
    compute the supporting tables that the crew will read on the next pass:
 
    ```bash
