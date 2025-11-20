@@ -80,6 +80,27 @@ def test_wordnet_lexname_mapping_used_when_no_synonym_match():
     assert notes == "wordnet_lexname"
 
 
+def test_wordnet_angelic_indicators_promote_divine_domains():
+    _require_wordnet()
+    domain_config = module.DomainConfig(
+        domains={
+            "DIVINE": "sacred",
+            "CELESTIAL": "sky",
+            "SOCIAL": "people",
+        },
+        headword_to_domains={},
+        headword_stopwords=set(),
+        wordnet_lexname_to_domains={"noun.person": ["SOCIAL"]},
+        angelic_lexnames={"noun.person"},
+        sacred_indicators={"angel", "cherub"},
+    )
+
+    result, notes = domain_config.lookup("angel", heuristic_pos=["NOUN"])
+
+    assert result == ["DIVINE", "CELESTIAL", "SOCIAL"]
+    assert notes == "wordnet_lexname"
+
+
 def test_wordnet_gloss_similarity_used_when_enabled():
     _require_wordnet()
     domain_config = module.DomainConfig(
