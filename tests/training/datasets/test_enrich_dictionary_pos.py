@@ -40,6 +40,29 @@ def test_citation_pos_overrides_default_noun():
     assert "citation:VERB" in (sense["notes_pos"] or "")
 
 
+def test_compound_gloss_adds_phrase_label():
+    entry = {
+        "word": "AAI",
+        "senses": [
+            {
+                "sense_id": "1",
+                "definition": "amongst, amongst you",
+                "key_citations": [],
+            }
+        ],
+    }
+    domain_config = module.DomainConfig(
+        domains={}, headword_to_domains={}, headword_stopwords=set()
+    )
+
+    module.enrich_senses(entry, domain_config, citation_tagger=None)
+
+    sense = entry["senses"][0]
+    assert sense["is_compound_standing_for_phrase"] is True
+    assert sense["parts_of_speech"][0] == "PHRASE"
+    assert "ADP" in sense["parts_of_speech"]
+
+
 def _require_wordnet():
     nltk = pytest.importorskip("nltk")
     from nltk.corpus import wordnet as wn
