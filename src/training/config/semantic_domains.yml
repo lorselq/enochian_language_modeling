@@ -48,6 +48,22 @@ wordnet_lexname_to_domains:
   noun.possession: [RELATION]
   noun.tops: [PHYSICAL]
 
+wordnet_angelic_lexnames:
+  - noun.person
+  - noun.group
+
+wordnet_angelic_indicators:
+  - angel
+  - angels
+  - angelic
+  - archangel
+  - cherub
+  - cherubim
+  - seraph
+  - seraphim
+  - celestial
+  - heavenly
+
 headword_stopwords:
   - a
   - an

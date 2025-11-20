@@ -93,6 +93,8 @@ class DomainConfig:
     headword_to_domains: Dict[str, List[str]]
     headword_stopwords: Set[str]
     wordnet_lexname_to_domains: Dict[str, List[str]] = field(default_factory=dict)
+    angelic_lexnames: Set[str] = field(default_factory=set)
+    sacred_indicators: Set[str] = field(default_factory=set)
     use_wordnet_gloss_similarity: bool = False
     wordnet_gloss_similarity_threshold: float = 0.0
     _wordnet_cache: Dict[Tuple[str, Tuple[str, ...]], Tuple[List[str], Optional[str]]] = field(
@@ -105,6 +107,9 @@ class DomainConfig:
     _domain_idf: Dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _default_idf: float = field(default=1.0, init=False, repr=False)
     _wordnet_download_attempted: bool = field(default=False, init=False, repr=False)
+    _sacred_indicator_pattern: Optional[re.Pattern[str]] = field(
+        default=None, init=False, repr=False
+    )
 
     @classmethod
     def load(
@@ -137,16 +142,36 @@ class DomainConfig:
         gloss_similarity_cfg = data.get("wordnet_gloss_similarity", {}) or {}
         use_wordnet_gloss_similarity = bool(gloss_similarity_cfg.get("enabled", False))
         threshold = float(gloss_similarity_cfg.get("threshold", 0.0))
+        sacred_indicators = {
+            str(token).lower()
+            for token in data.get("wordnet_angelic_indicators", [])
+            if token
+        }
+        angelic_lexnames = {
+            str(name).lower()
+            for name in data.get("wordnet_angelic_lexnames", [])
+            if name
+        }
         return cls(
             domains=data.get("domains", {}),
             headword_to_domains=headword_map,
             headword_stopwords=configured_stopwords,
             wordnet_lexname_to_domains=lexname_mapping,
+            angelic_lexnames=angelic_lexnames,
+            sacred_indicators=sacred_indicators,
             use_wordnet_gloss_similarity=use_wordnet_gloss_similarity,
             wordnet_gloss_similarity_threshold=threshold,
         )
 
     def __post_init__(self) -> None:
+        if self.sacred_indicators:
+            self.sacred_indicators = {token.lower() for token in self.sacred_indicators}
+            escaped = [re.escape(token) for token in self.sacred_indicators]
+            self._sacred_indicator_pattern = re.compile(
+                rf"\\b({'|'.join(escaped)})\\b", re.IGNORECASE
+            )
+        if self.angelic_lexnames:
+            self.angelic_lexnames = {name.lower() for name in self.angelic_lexnames}
         if self.use_wordnet_gloss_similarity:
             self._initialize_domain_similarity()
 
@@ -222,11 +247,17 @@ class DomainConfig:
                     normalized_hypernym = _normalize_wordnet_candidate(lemma)
                     if normalized_hypernym:
                         candidate_tokens.add(normalized_hypernym)
-            lex_domains = self.wordnet_lexname_to_domains.get(synset.lexname(), [])
-            for label in lex_domains:
-                upper = label.upper()
-                if upper not in lexname_domains:
-                    lexname_domains.append(upper)
+            lex_domains = [
+                str(label).upper()
+                for label in self.wordnet_lexname_to_domains.get(synset.lexname(), [])
+            ]
+            sacred_domains: List[str] = []
+            if self._should_tag_as_sacred(synset):
+                sacred_domains = ["DIVINE", "CELESTIAL"]
+
+            for label in sacred_domains + lex_domains:
+                if label not in lexname_domains:
+                    lexname_domains.append(label)
 
         for token in candidate_tokens:
             if token in self.headword_to_domains:
@@ -250,6 +281,24 @@ class DomainConfig:
 
         self._wordnet_cache[key] = (inferred, notes)
         return inferred, notes
+
+    def _should_tag_as_sacred(self, synset: object) -> bool:
+        if not self._sacred_indicator_pattern:
+            return False
+        try:
+            lexname = synset.lexname().lower()
+            if lexname not in self.angelic_lexnames:
+                return False
+            candidate_texts = list(synset.lemma_names())
+            candidate_texts.append(synset.definition())
+            candidate_texts.extend(synset.examples())
+        except Exception:
+            return False
+        for text in candidate_texts:
+            normalized = str(text).replace("_", " ")
+            if self._sacred_indicator_pattern.search(normalized):
+                return True
+        return False
 
     def _ensure_wordnet_corpus(self) -> bool:
         if self._wordnet_download_attempted:
