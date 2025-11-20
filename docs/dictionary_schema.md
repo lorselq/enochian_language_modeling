@@ -23,7 +23,7 @@ Each item in `senses` is an object with at least the following keys:
 | ----- | ---- | ----------- |
 | `sense_id` | `int` | Local identifier scoped to the lemma. |
 | `definition` | `str` | English gloss text for the sense. |
-| `parts_of_speech` | `List[str]` | POS tags inferred by heuristics. Values follow the UD-style tags (`NOUN`, `VERB`, `ADJ`, `ADV`, `ADP`, `PRON`, `AUX`, `CCONJ`). A fallback `"NOUN"` is inserted if no other rule applies. |
+| `parts_of_speech` | `List[str]` | POS tags inferred by heuristics. Values follow the UD-style tags (`NOUN`, `VERB`, `ADJ`, `ADV`, `ADP`, `PRON`, `AUX`, `CCONJ`) with an additional `PHRASE` label applied when the gloss is a multi-word paraphrase. A fallback `"NOUN"` is inserted if no other rule applies. |
 | `semantic_domains` | `List[str]` | Conceptual domains tied to the gloss headword. Domains are defined in `src/training/config/semantic_domains.yml`. Multiple labels may be assigned when a gloss overlaps categories. |
 | `is_copula` | `bool` | True when the gloss indicates copular usage (`"to be"`, `"is"`, etc.). |
 | `is_compound_standing_for_phrase` | `bool` | True when the gloss clearly represents a multi-word English phrase (commas, slashes, long paraphrases). |
@@ -43,7 +43,7 @@ Future pipelines can add further annotations while keeping this baseline compati
     {
       "sense_id": 1,
       "definition": "amongst, amongst you",
-      "parts_of_speech": ["ADP"],
+      "parts_of_speech": ["PHRASE", "ADP"],
       "semantic_domains": ["SOCIAL"],
       "is_copula": false,
       "is_compound_standing_for_phrase": true,
