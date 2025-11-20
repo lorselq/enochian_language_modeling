@@ -559,6 +559,8 @@ def infer_pos(gloss: str, tokens: Sequence[str]) -> Tuple[List[str], bool, bool,
     notes: Optional[str] = None
     is_copula = False
 
+    is_compound = detect_compound(gloss, tokens)
+
     gloss_lower = (gloss or "").strip().lower()
     if not gloss_lower:
         pos.append("NOUN")
@@ -596,7 +598,10 @@ def infer_pos(gloss: str, tokens: Sequence[str]) -> Tuple[List[str], bool, bool,
         pos.append("NOUN")
         notes = "fallback:noun_default"
 
-    return pos, is_copula, detect_compound(gloss, tokens), notes
+    if is_compound and "PHRASE" not in pos:
+        pos.insert(0, "PHRASE")
+
+    return pos, is_copula, is_compound, notes
 
 
 class CitationTagger:
