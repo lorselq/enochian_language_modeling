@@ -729,13 +729,12 @@ def _run_preanalyze(args: argparse.Namespace) -> None:
 
 
 def _run_analyze_all(args: argparse.Namespace) -> None:
-    parses_path = Path(args.parses)
+    parses_path = Path(args.parses) if args.parses else None
     morphs_path = Path(args.morphs)
     attrib_out = Path(args.attrib_out)
     colloc_out = Path(args.colloc_out)
     residual_out = Path(args.residual_out)
 
-    _validate_input_file(parses_path, "Parses file")
     _validate_input_file(morphs_path, "Morph inventory")
 
     attrib_out.parent.mkdir(parents=True, exist_ok=True)
@@ -754,7 +753,23 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
             conn.execute(f"DELETE FROM {table}")
         conn.commit()
 
-        ingested_tokens = _ingest_composite_parses(conn, parses_path)
+        existing_composites = conn.execute(
+            "SELECT COUNT(*) FROM composite_reconstruction"
+        ).fetchone()[0]
+        reuse_parses = bool(args.reuse_db_parses) and existing_composites > 0
+        if reuse_parses:
+            logger.info(
+                "Reusing composite parses from database",
+                extra={"rows": existing_composites},
+            )
+            ingested_tokens = int(existing_composites)
+        else:
+            if parses_path is None:
+                raise ValueError(
+                    "--parses is required unless --reuse-db-parses is used with existing composite data"
+                )
+            _validate_input_file(parses_path, "Parses file")
+            ingested_tokens = _ingest_composite_parses(conn, parses_path)
         ingested_morphs = _ingest_morph_inventory(conn, morphs_path)
     finally:
         conn.close()
@@ -931,7 +946,12 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze = subparsers.add_parser("analyze", help="Run all placeholder analytics")
     analyze_subparsers = analyze.add_subparsers(dest="analyze_command", required=True)
     analyze_all = analyze_subparsers.add_parser("all", help="Run all placeholder tasks")
-    analyze_all.add_argument("--parses", default="src/enochian_lm/root_extraction/interpretation/", help="Path to parses JSONL")
+    
+    analyze_all.add_argument(
+        "--parses",
+        required=False,
+        help="Path to parses JSONL (required unless reusing existing composite parses)",
+    )
     analyze_all.add_argument("--attrib-out", default="src/enochian_lm/root_extraction/interpretation/", help="Attribution CSV output path")
     analyze_all.add_argument("--morphs", default="src/enochian_lm/root_extraction/interpretation/", help="Path to morph inventory")
     analyze_all.add_argument("--colloc-out", default="src/enochian_lm/root_extraction/interpretation/", help="Collocation CSV output path")
@@ -974,6 +994,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     analyze_all.add_argument(
         "--morph-out", default="src/enochian_lm/root_extraction/interpretation/", help="Morph factorization output directory"
+    )
+    analyze_all.add_argument(
+        "--reuse-db-parses",
+        action="store_true",
+        help=(
+            "Reuse existing composite_reconstruction rows instead of ingesting --parses"
+        ),
     )
     analyze_all.set_defaults(handler=_run_analyze_all)
 
