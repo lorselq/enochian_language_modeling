@@ -287,26 +287,34 @@ def _normalize_for_fasttext(token: str) -> str:
     return _FASTTEXT_TOKEN_RE.sub("", without_diacritics)
 
 
-def _parse_uncovered_fragments(payload: str | None) -> list[str]:
-    if not payload:
+def _parse_uncovered_fragments(payload: str | Sequence[object] | None) -> list[str]:
+    if payload is None:
         return []
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError:
-        logger.warning("Skipping invalid uncovered_json payload", extra={"payload": payload})
+
+    data: object = payload
+    if isinstance(payload, str):
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Skipping invalid uncovered_json payload", extra={"payload": payload}
+            )
+            return []
+
+    if not isinstance(data, list):
         return []
+
     fragments: list[str] = []
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                value = item.get("text") or item.get("residual") or item.get("fragment")
-                value = _normalize_for_fasttext(value)
-                if value:
-                    fragments.append(value)
-            elif isinstance(item, (str, int, float)):
-                text = _normalize_for_fasttext(item)
-                if text:
-                    fragments.append(text)
+    for item in data:
+        if isinstance(item, dict):
+            value = item.get("text") or item.get("residual") or item.get("fragment")
+            value = _normalize_for_fasttext(value)
+            if value:
+                fragments.append(value)
+        elif isinstance(item, (str, int, float)):
+            text = _normalize_for_fasttext(item)
+            if text:
+                fragments.append(text)
     return fragments
 
 
@@ -384,11 +392,28 @@ def _backfill_composite_reconstruction(
         recon_error = row["residual_ratio"]
         if recon_error is None:
             recon_error = row["cluster_residual"] if row["cluster_residual"] is not None else 0.0
-        morphs = _parse_uncovered_fragments(row["uncovered_json"])
-        if not morphs:
-            morphs = [_normalize_for_fasttext(token) or token]
+        morph_breakdown = _parse_uncovered_fragments(row["uncovered_json"])
+        for key in ("morph_breakdown_json", "morph_breakdown"):
+            if morph_breakdown:
+                break
+            if key in row.keys():
+                morph_breakdown = _parse_uncovered_fragments(row[key])
+
+        accepted_root: str | None = None
+        for key in ("accepted_root", "root"):
+            if key in row.keys():
+                candidate_root = str(row[key] or "").strip()
+                if candidate_root:
+                    accepted_root = candidate_root
+                    break
+
+        if morph_breakdown:
+            morphs = [m for m in (_normalize_for_fasttext(m) for m in morph_breakdown) if m]
+        elif accepted_root:
+            normalized_root = _normalize_for_fasttext(accepted_root) or accepted_root
+            morphs = [normalized_root]
         else:
-            morphs = [m for m in (_normalize_for_fasttext(m) for m in morphs) if m]
+            morphs = []
 
         token_vector = _fasttext_vector(token)
         vector_source = "fasttext"
@@ -452,6 +477,27 @@ def _backfill_composite_reconstruction(
             "vector_sources": dict(vector_source_counts),
         },
     )
+
+    try:
+        zero_morphs, single_morph, multi_morphs = conn.execute(
+            """
+            SELECT
+                SUM(json_array_length(used_morphs_json) = 0),
+                SUM(json_array_length(used_morphs_json) = 1),
+                SUM(json_array_length(used_morphs_json) > 1)
+            FROM composite_reconstruction
+            """
+        ).fetchone()
+        logger.info(
+            "Composite reconstruction morph counts",
+            extra={
+                "zero_morphs": zero_morphs,
+                "single_morph": single_morph,
+                "multi_morphs": multi_morphs,
+            },
+        )
+    except Exception:
+        logger.warning("Failed to summarize morph counts", exc_info=True)
     return len(composite_rows)
 
 
