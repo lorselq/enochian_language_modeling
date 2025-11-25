@@ -1082,8 +1082,8 @@ def _build_parser() -> argparse.ArgumentParser:
     morph_factorize.add_argument(
         "--min-token-morphs",
         type=int,
-        default=2,
-        help="Minimum morph count per token",
+        default=1,
+        help="Minimum morph count per token (single-morph backfills are always kept)",
     )
     morph_factorize.add_argument(
         "--row-norm",
@@ -1150,8 +1150,8 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze_all.add_argument(
         "--min-token-morphs",
         type=int,
-        default=2,
-        help="Minimum morph count per token",
+        default=1,
+        help="Minimum morph count per token (single-morph backfills are always kept)",
     )
     analyze_all.add_argument(
         "--row-norm",
