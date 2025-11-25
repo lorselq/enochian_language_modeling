@@ -301,6 +301,44 @@ class RootExtractionCrew:
             ordered.append((norm, self._ngram_df.get(norm, 0), int(row[2] or 0)))
         return ordered
 
+    def _load_skipped_queue(
+        self, *, reason_code: str | None = None
+    ) -> list[tuple[str, int, int]]:
+        """Return skipped roots aligned to queue order for reprocessing."""
+
+        cursor = self.new_definitions_db.cursor()
+        clauses = ["cluster_index IS NULL"]
+        params: list[str] = []
+        if reason_code:
+            clauses.append("reason_code = ?")
+            params.append(reason_code)
+
+        where_clause = " AND ".join(clauses)
+
+        rows = cursor.execute(
+            f"""
+            SELECT s.ngram,
+                   COALESCE(q.queue_index, 9223372036854775807) AS queue_index,
+                   COALESCE(q.cycles_completed, 0) AS cycles_completed
+            FROM skips s
+            LEFT JOIN ngram_queue q ON lower(q.ngram) = lower(s.ngram)
+            WHERE {where_clause}
+            GROUP BY s.ngram
+            ORDER BY queue_index ASC, s.ngram ASC
+            """,
+            params,
+        ).fetchall()
+
+        ordered: list[tuple[str, int, int]] = []
+        seen: set[str] = set()
+        for row in rows:
+            norm = self._normalize_root(row[0])
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            ordered.append((norm, self._ngram_df.get(norm, 0), int(row[2] or 0)))
+        return ordered
+
     def _get_current_cycle(self) -> int:
         cursor = self.new_definitions_db.cursor()
         row = cursor.execute(
@@ -1071,6 +1109,8 @@ class RootExtractionCrew:
         single_ngram=None,
         style="debate",
         min_semantic_similarity: float = 0.60,
+        process_only_skipped: bool = False,
+        skipped_reason_code: str | None = None,
     ):
         def _get_field(item, field, default=""):
             return self._get_field_value(item, field, default)
@@ -1092,21 +1132,39 @@ class RootExtractionCrew:
             stream = self._load_queue_order()
             self._cycle_map = {ng: cyc for ng, _, cyc in stream}
             current_cycle = self._get_current_cycle()
-            pending = [
-                (ngram, df)
-                for ngram, df, cycles in stream
-                if cycles <= current_cycle
-                and not self._is_root_processed(ngram, current_cycle=current_cycle)
-            ]
+            if process_only_skipped:
+                skipped_stream = self._load_skipped_queue(
+                    reason_code=skipped_reason_code
+                )
+                pending = [
+                    (ngram, df)
+                    for ngram, df, cycles in skipped_stream
+                    if cycles <= current_cycle
+                    and not self._is_root_processed(
+                        ngram, current_cycle=current_cycle
+                    )
+                ]
+                cycle_msg = (
+                    "🎯 Replaying previously skipped n-grams before resuming the main queue.\n\n"
+                )
+            else:
+                pending = [
+                    (ngram, df)
+                    for ngram, df, cycles in stream
+                    if cycles <= current_cycle
+                    and not self._is_root_processed(
+                        ngram, current_cycle=current_cycle
+                    )
+                ]
+                cycle_msg = (
+                    f"♻️ Continuing queue cycle #{current_cycle + 1}; prior passes remain archived and new analyses append to them.\n\n"
+                    if current_cycle > 0
+                    else "♻️ Beginning the first full queue cycle across all n-grams.\n\n"
+                )
             incomplete_roots = {item[0] for item in pending if self._is_root_incomplete(item[0])}
             ngrams = [item for item in pending if item[0] in incomplete_roots] + [
                 item for item in pending if item[0] not in incomplete_roots
             ]
-            cycle_msg = (
-                f"♻️ Continuing queue cycle #{current_cycle + 1}; prior passes remain archived and new analyses append to them.\n\n"
-                if current_cycle > 0
-                else "♻️ Beginning the first full queue cycle across all n-grams.\n\n"
-            )
             stream_text(cycle_msg)
 
         output = []
