@@ -13,6 +13,7 @@ from tempfile import NamedTemporaryFile
 from typing import Callable, Iterable, Iterator, Sequence
 
 from enochian_lm.root_extraction.scripts import init_insights_db
+from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
 from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
 
 from .analysis.attribution import run_leave_one_out
@@ -256,6 +257,154 @@ def _ingest_composite_parses(conn, path: Path) -> int:
     return len(rows)
 
 
+def _round_vector(values: Sequence[float], places: int = 6) -> list[float]:
+    factor = 10**places
+    return [math.floor(float(val) * factor + 0.5) / factor for val in values]
+
+
+def _vector_norm(values: Sequence[float]) -> float:
+    return math.sqrt(sum(float(v) * float(v) for v in values))
+
+
+def _parse_uncovered_fragments(payload: str | None) -> list[str]:
+    if not payload:
+        return []
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        logger.warning("Skipping invalid uncovered_json payload", extra={"payload": payload})
+        return []
+    fragments: list[str] = []
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                value = item.get("text") or item.get("residual") or item.get("fragment")
+                value = str(value or "").strip()
+                if value:
+                    fragments.append(value)
+            elif isinstance(item, (str, int, float)):
+                text = str(item).strip()
+                if text:
+                    fragments.append(text)
+    return fragments
+
+
+def _backfill_composite_reconstruction(
+    conn,
+    *,
+    run_id: str | None = None,
+) -> int:
+    ensure_analysis_tables(conn)
+
+    target_run_id: str | None = run_id
+    if target_run_id is None:
+        row = conn.execute("SELECT run_id FROM runs ORDER BY created_at DESC LIMIT 1").fetchone()
+        if row:
+            target_run_id = str(row[0])
+    if target_run_id is None:
+        raise ValueError("No runs found in database; cannot backfill composites")
+
+    query = """
+        SELECT
+            rd.normalized,
+            rd.definition,
+            rd.residual_ratio,
+            rd.uncovered_json,
+            c.residual_ratio AS cluster_residual,
+            c.glossator_def
+        FROM residual_details rd
+        JOIN clusters c ON c.cluster_id = rd.cluster_id
+        WHERE c.run_id = ?
+        ORDER BY rd.residual_id
+    """
+    rows = conn.execute(query, (target_run_id,)).fetchall()
+    if not rows:
+        logger.warning(
+            "No residual_details rows found for run; nothing to backfill",
+            extra={"run_id": target_run_id},
+        )
+        return 0
+
+    ft_model = get_fasttext_model()
+    timestamp = utcnow_iso()
+    composite_rows: list[tuple[str, str | None, str, float, str, str]] = []
+    morph_rows: dict[str, tuple[str, float, str]] = {}
+
+    def _fallback_vector(token: str) -> list[float]:
+        try:
+            return list(ft_model.wv[token])
+        except KeyError:
+            return [0.0] * ft_model.vector_size
+
+    for row in rows:
+        token = str(row["normalized"] or "").strip()
+        if not token:
+            continue
+        gloss = str(row["definition"] or row["glossator_def"] or "").strip()
+        recon_error = row["residual_ratio"]
+        if recon_error is None:
+            recon_error = row["cluster_residual"] if row["cluster_residual"] is not None else 0.0
+        morphs = _parse_uncovered_fragments(row["uncovered_json"])
+        if not morphs:
+            morphs = [token]
+
+        token_vector = _fallback_vector(token)
+        composite_rows.append(
+            (
+                token,
+                gloss if gloss else None,
+                json.dumps(_round_vector(token_vector)),
+                round(float(recon_error or 0.0), 4),
+                json.dumps(morphs),
+                timestamp,
+            )
+        )
+
+        for morph in morphs:
+            if morph in morph_rows:
+                continue
+            morph_vec = _fallback_vector(morph)
+            morph_rows[morph] = (
+                json.dumps(_round_vector(morph_vec)),
+                round(_vector_norm(morph_vec), 4),
+                timestamp,
+            )
+
+    tokens = [(row[0],) for row in composite_rows]
+    with conn:
+        conn.executemany("DELETE FROM composite_reconstruction WHERE token = ?", tokens)
+        conn.executemany(
+            """
+            INSERT INTO composite_reconstruction (
+              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            composite_rows,
+        )
+
+        if morph_rows:
+            conn.executemany(
+                """
+                INSERT INTO morph_semantic_vectors (morph, vector_json, l2_norm, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(morph) DO UPDATE SET
+                  vector_json=excluded.vector_json,
+                  l2_norm=excluded.l2_norm,
+                  updated_at=excluded.updated_at
+                """,
+                [
+                    (morph, vector_json, l2_norm, ts)
+                    for morph, (vector_json, l2_norm, ts) in morph_rows.items()
+                ],
+            )
+
+    logger.info(
+        "Backfilled composite_reconstruction from residual_details",
+        extra={"rows": len(composite_rows), "morphs": len(morph_rows), "run_id": target_run_id},
+    )
+    return len(composite_rows)
+
+
 def _ingest_morph_inventory(conn, path: Path) -> int:
     timestamp = utcnow_iso()
     rows: list[dict[str, object]] = []
@@ -370,6 +519,18 @@ def _export_collocation_csv(db_path: Path, out_path: Path) -> None:
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _write_csv(out_path, header, data)
+
+
+def _run_composite_backfill(args: argparse.Namespace) -> None:
+    conn = connect_sqlite(str(args.db_path))
+    try:
+        ensure_analysis_tables(conn)
+        rows = _backfill_composite_reconstruction(conn, run_id=args.run_id)
+    finally:
+        conn.close()
+
+    if rows == 0:
+        raise ValueError("No composite reconstructions were backfilled")
 
 
 def _run_attrib_loo(args: argparse.Namespace) -> None:
@@ -889,6 +1050,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="PMI threshold when computing fallback residuals",
     )
     residual_cluster.set_defaults(handler=_run_residual_cluster)
+
+    composite = subparsers.add_parser("composite", help="Composite reconstruction utilities")
+    composite_subparsers = composite.add_subparsers(dest="composite_command", required=True)
+    composite_backfill = composite_subparsers.add_parser(
+        "backfill", help="Backfill composite_reconstruction from cluster residuals"
+    )
+    composite_backfill.add_argument(
+        "--run-id",
+        help="Optional run id to backfill (defaults to latest run in the database)",
+    )
+    composite_backfill.set_defaults(handler=_run_composite_backfill)
 
     morph = subparsers.add_parser("morph", help="Morph semantic tooling")
     morph_subparsers = morph.add_subparsers(dest="morph_command", required=True)
