@@ -247,7 +247,7 @@ def _compute_error(actual: NDArray[np.float64], predicted: NDArray[np.float64], 
 
 
 def _round_vector(values: Sequence[float]) -> list[float]:
-    return [round(float(value), 4) for value in values]
+    return [round(float(value), 8) for value in values]
 
 
 def _maybe_align_to_clusters(

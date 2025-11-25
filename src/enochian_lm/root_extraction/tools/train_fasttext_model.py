@@ -24,14 +24,14 @@ logger = logging.getLogger(__name__)
 # --- Data classes ---
 @dataclass
 class FastTextParams:
-    vector_size: int = 100
-    window: int = 2
+    vector_size: int = 64
+    window: int = 4
     min_count: int = 1
     sg: int = 1
     min_n: int = 2
     max_n: int = 7
-    epochs: int = 50
-    alpha: float = 0.03
+    epochs: int = 80
+    alpha: float = 0.02
     seed: int = 93
 
 
