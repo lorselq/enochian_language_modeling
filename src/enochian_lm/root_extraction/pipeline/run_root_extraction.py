@@ -246,13 +246,17 @@ class RootExtractionCrew:
 
     def _upgrade_run_schema(self) -> None:
         """Add newer optional columns without dropping user data."""
-
         cursor = self.new_definitions_db.cursor()
-        try:
-            cursor.execute("ALTER TABLE runs ADD COLUMN queue_cycle INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            # Column already exists or table missing; ignore to stay backward compatible.
-            pass
+
+        # Inspect table schema
+        cursor.execute("PRAGMA table_info(runs)")
+        cols = {row[1] for row in cursor.fetchall()}  # row[1] = column name
+
+        if "queue_cycle" not in cols:
+            cursor.execute(
+                "ALTER TABLE runs ADD COLUMN queue_cycle INTEGER DEFAULT 0"
+            )
+
         self.new_definitions_db.commit()
 
     def _refresh_ngram_inventory(self) -> None:
