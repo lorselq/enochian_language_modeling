@@ -350,7 +350,7 @@ def _backfill_composite_reconstruction(
 
     ft_model = get_fasttext_model()
     timestamp = utcnow_iso()
-    composite_rows: list[tuple[str, str | None, str, float, str, str, str]] = []
+    composite_rows: list[tuple[str, str | None, str, float, str, str | None, str]] = []
     morph_rows: dict[str, tuple[str, float, str]] = {}
     vector_source_counts: Counter[str] = Counter()
 
