@@ -1070,19 +1070,19 @@ def _build_parser() -> argparse.ArgumentParser:
     morph_factorize.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
-        default="gloss-words",
+        default="gloss-chars",
         help="Gloss embedding strategy",
     )
     morph_factorize.add_argument(
         "--min-morph-count",
         type=int,
-        default=3,
+        default=1,
         help="Minimum occurrences for a morph to be included",
     )
     morph_factorize.add_argument(
         "--min-token-morphs",
         type=int,
-        default=1,
+        default=0,
         help="Minimum morph count per token (single-morph backfills are always kept)",
     )
     morph_factorize.add_argument(
@@ -1138,19 +1138,19 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze_all.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
-        default="gloss-words",
+        default="gloss-chars",
         help="Gloss embedding strategy",
     )
     analyze_all.add_argument(
         "--min-morph-count",
         type=int,
-        default=3,
+        default=1,
         help="Minimum occurrences for a morph to be included",
     )
     analyze_all.add_argument(
         "--min-token-morphs",
         type=int,
-        default=1,
+        default=0,
         help="Minimum morph count per token (single-morph backfills are always kept)",
     )
     analyze_all.add_argument(
