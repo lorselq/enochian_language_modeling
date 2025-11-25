@@ -1,3 +1,4 @@
+import argparse
 import os
 from dotenv import load_dotenv, find_dotenv
 from collections import defaultdict
@@ -8,6 +9,25 @@ from enochian_lm.root_extraction.pipeline.run_root_extraction import RootExtract
 # Buffers for streaming
 token_buffers = defaultdict(str)
 log_entries = []
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run the Enochian root extraction pipeline with optional skip replay"
+        )
+    )
+    parser.add_argument(
+        "--only-skipped",
+        nargs="?",
+        const="",
+        default=None,
+        help=(
+            "Process only n-grams previously recorded in the skips table. "
+            "Optionally provide a specific reason_code to filter the replay."
+        ),
+    )
+    return parser.parse_args()
 
 
 def stream_callback(role, message):
@@ -45,6 +65,7 @@ def stream_callback(role, message):
 
 
 def main():
+    args = parse_args()
     GOLD = "\033[38;5;178m"
     RESET = "\033[0m"
     local_remote_mode = None
@@ -78,12 +99,19 @@ def main():
     else:
         style = "solo"
 
+    process_only_skipped = args.only_skipped is not None
+    skipped_reason_code = args.only_skipped or None
+
     crew = RootExtractionCrew(style, remote)
 
     if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip().lower()
         print(f"🔍 Evaluating single ngram: {GOLD}{ngram.upper()}{RESET}\n")
-        crew.process_ngrams(single_ngram=ngram, stream_callback=stream_callback, style=style)
+        crew.process_ngrams(
+            single_ngram=ngram,
+            stream_callback=stream_callback,
+            style=style,
+        )
 
     else:
         max_words = None
@@ -96,7 +124,13 @@ def main():
             except ValueError:
                 print("Invalid number. Please use a digit.")
         print(f"🔍 Evaluating {GOLD}{max_words}{RESET} ngrams...")
-        crew.process_ngrams(max_words=max_words, stream_callback=stream_callback, style=style)
+        crew.process_ngrams(
+            max_words=max_words,
+            stream_callback=stream_callback,
+            style=style,
+            process_only_skipped=process_only_skipped,
+            skipped_reason_code=skipped_reason_code,
+        )
 
     if style == "solo":
         print("\n\n🎉 The researcher has completed their assigned task(s)!")        
