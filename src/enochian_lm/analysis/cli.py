@@ -894,7 +894,7 @@ def _build_parser() -> argparse.ArgumentParser:
     morph_subparsers = morph.add_subparsers(dest="morph_command", required=True)
     morph_factorize = morph_subparsers.add_parser("factorize", help="Factorize morph semantics")
     morph_factorize.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
-    morph_factorize.add_argument("--out", required=True, default="src/enochian_lm/root_extraction/interpretation/", help="Output directory for run artifacts")
+    morph_factorize.add_argument("--out", default="src/enochian_lm/root_extraction/interpretation/", help="Output directory for run artifacts")
     morph_factorize.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
