@@ -7,7 +7,9 @@ import json
 import logging
 import math
 import os
+import re
 import sys
+import unicodedata
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Callable, Iterable, Iterator, Sequence
@@ -266,6 +268,23 @@ def _vector_norm(values: Sequence[float]) -> float:
     return math.sqrt(sum(float(v) * float(v) for v in values))
 
 
+_FASTTEXT_TOKEN_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _normalize_for_fasttext(token: str) -> str:
+    """Mirror FastText training cleanup for short fragments.
+
+    Training lowercases tokens and strips punctuation/diacritics (via
+    ``simple_preprocess(..., deacc=True)`` for definitions). We apply the same
+    policy to uncovered fragments so that their embeddings are derived from the
+    same character set seen during training.
+    """
+
+    lowered = unicodedata.normalize("NFKD", str(token or "").strip().lower())
+    without_diacritics = "".join(ch for ch in lowered if not unicodedata.combining(ch))
+    return _FASTTEXT_TOKEN_RE.sub("", without_diacritics)
+
+
 def _parse_uncovered_fragments(payload: str | None) -> list[str]:
     if not payload:
         return []
@@ -279,11 +298,11 @@ def _parse_uncovered_fragments(payload: str | None) -> list[str]:
         for item in data:
             if isinstance(item, dict):
                 value = item.get("text") or item.get("residual") or item.get("fragment")
-                value = str(value or "").strip()
+                value = _normalize_for_fasttext(value)
                 if value:
                     fragments.append(value)
             elif isinstance(item, (str, int, float)):
-                text = str(item).strip()
+                text = _normalize_for_fasttext(item)
                 if text:
                     fragments.append(text)
     return fragments
@@ -330,11 +349,27 @@ def _backfill_composite_reconstruction(
     composite_rows: list[tuple[str, str | None, str, float, str, str]] = []
     morph_rows: dict[str, tuple[str, float, str]] = {}
 
-    def _fallback_vector(token: str) -> list[float]:
-        try:
-            return list(ft_model.wv[token])
-        except KeyError:
-            return [0.0] * ft_model.vector_size
+    def _fasttext_vector(token: str) -> list[float]:
+        candidates = []
+        normalized = _normalize_for_fasttext(token)
+        if normalized:
+            candidates.append(normalized)
+        cleaned = str(token or "").strip()
+        if cleaned:
+            candidates.append(cleaned)
+
+        last_candidate = ""
+        for candidate in candidates:
+            last_candidate = candidate
+            try:
+                return list(ft_model.wv[candidate])
+            except KeyError:
+                continue
+
+        if last_candidate:
+            return list(ft_model.get_word_vector(last_candidate))
+
+        return [0.0] * ft_model.vector_size
 
     for row in rows:
         token = str(row["normalized"] or "").strip()
@@ -346,9 +381,11 @@ def _backfill_composite_reconstruction(
             recon_error = row["cluster_residual"] if row["cluster_residual"] is not None else 0.0
         morphs = _parse_uncovered_fragments(row["uncovered_json"])
         if not morphs:
-            morphs = [token]
+            morphs = [_normalize_for_fasttext(token) or token]
+        else:
+            morphs = [m for m in (_normalize_for_fasttext(m) for m in morphs) if m]
 
-        token_vector = _fallback_vector(token)
+        token_vector = _fasttext_vector(token)
         composite_rows.append(
             (
                 token,
@@ -363,7 +400,7 @@ def _backfill_composite_reconstruction(
         for morph in morphs:
             if morph in morph_rows:
                 continue
-            morph_vec = _fallback_vector(morph)
+            morph_vec = _fasttext_vector(morph)
             morph_rows[morph] = (
                 json.dumps(_round_vector(morph_vec)),
                 round(_vector_norm(morph_vec), 4),
