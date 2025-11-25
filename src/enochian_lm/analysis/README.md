@@ -218,6 +218,10 @@ All commands emit structured outputs under user-specified directories:
   prints a table of top clusters.
 * Factorization writes morph embeddings, token reconstruction diagnostics, and an
   optional alignment-to-residuals CSV for cross-referencing cluster centroids.
+  The factorizer keeps backfilled composites that only contain a single morph by
+  default (`--min-token-morphs=1`), ensuring alignment steps and residual
+  cluster comparisons include those tokens unless you explicitly raise the
+  threshold.
 * Pipeline reports generate an HTML dashboard plus CSV/JSON caches summarizing
   the intermediate data.
 
