@@ -28,7 +28,7 @@ class FastTextParams:
     window: int = 5
     min_count: int = 1
     sg: int = 1
-    min_n: int = 3
+    min_n: int = 2
     max_n: int = 6
     epochs: int = 30
     alpha: float = 0.05
