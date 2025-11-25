@@ -126,7 +126,8 @@ def _collect_tokens(
 
     for row in rows:
         morphs = _parse_morphs(row["used_morphs_json"])
-        if len(morphs) < min_token_morphs:
+        is_backfilled = len(morphs) == 1
+        if len(morphs) < min_token_morphs and not is_backfilled:
             continue
         gloss = _resolve_gloss(row["token"], row["gold_gloss"], definitions)
         if gloss is None or not gloss.strip():
@@ -156,7 +157,8 @@ def _filter_records(records: Sequence[TokenRecord], vocab: set[str], min_token_m
     filtered: list[TokenRecord] = []
     for record in records:
         kept = [m for m in record.morphs if m in vocab]
-        if len(kept) < min_token_morphs:
+        is_backfilled = len(record.morphs) == 1
+        if len(kept) < min_token_morphs and not is_backfilled:
             continue
         filtered.append(TokenRecord(token=record.token, gloss=record.gloss, morphs=kept))
     return filtered
@@ -318,7 +320,7 @@ def factorize_morphemes(
     alpha: float = 1.0,
     embed: str = "gloss-words",
     min_morph_count: int = 3,
-    min_token_morphs: int = 2,
+    min_token_morphs: int = 1,
     row_norm: bool = False,
     metric: str = "mse",
     limit: int | None = None,
