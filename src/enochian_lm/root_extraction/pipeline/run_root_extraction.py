@@ -1188,9 +1188,16 @@ class RootExtractionCrew:
             the_result.setdefault("analytics_summary", analytics_summary)
 
         # Normalize expected keys (be defensive)
+        model = (
+            the_result.get("Model")
+            or the_result.get("Glossator_Model")
+            or the_result.get("raw_output", {}).get("Model")
+            or the_result.get("raw_output", {}).get("Glossator_Model")
+            or ""
+        )
         normalized = {
             "Glossator": the_result.get("Glossator", "") or "",
-            "Model": the_result.get("Model", ""),
+            "Model": model,
             "Glossator_Prompt": the_result.get("Glossator_Prompt", ""),
             "Adjudicator": the_result.get("Adjudicator", ""),
             "Adjudicator_Prompt": the_result.get("Adjudicator_Prompt", ""),
