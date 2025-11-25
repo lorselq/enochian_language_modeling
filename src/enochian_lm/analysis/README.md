@@ -201,14 +201,16 @@ folders under `runs/` by default.
 ## Expected inputs and outputs
 
 Most analytics operate on the SQLite database instead of raw text files. The
-exception is `analyze all`, which uses JSONL sources:
+`analyze all` shortcut still expects a parses JSONL file but reuses existing
+database state for morph vectors:
 
 * **Composite parses JSONL** — Each line should contain a token, predicted vector
   (list of floats), morpheme sequence, residual/error metrics, and optional gloss
   strings. The CLI ingests this into `composite_reconstruction`.
-* **Morph inventory JSONL** — Each line should include a morph surface form and a
-  semantic embedding vector. The CLI stores these as
-  `morph_semantic_vectors` entries.
+* **Morph semantic vectors table** — Prior analytics steps (for example, `morph
+  factorize`) should have already populated the `morph_semantic_vectors` table.
+  `analyze all` now validates that data exists there instead of ingesting a
+  separate JSONL file.
 
 All commands emit structured outputs under user-specified directories:
 
@@ -230,8 +232,10 @@ All commands emit structured outputs under user-specified directories:
 1. **Populate the insights database** by running `init_insights_db.init_db()`
    directly or simply executing any `enlm` command once the translation agents
    have produced new results. This ensures the shared schema exists.
-2. **Ingest fresh composite and morph exports** (if you have new JSONL files) via
-   `poetry run enlm analyze all --parses <path/to/parses.jsonl> --morphs <path/to/morphs.jsonl> ...`.
+2. **Ingest fresh composite exports** (if you have new JSONL files) via
+   `poetry run enlm analyze all --parses <path/to/parses.jsonl> ...`. Ensure the
+   `morph_semantic_vectors` table already contains embeddings (for example by
+   running `morph factorize`).
 3. **Iterate on specific analytics**: rerun `attrib`, `colloc`, `residual`, or
    `morph factorize` subcommands with tuned parameters as needed. Each command
    reuses the existing database contents and overwrites stale analytics tables.
