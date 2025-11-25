@@ -318,9 +318,9 @@ def factorize_morphemes(
     out_dir: str,
     *,
     alpha: float = 1.0,
-    embed: str = "gloss-words",
-    min_morph_count: int = 3,
-    min_token_morphs: int = 1,
+    embed: str = "gloss-chars",
+    min_morph_count: int = 1,
+    min_token_morphs: int = 0,
     row_norm: bool = False,
     metric: str = "mse",
     limit: int | None = None,
@@ -564,10 +564,10 @@ if __name__ == "__main__":  # pragma: no cover - manual execution helper
     parser.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
-        default="gloss-words",
+        default="gloss-chars",
     )
-    parser.add_argument("--min-morph-count", type=int, default=3)
-    parser.add_argument("--min-token-morphs", type=int, default=2)
+    parser.add_argument("--min-morph-count", type=int, default=1)
+    parser.add_argument("--min-token-morphs", type=int, default=0)
     parser.add_argument("--row-norm", action="store_true")
     parser.add_argument("--metric", choices=["mse", "cosine"], default="mse")
     parser.add_argument("--limit", type=int, default=None)
