@@ -85,7 +85,7 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
       pred_vector_json TEXT NOT NULL,
       recon_error REAL NOT NULL,
       used_morphs_json TEXT NOT NULL,
-      vector_source TEXT NOT NULL DEFAULT 'fasttext',
+      vector_source TEXT,
       updated_at TEXT NOT NULL
     );
     """,
@@ -123,7 +123,7 @@ def ensure_analysis_tables(conn: sqlite3.Connection) -> None:
         conn,
         "composite_reconstruction",
         "vector_source",
-        "TEXT NOT NULL DEFAULT 'fasttext'",
+        "TEXT",
     )
 
 
