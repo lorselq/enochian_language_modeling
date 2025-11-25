@@ -157,6 +157,10 @@ Following this workflow ensures that morphemes like `PRG` receive the fiery
 attribution instead of letting shared tokens skew toward `IAL`, and the team can
 course-correct existing glosses without manual table edits.
 
+> Need a quick preflight? See `docs/analytics_run_checklist.md` for a
+> short, ordered checklist that prevents empty attribution/collocation outputs
+> when running `poetry run enlm analyze all`.
+
 ## Future Work and Phased Development
 
 ### Near-Term Development Goals
