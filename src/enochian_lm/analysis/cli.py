@@ -391,6 +391,8 @@ def _backfill_composite_reconstruction(
             morphs = [m for m in (_normalize_for_fasttext(m) for m in morphs) if m]
 
         token_vector = _fasttext_vector(token)
+        vector_source = "fasttext"
+        vector_source_counts[vector_source] += 1
         composite_rows.append(
             (
                 token,
