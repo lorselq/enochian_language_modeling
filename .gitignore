@@ -213,6 +213,9 @@ src/enochian_lm/root_extraction/interpretation/revised_solo_analysis_derived_def
 src/enochian_lm/root_extraction/interpretation/morph_vectors.csv
 src/enochian_lm/root_extraction/interpretation/reconstruction.csv
 src/enochian_lm/root_extraction/interpretation/summary.json
+src/enochian_lm/root_extraction/interpretation/attribution.csv
+src/enochian_lm/root_extraction/interpretation/collocations.csv
+src/enochian_lm/root_extraction/interpretation/residual_clusters.json
 src/loagaeth/data/liber_loagaeth.sqlite3
 src/loagaeth/data/liber_loagaeth.sqlite3
 src/loagaeth/data/liber_loagaeth.sqlite3-shm
