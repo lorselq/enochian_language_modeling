@@ -9,6 +9,7 @@ import math
 import os
 import re
 import sys
+from collections import Counter
 import unicodedata
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -202,7 +203,7 @@ def _vector_norm(values: Sequence[float]) -> float:
 
 def _ingest_composite_parses(conn, path: Path) -> int:
     timestamp = utcnow_iso()
-    rows: list[tuple[str, str | None, str, float, str, str]] = []
+    rows: list[tuple[str, str | None, str, float, str, str, str]] = []
     for payload in _iter_json_lines(path):
         token = _coerce_token(payload)
         vector = _coerce_float_list(
@@ -237,6 +238,7 @@ def _ingest_composite_parses(conn, path: Path) -> int:
                 json.dumps(_round_vector(vector)),
                 round(recon_error, 4),
                 json.dumps(morphs),
+                str(payload.get("vector_source") or "fasttext"),
                 timestamp,
             )
         )
@@ -246,8 +248,8 @@ def _ingest_composite_parses(conn, path: Path) -> int:
         conn.executemany(
             """
             INSERT INTO composite_reconstruction (
-              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, vector_source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -330,9 +332,11 @@ def _backfill_composite_reconstruction(
             rd.residual_ratio,
             rd.uncovered_json,
             c.residual_ratio AS cluster_residual,
-            c.glossator_def
+            c.glossator_def,
+            rc.centroid_json
         FROM residual_details rd
         JOIN clusters c ON c.cluster_id = rd.cluster_id
+        LEFT JOIN residual_clusters rc ON rc.cluster_id = rd.cluster_id
         WHERE c.run_id = ?
         ORDER BY rd.residual_id
     """
@@ -346,8 +350,9 @@ def _backfill_composite_reconstruction(
 
     ft_model = get_fasttext_model()
     timestamp = utcnow_iso()
-    composite_rows: list[tuple[str, str | None, str, float, str, str]] = []
+    composite_rows: list[tuple[str, str | None, str, float, str, str, str]] = []
     morph_rows: dict[str, tuple[str, float, str]] = {}
+    vector_source_counts: Counter[str] = Counter()
 
     def _fasttext_vector(token: str) -> list[float]:
         candidates = []
@@ -393,6 +398,7 @@ def _backfill_composite_reconstruction(
                 json.dumps(_round_vector(token_vector)),
                 round(float(recon_error or 0.0), 4),
                 json.dumps(morphs),
+                vector_source,
                 timestamp,
             )
         )
@@ -413,8 +419,8 @@ def _backfill_composite_reconstruction(
         conn.executemany(
             """
             INSERT INTO composite_reconstruction (
-              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, vector_source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             composite_rows,
         )
@@ -437,7 +443,12 @@ def _backfill_composite_reconstruction(
 
     logger.info(
         "Backfilled composite_reconstruction from residual_details",
-        extra={"rows": len(composite_rows), "morphs": len(morph_rows), "run_id": target_run_id},
+        extra={
+            "rows": len(composite_rows),
+            "morphs": len(morph_rows),
+            "run_id": target_run_id,
+            "vector_sources": dict(vector_source_counts),
+        },
     )
     return len(composite_rows)
 

@@ -487,7 +487,7 @@ class RootExtractionCrew:
         ensure_analysis_tables(self.new_definitions_db)
 
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        composite_rows: list[tuple[str, str | None, str, float, str, str]] = []
+        composite_rows: list[tuple[str, str | None, str, float, str, str, str]] = []
         morph_rows: dict[str, tuple[str, float, str]] = {}
 
         for item in composites:
@@ -518,6 +518,7 @@ class RootExtractionCrew:
                     json.dumps(self._round_vector(vector)),
                     round(float(breakdown.get("residual_ratio") or 0.0), 4),
                     json.dumps(morphs),
+                    "fasttext",
                     timestamp,
                 )
             )
@@ -535,8 +536,8 @@ class RootExtractionCrew:
             self.new_definitions_db.executemany(
                 """
                 INSERT INTO composite_reconstruction (
-                  token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                  token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, vector_source, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 composite_rows,
             )
