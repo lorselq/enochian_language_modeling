@@ -1,3 +1,5 @@
+import logging
+import math
 import re
 import json
 from enochian_lm.common.sqlite_bootstrap import sqlite3
@@ -5,7 +7,7 @@ import random
 import statistics as st
 import time
 import uuid, json, sys, platform, datetime
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Sequence
 from collections import defaultdict, Counter
 from enochian_lm.root_extraction.utils.logger import save_log
 from enochian_lm.root_extraction.tools.debate_engine import debate_ngram
@@ -34,6 +36,9 @@ from enochian_lm.root_extraction.utils.preanalysis import (
     mark_preanalysis_consumed,
     load_trusted_ngrams,
 )
+from enochian_lm.analysis.utils.sql import ensure_analysis_tables
+
+logger = logging.getLogger(__name__)
 
 GOLD = "\033[38;5;178m"
 GREEN = "\033[38;5;120m"
@@ -462,6 +467,99 @@ class RootExtractionCrew:
             self.completed_roots.add(norm)
             self.incomplete_roots.discard(norm)
             self._advance_queue(norm)
+
+    @staticmethod
+    def _round_vector(values: Sequence[float], places: int = 6) -> list[float]:
+        factor = 10**places
+        return [math.floor(float(val) * factor + 0.5) / factor for val in values]
+
+    @staticmethod
+    def _vector_norm(values: Sequence[float]) -> float:
+        return math.sqrt(sum(float(v) * float(v) for v in values))
+
+    def _persist_composite_reconstruction(
+        self, composites: list[dict[str, object]]
+    ) -> None:
+        if not composites:
+            return
+
+        ensure_analysis_tables(self.new_definitions_db)
+
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        composite_rows: list[tuple[str, str | None, str, float, str, str]] = []
+        morph_rows: dict[str, tuple[str, float, str]] = {}
+
+        for item in composites:
+            norm = self._normalize_root(item.get("normalized"))
+            if not norm:
+                continue
+
+            breakdown = item.get("breakdown") or {}
+            vector = self.fasttext.get_word_vector(norm)
+            morphs: list[str] = []
+            for seg in breakdown.get("segments") or []:
+                canonical = str(seg.get("canonical") or "").strip()
+                if canonical and canonical not in morphs:
+                    morphs.append(canonical)
+                if canonical and canonical not in morph_rows:
+                    morph_vector = self.fasttext.get_word_vector(canonical)
+                    morph_rows[canonical] = (
+                        json.dumps(self._round_vector(morph_vector)),
+                        round(self._vector_norm(morph_vector), 4),
+                        timestamp,
+                    )
+
+            gold_gloss = item.get("definition") or None
+            composite_rows.append(
+                (
+                    norm,
+                    gold_gloss if isinstance(gold_gloss, str) and gold_gloss.strip() else None,
+                    json.dumps(self._round_vector(vector)),
+                    round(float(breakdown.get("residual_ratio") or 0.0), 4),
+                    json.dumps(morphs),
+                    timestamp,
+                )
+            )
+
+        if not composite_rows:
+            return
+
+        tokens = [(row[0],) for row in composite_rows]
+
+        with self.new_definitions_db:
+            self.new_definitions_db.executemany(
+                "DELETE FROM composite_reconstruction WHERE token = ?",
+                tokens,
+            )
+            self.new_definitions_db.executemany(
+                """
+                INSERT INTO composite_reconstruction (
+                  token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                composite_rows,
+            )
+
+            if morph_rows:
+                self.new_definitions_db.executemany(
+                    """
+                    INSERT INTO morph_semantic_vectors (morph, vector_json, l2_norm, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(morph) DO UPDATE SET
+                        vector_json=excluded.vector_json,
+                        l2_norm=excluded.l2_norm,
+                        updated_at=excluded.updated_at
+                    """,
+                    [
+                        (morph, vector_json, l2_norm, ts)
+                        for morph, (vector_json, l2_norm, ts) in morph_rows.items()
+                    ],
+                )
+
+        logger.info(
+            "Persisted composite reconstructions and morph vectors",
+            extra={"composites": len(composite_rows), "morphs": len(morph_rows)},
+        )
 
     def _get_candidate_breakdown(self, word: str) -> dict | None:
         norm = self._normalize_root(word)
@@ -985,6 +1083,8 @@ class RootExtractionCrew:
             partner_counts=segment_counter,
             residual_counts=residual_counter,
         )
+
+        self._persist_composite_reconstruction(residual_inputs)
 
         fallback_summary = fetch_preanalysis_summary(
             self.new_definitions_db,
