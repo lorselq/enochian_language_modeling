@@ -501,55 +501,6 @@ def _backfill_composite_reconstruction(
     return len(composite_rows)
 
 
-def _ingest_morph_inventory(conn, path: Path) -> int:
-    timestamp = utcnow_iso()
-    rows: list[dict[str, object]] = []
-    for payload in _iter_json_lines(path):
-        morph = _coerce_optional_str(payload, ("morph", "token", "name"))
-        if morph is None:
-            continue
-        vector = _coerce_float_list(payload.get("vector") or payload.get("embedding"))
-        if vector is None:
-            vector_json = payload.get("vector_json")
-            if isinstance(vector_json, str):
-                vector = _coerce_float_list(vector_json)
-        if vector is None:
-            continue
-        norm_raw = payload.get("l2_norm") or payload.get("norm")
-        try:
-            norm = float(norm_raw) if norm_raw is not None else _vector_norm(vector)
-        except (TypeError, ValueError):
-            norm = _vector_norm(vector)
-        rows.append(
-            {
-                "morph": morph,
-                "vector_json": json.dumps(_round_vector(vector)),
-                "l2_norm": round(norm, 4),
-                "updated_at": timestamp,
-            }
-        )
-
-    conn.execute("DELETE FROM morph_semantic_vectors")
-    if rows:
-        conn.executemany(
-            """
-            INSERT INTO morph_semantic_vectors (morph, vector_json, l2_norm, updated_at)
-            VALUES (:morph, :vector_json, :l2_norm, :updated_at)
-            ON CONFLICT(morph) DO UPDATE SET
-              vector_json=excluded.vector_json,
-              l2_norm=excluded.l2_norm,
-              updated_at=excluded.updated_at
-            """,
-            rows,
-        )
-    conn.commit()
-    logger.info(
-        "Ingested morph inventory",
-        extra={"rows": len(rows), "path": str(path)},
-    )
-    return len(rows)
-
-
 def _export_attribution_csv(db_path: Path, out_path: Path) -> None:
     conn = connect_sqlite(str(db_path))
     try:
@@ -987,12 +938,9 @@ def _run_preanalyze(args: argparse.Namespace) -> None:
 
 def _run_analyze_all(args: argparse.Namespace) -> None:
     parses_path = Path(args.parses) if args.parses else None
-    morphs_path = Path(args.morphs)
     attrib_out = Path(args.attrib_out)
     colloc_out = Path(args.colloc_out)
     residual_out = Path(args.residual_out)
-
-    _validate_input_file(morphs_path, "Morph inventory")
 
     attrib_out.parent.mkdir(parents=True, exist_ok=True)
     colloc_out.parent.mkdir(parents=True, exist_ok=True)
@@ -1027,7 +975,9 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
                 )
             _validate_input_file(parses_path, "Parses file")
             ingested_tokens = _ingest_composite_parses(conn, parses_path)
-        ingested_morphs = _ingest_morph_inventory(conn, morphs_path)
+        morph_vector_count = conn.execute(
+            "SELECT COUNT(*) FROM morph_semantic_vectors"
+        ).fetchone()[0]
     finally:
         conn.close()
 
@@ -1035,9 +985,9 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
         raise ValueError(
             "No composite parses were ingested; check the --parses file contents."
         )
-    if ingested_morphs == 0:
+    if morph_vector_count == 0:
         raise ValueError(
-            "No morph semantic vectors were ingested; check the --morphs file contents."
+            "No morph semantic vectors found in the database; populate the morph_semantic_vectors table before running analyze all."
         )
 
     combined_args = argparse.Namespace(db_path=args.db_path, limit=None)
@@ -1221,7 +1171,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to parses JSONL (required unless reusing existing composite parses)",
     )
     analyze_all.add_argument("--attrib-out", default="src/enochian_lm/root_extraction/interpretation/", help="Attribution CSV output path")
-    analyze_all.add_argument("--morphs", default="src/enochian_lm/root_extraction/interpretation/", help="Path to morph inventory")
     analyze_all.add_argument("--colloc-out", default="src/enochian_lm/root_extraction/interpretation/", help="Collocation CSV output path")
     analyze_all.add_argument("--min-count", type=int, default=5, help="Minimum joint count")
     analyze_all.add_argument("--k", type=int, default=10, help="Number of clusters")
