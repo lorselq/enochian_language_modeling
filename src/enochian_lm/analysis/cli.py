@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Callable, Iterable, Iterator, Sequence
@@ -200,7 +201,7 @@ def _vector_norm(values: Sequence[float]) -> float:
 
 def _ingest_composite_parses(conn, path: Path) -> int:
     timestamp = utcnow_iso()
-    rows: list[tuple[str, str | None, str, float, str, str]] = []
+    rows: list[tuple[str, str | None, str, float, str, str, str]] = []
     for payload in _iter_json_lines(path):
         token = _coerce_token(payload)
         vector = _coerce_float_list(
@@ -235,6 +236,7 @@ def _ingest_composite_parses(conn, path: Path) -> int:
                 json.dumps(_round_vector(vector)),
                 round(recon_error, 4),
                 json.dumps(morphs),
+                str(payload.get("vector_source") or "fasttext"),
                 timestamp,
             )
         )
@@ -244,8 +246,8 @@ def _ingest_composite_parses(conn, path: Path) -> int:
         conn.executemany(
             """
             INSERT INTO composite_reconstruction (
-              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, vector_source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -311,9 +313,11 @@ def _backfill_composite_reconstruction(
             rd.residual_ratio,
             rd.uncovered_json,
             c.residual_ratio AS cluster_residual,
-            c.glossator_def
+            c.glossator_def,
+            rc.centroid_json
         FROM residual_details rd
         JOIN clusters c ON c.cluster_id = rd.cluster_id
+        LEFT JOIN residual_clusters rc ON rc.cluster_id = rd.cluster_id
         WHERE c.run_id = ?
         ORDER BY rd.residual_id
     """
@@ -327,14 +331,30 @@ def _backfill_composite_reconstruction(
 
     ft_model = get_fasttext_model()
     timestamp = utcnow_iso()
-    composite_rows: list[tuple[str, str | None, str, float, str, str]] = []
+    composite_rows: list[tuple[str, str | None, str, float, str, str, str]] = []
     morph_rows: dict[str, tuple[str, float, str]] = {}
+    vector_source_counts: Counter[str] = Counter()
 
-    def _fallback_vector(token: str) -> list[float]:
+    def _fasttext_vector(token: str) -> list[float] | None:
+        if not token:
+            return None
         try:
-            return list(ft_model.wv[token])
-        except KeyError:
-            return [0.0] * ft_model.vector_size
+            return list(ft_model.wv.get_vector(token))
+        except (KeyError, AttributeError):
+            try:
+                return list(ft_model.get_word_vector(token))
+            except Exception:
+                return None
+
+    def _average_vectors(vectors: list[list[float]]) -> list[float]:
+        if not vectors:
+            return []
+        length = len(vectors)
+        summed = [0.0] * len(vectors[0])
+        for vec in vectors:
+            for idx, val in enumerate(vec):
+                summed[idx] += float(val)
+        return [val / length for val in summed]
 
     for row in rows:
         token = str(row["normalized"] or "").strip()
@@ -348,7 +368,22 @@ def _backfill_composite_reconstruction(
         if not morphs:
             morphs = [token]
 
-        token_vector = _fallback_vector(token)
+        centroid_vector = _coerce_float_list(row["centroid_json"])
+
+        token_vector = _fasttext_vector(token)
+        vector_source = "fasttext"
+        if token_vector is None:
+            morph_vectors = [vec for vec in (_fasttext_vector(morph) for morph in morphs) if vec]
+            if morph_vectors:
+                token_vector = _average_vectors(morph_vectors)
+                vector_source = "morph_average"
+            elif centroid_vector:
+                token_vector = centroid_vector
+                vector_source = "cluster_centroid"
+            else:
+                token_vector = [0.0] * ft_model.vector_size
+                vector_source = "cluster_centroid"
+        vector_source_counts[vector_source] += 1
         composite_rows.append(
             (
                 token,
@@ -356,6 +391,7 @@ def _backfill_composite_reconstruction(
                 json.dumps(_round_vector(token_vector)),
                 round(float(recon_error or 0.0), 4),
                 json.dumps(morphs),
+                vector_source,
                 timestamp,
             )
         )
@@ -363,7 +399,9 @@ def _backfill_composite_reconstruction(
         for morph in morphs:
             if morph in morph_rows:
                 continue
-            morph_vec = _fallback_vector(morph)
+            morph_vec = _fasttext_vector(morph)
+            if morph_vec is None:
+                morph_vec = [0.0] * ft_model.vector_size
             morph_rows[morph] = (
                 json.dumps(_round_vector(morph_vec)),
                 round(_vector_norm(morph_vec), 4),
@@ -376,8 +414,8 @@ def _backfill_composite_reconstruction(
         conn.executemany(
             """
             INSERT INTO composite_reconstruction (
-              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, vector_source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             composite_rows,
         )
@@ -400,7 +438,12 @@ def _backfill_composite_reconstruction(
 
     logger.info(
         "Backfilled composite_reconstruction from residual_details",
-        extra={"rows": len(composite_rows), "morphs": len(morph_rows), "run_id": target_run_id},
+        extra={
+            "rows": len(composite_rows),
+            "morphs": len(morph_rows),
+            "run_id": target_run_id,
+            "vector_sources": dict(vector_source_counts),
+        },
     )
     return len(composite_rows)
 

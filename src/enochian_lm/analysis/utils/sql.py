@@ -85,6 +85,7 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
       pred_vector_json TEXT NOT NULL,
       recon_error REAL NOT NULL,
       used_morphs_json TEXT NOT NULL,
+      vector_source TEXT NOT NULL DEFAULT 'fasttext',
       updated_at TEXT NOT NULL
     );
     """,
@@ -117,6 +118,19 @@ def ensure_analysis_tables(conn: sqlite3.Connection) -> None:
     logger.info("Ensuring analysis tables")
     for statement in ANALYSIS_TABLE_STATEMENTS:
         conn.execute(statement)
+
+    _ensure_column(
+        conn,
+        "composite_reconstruction",
+        "vector_source",
+        "TEXT NOT NULL DEFAULT 'fasttext'",
+    )
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table});")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl};")
 
 
 def _prepare_named_parameters(rows: Sequence[dict[str, object]]) -> tuple[str, tuple[str, ...]]:

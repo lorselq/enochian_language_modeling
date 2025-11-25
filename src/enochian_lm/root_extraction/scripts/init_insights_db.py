@@ -555,6 +555,7 @@ ANALYSIS_TABLE_STATEMENTS = (
       pred_vector_json TEXT NOT NULL,
       recon_error REAL NOT NULL,
       used_morphs_json TEXT NOT NULL,
+      vector_source TEXT NOT NULL DEFAULT 'fasttext',
       updated_at TEXT NOT NULL
     );
     """,
@@ -617,6 +618,13 @@ def init_db(path: str | PathLike[str]) -> None:
             }
             for column, decl in shared_columns.items():
                 _add_column_if_missing(conn, "clusters", column, decl)
+
+            _add_column_if_missing(
+                conn,
+                "composite_reconstruction",
+                "vector_source",
+                "TEXT NOT NULL DEFAULT 'fasttext'",
+            )
 
             if variant == "debate":
                 debate_columns = {
