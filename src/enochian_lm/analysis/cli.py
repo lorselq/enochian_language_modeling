@@ -894,7 +894,7 @@ def _build_parser() -> argparse.ArgumentParser:
     morph_subparsers = morph.add_subparsers(dest="morph_command", required=True)
     morph_factorize = morph_subparsers.add_parser("factorize", help="Factorize morph semantics")
     morph_factorize.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
-    morph_factorize.add_argument("--out", required=True, help="Output directory for run artifacts")
+    morph_factorize.add_argument("--out", required=True, default="src/enochian_lm/root_extraction/interpretation/", help="Output directory for run artifacts")
     morph_factorize.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
@@ -935,7 +935,7 @@ def _build_parser() -> argparse.ArgumentParser:
     report = subparsers.add_parser("report", help="Reporting utilities")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
     report_pipeline = report_subparsers.add_parser("pipeline", help="Generate a pipeline report")
-    report_pipeline.add_argument("--out", help="Output directory for the report")
+    report_pipeline.add_argument("--out", default="src/enochian_lm/root_extraction/interpretation/", help="Output directory for the report")
     report_pipeline.add_argument(
         "--baseline",
         help="Optional baseline residual JSONL for comparisons",
@@ -946,21 +946,22 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze = subparsers.add_parser("analyze", help="Run all placeholder analytics")
     analyze_subparsers = analyze.add_subparsers(dest="analyze_command", required=True)
     analyze_all = analyze_subparsers.add_parser("all", help="Run all placeholder tasks")
+    
     analyze_all.add_argument(
         "--parses",
         required=False,
         help="Path to parses JSONL (required unless reusing existing composite parses)",
     )
-    analyze_all.add_argument("--attrib-out", required=True, help="Attribution CSV output path")
-    analyze_all.add_argument("--morphs", required=True, help="Path to morph inventory")
-    analyze_all.add_argument("--colloc-out", required=True, help="Collocation CSV output path")
+    analyze_all.add_argument("--attrib-out", default="src/enochian_lm/root_extraction/interpretation/", help="Attribution CSV output path")
+    analyze_all.add_argument("--morphs", default="src/enochian_lm/root_extraction/interpretation/", help="Path to morph inventory")
+    analyze_all.add_argument("--colloc-out", default="src/enochian_lm/root_extraction/interpretation/", help="Collocation CSV output path")
     analyze_all.add_argument("--min-count", type=int, default=5, help="Minimum joint count")
     analyze_all.add_argument("--k", type=int, default=10, help="Number of clusters")
     analyze_all.add_argument("--min-df", type=int, default=2, help="Minimum document frequency")
     analyze_all.add_argument(
         "--pmi-thresh", type=float, default=0.0, help="PMI threshold for residual clustering"
     )
-    analyze_all.add_argument("--residual-out", required=True, help="Residual clustering JSON output path")
+    analyze_all.add_argument("--residual-out", default="src/enochian_lm/root_extraction/interpretation/", help="Residual clustering JSON output path")
     analyze_all.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
     analyze_all.add_argument(
         "--embed",
@@ -992,7 +993,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Reconstruction error metric",
     )
     analyze_all.add_argument(
-        "--morph-out", required=True, help="Morph factorization output directory"
+        "--morph-out", default="src/enochian_lm/root_extraction/interpretation/", help="Morph factorization output directory"
     )
     analyze_all.add_argument(
         "--reuse-db-parses",
