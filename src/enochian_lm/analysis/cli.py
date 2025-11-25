@@ -1170,15 +1170,15 @@ def _build_parser() -> argparse.ArgumentParser:
         required=False,
         help="Path to parses JSONL (required unless reusing existing composite parses)",
     )
-    analyze_all.add_argument("--attrib-out", default="src/enochian_lm/root_extraction/interpretation/", help="Attribution CSV output path")
-    analyze_all.add_argument("--colloc-out", default="src/enochian_lm/root_extraction/interpretation/", help="Collocation CSV output path")
+    analyze_all.add_argument("--attrib-out", default="src/enochian_lm/root_extraction/interpretation/attribution.csv", help="Attribution CSV output path")
+    analyze_all.add_argument("--colloc-out", default="src/enochian_lm/root_extraction/interpretation/collocations.csv", help="Collocation CSV output path")
     analyze_all.add_argument("--min-count", type=int, default=5, help="Minimum joint count")
     analyze_all.add_argument("--k", type=int, default=10, help="Number of clusters")
     analyze_all.add_argument("--min-df", type=int, default=2, help="Minimum document frequency")
     analyze_all.add_argument(
         "--pmi-thresh", type=float, default=0.0, help="PMI threshold for residual clustering"
     )
-    analyze_all.add_argument("--residual-out", default="src/enochian_lm/root_extraction/interpretation/", help="Residual clustering JSON output path")
+    analyze_all.add_argument("--residual-out", default="src/enochian_lm/root_extraction/interpretation/residual_clusters.json", help="Residual clustering JSON output path")
     analyze_all.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
     analyze_all.add_argument(
         "--embed",
