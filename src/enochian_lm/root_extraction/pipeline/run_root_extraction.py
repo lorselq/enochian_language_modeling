@@ -63,6 +63,7 @@ class RootExtractionCrew:
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.new_definitions_db = sqlite3.connect(paths[style])
         self._prepare_db(self.new_definitions_db)
+        ensure_analysis_tables(self.new_definitions_db)
         self._init_queue_table()
         self._ngram_inventory: list[tuple[str, int]] = []
         self._ngram_df: dict[str, int] = {}
