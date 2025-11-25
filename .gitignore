@@ -210,6 +210,9 @@ src/enochian_lm/root_extraction/interpretation/revised_debate_derived_definition
 src/enochian_lm/root_extraction/interpretation/revised_solo_analysis_derived_definitions.sqlite3
 src/enochian_lm/root_extraction/interpretation/revised_solo_analysis_derived_definitions.sqlite3-shm
 src/enochian_lm/root_extraction/interpretation/revised_solo_analysis_derived_definitions.sqlite3-wal
+src/enochian_lm/root_extraction/interpretation/morph_vectors.csv
+src/enochian_lm/root_extraction/interpretation/reconstruction.csv
+src/enochian_lm/root_extraction/interpretation/summary.json
 src/loagaeth/data/liber_loagaeth.sqlite3
 src/loagaeth/data/liber_loagaeth.sqlite3
 src/loagaeth/data/liber_loagaeth.sqlite3-shm
