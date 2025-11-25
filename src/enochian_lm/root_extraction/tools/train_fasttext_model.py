@@ -25,13 +25,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FastTextParams:
     vector_size: int = 100
-    window: int = 5
+    window: int = 2
     min_count: int = 1
     sg: int = 1
-    min_n: int = 1
+    min_n: int = 2
     max_n: int = 7
-    epochs: int = 30
-    alpha: float = 0.05
+    epochs: int = 50
+    alpha: float = 0.03
     seed: int = 93
 
 
