@@ -5,6 +5,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from enochian_lm.analysis.utils.sql import connect_sqlite
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_lm.root_extraction.utils.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
@@ -12,7 +13,6 @@ from enochian_lm.root_extraction.utils.residual_analysis import (
     exclude_root_segments,
     summarize_residuals,
 )
-from enochian_lm.root_extraction.utils.sql import connect_sqlite
 
 logger = logging.getLogger(__name__)
 
