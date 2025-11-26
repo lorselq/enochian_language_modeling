@@ -164,18 +164,21 @@ def _filter_records(records: Sequence[TokenRecord], vocab: set[str], min_token_m
     return filtered
 
 
-def _vectorize_glosses(records: Sequence[TokenRecord], embed: str) -> tuple[NDArray[np.float64], int, str]:
+def _vectorize_glosses(
+    records: Sequence[TokenRecord], embed: str, max_features: int | None = None
+) -> tuple[NDArray[np.float64], int, str]:
     documents = [record.gloss for record in records]
     if not documents:
         return np.empty((0, 0), dtype=np.float64), 0, ""
 
     if embed == "gloss-chars":
+        feature_limit = 6000 if max_features is None else max_features
         vectorizer = TfidfVectorizer(
             analyzer="char",
             ngram_range=(3, 5),
             min_df=1,
             lowercase=True,
-            max_features=6000,
+            max_features=feature_limit,
         )
         matrix = vectorizer.fit_transform(documents)
     elif embed == "hashing-words":
@@ -186,11 +189,12 @@ def _vectorize_glosses(records: Sequence[TokenRecord], embed: str) -> tuple[NDAr
         )
         matrix = vectorizer.transform(documents)
     else:
+        feature_limit = 5000 if max_features is None else max_features
         vectorizer = TfidfVectorizer(
             ngram_range=(1, 2),
             min_df=1,
             lowercase=True,
-            max_features=5000,
+            max_features=feature_limit,
         )
         matrix = vectorizer.fit_transform(documents)
     dense = matrix.astype(np.float64).toarray()
@@ -319,6 +323,7 @@ def factorize_morphemes(
     *,
     alpha: float = 0.05,
     embed: str = "gloss-chars",
+    max_features: int | None = None,
     min_morph_count: int = 1,
     min_token_morphs: int = 0,
     row_norm: bool = False,
@@ -386,7 +391,9 @@ def factorize_morphemes(
             "embed": embed,
         }
 
-    gloss_matrix, dim, vectorizer_name = _vectorize_glosses(filtered_records, embed)
+    gloss_matrix, dim, vectorizer_name = _vectorize_glosses(
+        filtered_records, embed, max_features
+    )
     if dim == 0 or gloss_matrix.size == 0:
         logger.warning("Gloss embedding produced empty matrix; exiting")
         return {
