@@ -285,6 +285,27 @@ class MorphemeCandidateFinder:
                 "residual_ratio": 0.0,
             }
 
+        # If the only coverage is a self-match over the full target, treat it as
+        # uncovered so residuals reflect unmet decomposition rather than
+        # vacuously explaining the word with itself.
+        if len(coverage) == 1:
+            seg = coverage[0]
+            canonical = str(seg.get("canonical", ""))
+            start = int(seg.get("start", 0))
+            end = int(seg.get("end", len(target)))
+            if (
+                canonical
+                and canonical.lower() == target.lower()
+                and start <= 0
+                and end >= len(target)
+            ):
+                return {
+                    "segments": [],
+                    "uncovered": [{"span": [0, len(target)], "text": target}],
+                    "coverage_ratio": 0.0,
+                    "residual_ratio": 1.0,
+                }
+
         mask = [False] * len(target)
         explained_segments: list[dict[str, float | int | str]] = []
         for seg in coverage:
