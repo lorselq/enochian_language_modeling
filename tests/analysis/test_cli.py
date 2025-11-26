@@ -89,6 +89,15 @@ def test_run_residual_refresh_aggregates(monkeypatch, capsys):
     assert "[b]" in output
 
 
+def test_build_parser_keeps_refresh_alias():
+    parser = cli._build_parser()
+    args = parser.parse_args(["refresh", "--run-id", "demo"])
+
+    assert args.command == "refresh"
+    assert args.run_id == ["demo"]
+    assert args.handler == cli._run_residual_refresh
+
+
 def test_run_composite_backfill_processes_each_run(monkeypatch, capsys):
     calls: list[str | None] = []
 
