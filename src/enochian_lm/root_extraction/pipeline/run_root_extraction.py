@@ -1916,10 +1916,11 @@ class RootExtractionCrew:
                         for detail in residual_word_details:
                             if not isinstance(detail, dict):
                                 continue
+                            residual_span = str(detail.get("word") or "").strip()
                             normalized_word = str(
-                                detail.get("normalized") or detail.get("word") or ""
+                                detail.get("normalized") or residual_span
                             ).strip()
-                            if not normalized_word:
+                            if not (residual_span or normalized_word):
                                 continue
                             uncovered = detail.get("uncovered") or []
                             if not isinstance(uncovered, list):
@@ -1931,6 +1932,7 @@ class RootExtractionCrew:
                             detail_rows.append(
                                 (
                                     cluster_rowid,
+                                    residual_span or normalized_word,
                                     normalized_word,
                                     str(detail.get("definition") or ""),
                                     _safe_float(detail.get("coverage_ratio")),
@@ -1946,6 +1948,7 @@ class RootExtractionCrew:
                                 """
                                 INSERT INTO residual_details (
                                     cluster_id,
+                                    residual_span,
                                     normalized,
                                     definition,
                                     coverage_ratio,
@@ -1953,7 +1956,7 @@ class RootExtractionCrew:
                                     avg_confidence,
                                     uncovered_json,
                                     low_conf_json
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                                 detail_rows,
                             )

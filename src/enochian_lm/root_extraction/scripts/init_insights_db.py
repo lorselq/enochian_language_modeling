@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS raw_defs (
 CREATE TABLE IF NOT EXISTS residual_details (
   residual_id        INTEGER PRIMARY KEY AUTOINCREMENT,
   cluster_id         INTEGER NOT NULL REFERENCES clusters(cluster_id) ON DELETE CASCADE,
+  residual_span      TEXT,
   normalized         TEXT    NOT NULL,
   definition         TEXT,
   coverage_ratio     REAL,
@@ -618,6 +619,19 @@ def init_db(path: str | PathLike[str]) -> None:
             }
             for column, decl in shared_columns.items():
                 _add_column_if_missing(conn, "clusters", column, decl)
+
+            _add_column_if_missing(conn, "residual_details", "residual_span", "TEXT")
+            try:
+                conn.execute(
+                    """
+                    UPDATE residual_details
+                    SET residual_span = COALESCE(residual_span, normalized)
+                    WHERE residual_span IS NULL OR TRIM(residual_span) = ''
+                    """
+                )
+            except sqlite3.OperationalError:
+                # Table may not exist yet; safe to ignore during bootstrap.
+                pass
 
             _add_column_if_missing(
                 conn,
