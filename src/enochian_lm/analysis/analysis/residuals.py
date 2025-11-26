@@ -103,8 +103,10 @@ def _load_residuals_from_table(
     conn: sqlite3.Connection,
 ) -> dict[str, Vector]:
     _ensure_numpy()
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(residual_details)")}
+    span_column = "residual_span" if "residual_span" in columns else "normalized"
     rows = conn.execute(
-        "SELECT residual_span, normalized FROM residual_details WHERE normalized IS NOT NULL"
+        f"SELECT {span_column} AS residual_span, normalized FROM residual_details WHERE normalized IS NOT NULL"
     ).fetchall()
     residuals: dict[str, Vector] = {}
     for row in rows:
