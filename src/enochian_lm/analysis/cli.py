@@ -1078,7 +1078,7 @@ def _build_parser() -> argparse.ArgumentParser:
     attrib_loo.set_defaults(handler=_run_attrib_loo)
 
     colloc = subparsers.add_parser("colloc", help="Collocation statistics")
-    colloc.add_argument("--min-count", type=int, default=5, help="Minimum joint count")
+    colloc.add_argument("--min-count", type=int, default=2, help="Minimum joint count")
     colloc.add_argument("--limit", type=int, default=None, help="Limit number of pairs processed")
     colloc.set_defaults(handler=_run_colloc)
 
@@ -1087,12 +1087,12 @@ def _build_parser() -> argparse.ArgumentParser:
     residual_cluster = residual_subparsers.add_parser("cluster", help="Cluster residual spans")
     residual_cluster.add_argument("--k", type=int, default=10, help="Number of clusters")
     residual_cluster.add_argument(
-        "--min-df", type=int, default=2, help="Minimum document frequency"
+        "--min-df", type=int, default=1, help="Minimum document frequency"
     )
     residual_cluster.add_argument(
         "--pmi-thresh",
         type=float,
-        default=0.0,
+        default=0.05,
         help="PMI threshold when computing fallback residuals",
     )
     residual_cluster.set_defaults(handler=_run_residual_cluster)
@@ -1111,13 +1111,13 @@ def _build_parser() -> argparse.ArgumentParser:
     morph = subparsers.add_parser("morph", help="Morph semantic tooling")
     morph_subparsers = morph.add_subparsers(dest="morph_command", required=True)
     morph_factorize = morph_subparsers.add_parser("factorize", help="Factorize morph semantics")
-    morph_factorize.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
+    morph_factorize.add_argument("--alpha", type=float, default=0.05, help="Regularization strength")
     morph_factorize.add_argument("--out", default="src/enochian_lm/root_extraction/interpretation/", help="Output directory for run artifacts")
     morph_factorize.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
         default="gloss-chars",
-        help="Gloss embedding strategy",
+        help="Gloss embedding strategy targeting ~512-dim vectors",
     )
     morph_factorize.add_argument(
         "--min-morph-count",
@@ -1172,19 +1172,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     analyze_all.add_argument("--attrib-out", default="src/enochian_lm/root_extraction/interpretation/attribution.csv", help="Attribution CSV output path")
     analyze_all.add_argument("--colloc-out", default="src/enochian_lm/root_extraction/interpretation/collocations.csv", help="Collocation CSV output path")
-    analyze_all.add_argument("--min-count", type=int, default=5, help="Minimum joint count")
+    analyze_all.add_argument("--min-count", type=int, default=2, help="Minimum joint count")
     analyze_all.add_argument("--k", type=int, default=10, help="Number of clusters")
-    analyze_all.add_argument("--min-df", type=int, default=2, help="Minimum document frequency")
+    analyze_all.add_argument("--min-df", type=int, default=1, help="Minimum document frequency")
     analyze_all.add_argument(
-        "--pmi-thresh", type=float, default=0.0, help="PMI threshold for residual clustering"
+        "--pmi-thresh", type=float, default=0.05, help="PMI threshold for residual clustering"
     )
     analyze_all.add_argument("--residual-out", default="src/enochian_lm/root_extraction/interpretation/residual_clusters.json", help="Residual clustering JSON output path")
-    analyze_all.add_argument("--alpha", type=float, default=1.0, help="Regularization strength")
+    analyze_all.add_argument("--alpha", type=float, default=0.05, help="Regularization strength")
     analyze_all.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
         default="gloss-chars",
-        help="Gloss embedding strategy",
+        help="Gloss embedding strategy targeting ~512-dim vectors",
     )
     analyze_all.add_argument(
         "--min-morph-count",
