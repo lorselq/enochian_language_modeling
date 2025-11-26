@@ -1183,6 +1183,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     residual_refresh.set_defaults(handler=_run_residual_refresh)
 
+    refresh = subparsers.add_parser(
+        "refresh",
+        help=(
+            "Alias for 'residual refresh' to recompute residual_details for existing runs"
+        ),
+    )
+    refresh.add_argument(
+        "--run-id",
+        nargs="+",
+        metavar="RUN_ID",
+        help=(
+            "Optional run id(s) to refresh (defaults to latest run in the database)"
+        ),
+    )
+    refresh.set_defaults(handler=_run_residual_refresh)
+
     composite = subparsers.add_parser("composite", help="Composite reconstruction utilities")
     composite_subparsers = composite.add_subparsers(dest="composite_command", required=True)
     composite_backfill = composite_subparsers.add_parser(
