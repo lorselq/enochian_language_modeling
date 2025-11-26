@@ -79,6 +79,22 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     _atomic_write(path, writer)
 
 
+def _normalize_run_ids(raw_run_ids: str | Sequence[str] | None) -> list[str]:
+    if raw_run_ids is None:
+        return []
+
+    if isinstance(raw_run_ids, str):
+        candidates = [raw_run_ids]
+    else:
+        candidates = list(raw_run_ids)
+
+    normalized = [str(run).strip() for run in candidates if str(run).strip()]
+    if not normalized:
+        raise ValueError("No run ids provided; specify at least one --run-id value")
+
+    return normalized
+
+
 def _json_safe(value: object) -> object:
     if isinstance(value, dict):
         return {key: _json_safe(val) for key, val in value.items()}
@@ -323,7 +339,7 @@ def _backfill_composite_reconstruction(
     conn,
     *,
     run_id: str | None = None,
-) -> int:
+) -> tuple[int, str]:
     ensure_analysis_tables(conn)
 
     target_run_id: str | None = run_id
@@ -355,7 +371,7 @@ def _backfill_composite_reconstruction(
             "No residual_details rows found for run; nothing to backfill",
             extra={"run_id": target_run_id},
         )
-        return 0
+        return 0, target_run_id
 
     ft_model = get_fasttext_model()
     timestamp = utcnow_iso()
@@ -499,7 +515,7 @@ def _backfill_composite_reconstruction(
         )
     except Exception:
         logger.warning("Failed to summarize morph counts", exc_info=True)
-    return len(composite_rows)
+    return len(composite_rows), target_run_id
 
 
 def _export_attribution_csv(db_path: Path, out_path: Path) -> None:
@@ -570,14 +586,26 @@ def _export_collocation_csv(db_path: Path, out_path: Path) -> None:
 
 
 def _run_composite_backfill(args: argparse.Namespace) -> None:
+    run_ids = _normalize_run_ids(args.run_id) if args.run_id is not None else []
+    if not run_ids:
+        run_ids = [None]
+
     conn = connect_sqlite(str(args.db_path))
+    total_rows = 0
     try:
         ensure_analysis_tables(conn)
-        rows = _backfill_composite_reconstruction(conn, run_id=args.run_id)
+        for run_id in run_ids:
+            rows, resolved_run_id = _backfill_composite_reconstruction(
+                conn, run_id=run_id
+            )
+            total_rows += rows
+            print(
+                f"Backfilled {rows} composite reconstructions for run {resolved_run_id}."
+            )
     finally:
         conn.close()
 
-    if rows == 0:
+    if total_rows == 0:
         raise ValueError("No composite reconstructions were backfilled")
 
 
@@ -734,17 +762,36 @@ def _run_residual_cluster(args: argparse.Namespace) -> dict[str, object]:
 
 def _run_residual_refresh(args: argparse.Namespace) -> tuple[int, int]:
     db_path = Path(args.db_path)
-    logger.info(
-        "Refreshing residual_details without rerunning pipeline",
-        extra={"db": str(db_path), "run_id": args.run_id},
-    )
+    run_ids = _normalize_run_ids(args.run_id) if args.run_id is not None else []
+    if not run_ids:
+        run_ids = [None]
 
-    refreshed = refresh_residual_details(db_path, run_id=args.run_id)
-    logger.info(
-        "Residual refresh completed",
-        extra={"clusters": refreshed[0], "detail_rows": refreshed[1]},
-    )
-    return refreshed
+    total_clusters = 0
+    total_rows = 0
+    for run_id in run_ids:
+        logger.info(
+            "Refreshing residual_details without rerunning pipeline",
+            extra={"db": str(db_path), "run_id": run_id},
+        )
+
+        clusters, detail_rows = refresh_residual_details(db_path, run_id=run_id)
+        total_clusters += clusters
+        total_rows += detail_rows
+
+        logger.info(
+            "Residual refresh completed",
+            extra={
+                "run_id": run_id,
+                "clusters": clusters,
+                "detail_rows": detail_rows,
+            },
+        )
+        run_label = run_id if run_id is not None else "latest"
+        print(
+            f"[{run_label}] Refreshed {int(clusters)} clusters and {int(detail_rows)} detail rows."
+        )
+
+    return total_clusters, total_rows
 
 
 def _run_morph_factorize(args: argparse.Namespace) -> None:
@@ -913,45 +960,49 @@ def _run_report_pipeline(args: argparse.Namespace) -> None:
 
 def _run_preanalyze(args: argparse.Namespace) -> None:
     db_path = Path(args.db_path)
-    result = execute_preanalysis(
-        db_path=db_path,
-        stage=args.stage,
-        trusted_path=args.trusted,
-        run_id=args.run_id,
-        refresh=args.refresh,
-    )
+    run_ids = _normalize_run_ids(args.run_id) if args.run_id is not None else []
+    if not run_ids:
+        run_ids = [None]
 
-    stage = result.get("stage")
-    run_id = result.get("run_id")
-    pre_id = result.get("preanalysis_id")
-    created = result.get("created")
-    trusted_count = result.get("trusted_count")
-    snapshots = result.get("snapshots", [])
+    for run_id in run_ids:
+        result = execute_preanalysis(
+            db_path=db_path,
+            stage=args.stage,
+            trusted_path=args.trusted,
+            run_id=run_id,
+            refresh=args.refresh,
+        )
 
-    status = "created" if created else "reused"
-    print(
-        f"[{stage}] Pre-analysis {status} for run {run_id} (preanalysis_id={pre_id}; trusted={trusted_count})."
-    )
+        stage = result.get("stage")
+        resolved_run = result.get("run_id")
+        pre_id = result.get("preanalysis_id")
+        created = result.get("created")
+        trusted_count = result.get("trusted_count")
+        snapshots = result.get("snapshots", [])
 
-    for snap in snapshots:
-        if not isinstance(snap, dict):
-            continue
-        ngram = snap.get("ngram")
-        occurrences = snap.get("occurrences")
-        sample = snap.get("sample") or []
-        preview_items: list[str] = []
-        for item in sample[:3]:
-            if not isinstance(item, dict):
+        status = "created" if created else "reused"
+        print(
+            f"[{stage}] Pre-analysis {status} for run {resolved_run} (preanalysis_id={pre_id}; trusted={trusted_count}).",
+        )
+
+        for snap in snapshots:
+            if not isinstance(snap, dict):
                 continue
-            canonical = item.get("canonical")
-            gloss = item.get("gloss")
-            if canonical and gloss:
-                preview_items.append(f"{canonical}:{gloss}")
-            elif canonical:
-                preview_items.append(str(canonical))
-        preview = f" → {', '.join(preview_items)}" if preview_items else ""
-        print(f"- {ngram}: occurrences={occurrences}{preview}")
-
+            ngram = snap.get("ngram")
+            occurrences = snap.get("occurrences")
+            sample = snap.get("sample") or []
+            preview_items: list[str] = []
+            for item in sample[:3]:
+                if not isinstance(item, dict):
+                    continue
+                canonical = item.get("canonical")
+                gloss = item.get("gloss")
+                if canonical and gloss:
+                    preview_items.append(f"{canonical}:{gloss}")
+                elif canonical:
+                    preview_items.append(str(canonical))
+            preview = f" → {', '.join(preview_items)}" if preview_items else ""
+            print(f"- {ngram}: occurrences={occurrences}{preview}")
 
 def _run_analyze_all(args: argparse.Namespace) -> None:
     parses_path = Path(args.parses) if args.parses else None
@@ -1074,7 +1125,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     pre_parser.add_argument(
         "--run-id",
-        help="Existing translation run id (auto-selects latest when omitted)",
+        nargs="+",
+        metavar="RUN_ID",
+        help=(
+            "One or more existing translation run ids (auto-selects latest when omitted)"
+        ),
     )
     pre_parser.add_argument(
         "--trusted",
@@ -1120,7 +1175,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     residual_refresh.add_argument(
         "--run-id",
-        help="Optional run id to refresh (defaults to latest run in the database)",
+        nargs="+",
+        metavar="RUN_ID",
+        help=(
+            "Optional run id(s) to refresh (defaults to latest run in the database)"
+        ),
     )
     residual_refresh.set_defaults(handler=_run_residual_refresh)
 
@@ -1131,7 +1190,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     composite_backfill.add_argument(
         "--run-id",
-        help="Optional run id to backfill (defaults to latest run in the database)",
+        nargs="+",
+        metavar="RUN_ID",
+        help=(
+            "Optional run id(s) to backfill (defaults to latest run in the database)"
+        ),
     )
     composite_backfill.set_defaults(handler=_run_composite_backfill)
 
