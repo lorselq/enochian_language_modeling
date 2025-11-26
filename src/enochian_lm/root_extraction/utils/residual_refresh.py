@@ -24,6 +24,109 @@ def _safe_float(value: object) -> float | None:
         return None
 
 
+def _recompute_coverage(
+    *,
+    segments: list[dict[str, object]],
+    target: str,
+    root_norm: str,
+    base_breakdown: dict[str, object],
+    cover_root: bool = False,
+) -> dict[str, object]:
+    """
+    Recalculate coverage/uncovered spans for a pruned segmentation path.
+
+    ``cover_root`` optionally marks the root span as explained so that suffix
+    residuals surface even when the only remaining coverage was a full-word
+    self-match.
+    """
+
+    total_len = len(target)
+    mask = [False] * total_len
+
+    if cover_root and root_norm:
+        for idx in range(min(len(root_norm), total_len)):
+            mask[idx] = True
+
+    normalized_segments: list[dict[str, object]] = []
+    for segment in segments:
+        span = segment.get("span") or [segment.get("start", 0), segment.get("end", 0)]
+        start = int(span[0] or 0)
+        end = int(span[1] or start)
+        start = max(0, min(total_len, start))
+        end = max(start, min(total_len, end))
+
+        for idx in range(start, end):
+            mask[idx] = True
+
+        normalized = dict(segment)
+        normalized["span"] = [start, end]
+        normalized_segments.append(normalized)
+
+    uncovered: list[dict[str, object]] = []
+    idx = 0
+    while idx < total_len:
+        if mask[idx]:
+            idx += 1
+            continue
+        start = idx
+        while idx < total_len and not mask[idx]:
+            idx += 1
+        uncovered.append({"span": [start, idx], "text": target[start:idx]})
+
+    coverage_ratio = sum(1 for flag in mask if flag) / total_len if total_len else 0.0
+    residual_ratio = max(0.0, 1.0 - coverage_ratio)
+
+    updated = dict(base_breakdown)
+    updated["segments"] = normalized_segments
+    updated["uncovered"] = uncovered
+    updated["coverage_ratio"] = coverage_ratio
+    updated["residual_ratio"] = residual_ratio
+    return updated
+
+
+def _apply_root_prefix_residual_fallback(
+    breakdown: dict[str, object], *, root_norm: str, target: str
+) -> dict[str, object]:
+    """
+    Drop self-covering segments when root-prefixed words still show full coverage.
+
+    If, after stripping root segments, the breakdown still reports complete
+    coverage and the word begins with the root, remove any full-word self-match
+    and recompute coverage treating the root span as explained. This surfaces
+    suffix fragments (e.g., ``PSAD`` in ``NAZPSAD``) for residual analysis.
+    """
+
+    total_len = len(target)
+    if not target or not root_norm or total_len == 0:
+        return breakdown
+
+    coverage_ratio = float(breakdown.get("coverage_ratio") or 0.0)
+    uncovered = breakdown.get("uncovered") or []
+    if uncovered or coverage_ratio < 1.0:
+        return breakdown
+
+    target_norm = target.lower()
+    root_norm = root_norm.lower()
+
+    if not target_norm.startswith(root_norm):
+        return breakdown
+
+    segments = breakdown.get("segments") or []
+    filtered_segments = [
+        seg
+        for seg in segments
+        if str(seg.get("canonical", "")).strip().lower() != target_norm
+    ]
+
+    return _recompute_coverage(
+        segments=filtered_segments,
+        target=target,
+        root_norm=root_norm,
+        base_breakdown=breakdown,
+        cover_root=True,
+    )
+
+
 def _load_words(conn: sqlite3.Connection, cluster_id: int) -> list[tuple[str, str]]:
     rows = conn.execute(
         "SELECT DISTINCT source_word, definition FROM raw_defs WHERE cluster_id = ?",
@@ -104,6 +207,9 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                     }
                 else:
                     breakdown = exclude_root_segments(breakdown, root_norm=root, target=norm)
+                    breakdown = _apply_root_prefix_residual_fallback(
+                        breakdown, root_norm=root, target=norm
+                    )
 
                 residual_inputs.append(
                     {
