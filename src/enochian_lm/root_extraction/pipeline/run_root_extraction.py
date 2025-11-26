@@ -29,7 +29,10 @@ from enochian_lm.root_extraction.utils.embeddings import (
     get_sentence_transformer,
     stream_text,
 )
-from enochian_lm.root_extraction.utils.residual_analysis import summarize_residuals
+from enochian_lm.root_extraction.utils.residual_analysis import (
+    exclude_root_segments,
+    summarize_residuals,
+)
 from enochian_lm.root_extraction.utils.analytics_bridge import gather_morph_evidence
 from enochian_lm.root_extraction.utils.preanalysis import (
     fetch_preanalysis_summary,
@@ -1053,6 +1056,12 @@ class RootExtractionCrew:
                     "coverage_ratio": 0.0,
                     "residual_ratio": 1.0 if uncovered else 0.0,
                 }
+            else:
+                breakdown = exclude_root_segments(
+                    breakdown,
+                    root_norm=ngram_lower,
+                    target=norm_form,
+                )
             if breakdown:
                 for seg in breakdown.get("segments", []):
                     canonical = str(seg.get("canonical", "")).strip()
