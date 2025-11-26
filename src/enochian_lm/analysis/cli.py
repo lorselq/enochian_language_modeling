@@ -728,7 +728,9 @@ def _run_residual_cluster(args: argparse.Namespace) -> dict[str, object]:
             "morphs": summary.get("morphs", 0),
         },
     )
-
+    
+    _print_cluster_summary(summary)
+    return summary
 
 def _run_residual_refresh(args: argparse.Namespace) -> tuple[int, int]:
     db_path = Path(args.db_path)
@@ -743,9 +745,6 @@ def _run_residual_refresh(args: argparse.Namespace) -> tuple[int, int]:
         extra={"clusters": refreshed[0], "detail_rows": refreshed[1]},
     )
     return refreshed
-
-    _print_cluster_summary(summary)
-    return summary
 
 
 def _run_morph_factorize(args: argparse.Namespace) -> None:
