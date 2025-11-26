@@ -228,9 +228,8 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
 
             rows_to_insert = []
             for detail in details:
-                normalized = (
-                    str(detail.get("normalized") or detail.get("word") or "").strip()
-                )
+                residual_span = str(detail.get("word") or "").strip()
+                normalized = str(detail.get("normalized") or residual_span).strip()
                 definition = str(detail.get("definition") or "").strip()
                 coverage_ratio = _safe_float(detail.get("coverage_ratio"))
                 residual_ratio = _safe_float(detail.get("residual_ratio"))
@@ -241,6 +240,7 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                 rows_to_insert.append(
                     (
                         cluster_id,
+                        residual_span or normalized,
                         normalized,
                         definition,
                         coverage_ratio,
@@ -260,6 +260,7 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                         """
                         INSERT INTO residual_details (
                             cluster_id,
+                            residual_span,
                             normalized,
                             definition,
                             coverage_ratio,
@@ -267,7 +268,7 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                             avg_confidence,
                             uncovered_json,
                             low_conf_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         rows_to_insert,
                     )
