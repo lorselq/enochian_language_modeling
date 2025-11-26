@@ -21,6 +21,50 @@ class ResidualDetail:
     def length(self) -> int:
         return len(self.normalized or "")
 
+    @classmethod
+    def from_breakdown(cls, payload: dict[str, Any]) -> "ResidualDetail":
+        word = str(payload.get("word") or payload.get("normalized") or "").strip()
+        normalized = str(payload.get("normalized") or word).strip()
+        breakdown = payload.get("breakdown") or {}
+        cov = float(breakdown.get("coverage_ratio") or 0.0)
+        res = float(breakdown.get("residual_ratio") or (1.0 - cov))
+        segs = breakdown.get("segments") or []
+        un = breakdown.get("uncovered") or []
+
+        uncovered = []
+        for u in un:
+            # support both {"text": "..."} and plain strings
+            txt = (u.get("text") if isinstance(u, dict) else u) or ""
+            txt = str(txt).strip()
+            if txt:
+                uncovered.append(txt)
+
+        confs = [
+            s.get("semantic_confidence")
+            for s in segs
+            if s.get("semantic_confidence") is not None
+        ]
+        avg_conf = (sum(float(c) for c in confs) / len(confs)) if confs else None
+
+        low_conf = [
+            f"{(s.get('text') or '').strip()}@{float(s.get('semantic_confidence', 0.0)):.2f}"
+            for s in segs
+            if s.get("semantic_confidence") is not None
+            and float(s.get("semantic_confidence", 0.0)) < 0.5
+            and str(s.get("text") or "").strip()
+        ]
+
+        return cls(
+            word=word or normalized,
+            normalized=normalized,
+            definition=str(payload.get("definition") or "").strip(),
+            coverage_ratio=max(0.0, min(1.0, cov)),
+            residual_ratio=max(0.0, min(1.0, res)),
+            uncovered=uncovered,
+            avg_confidence=avg_conf,
+            low_conf_segments=low_conf,
+        )
+
 
 def exclude_root_segments(
     breakdown: dict[str, Any] | None, root_norm: str, target: str
@@ -89,51 +133,6 @@ def exclude_root_segments(
     updated["coverage_ratio"] = coverage_ratio
     updated["residual_ratio"] = residual_ratio
     return updated
-
-    @classmethod
-    def from_breakdown(cls, payload: dict[str, Any]) -> "ResidualDetail":
-        word = str(payload.get("word") or payload.get("normalized") or "").strip()
-        normalized = str(payload.get("normalized") or word).strip()
-        breakdown = payload.get("breakdown") or {}
-        cov = float(breakdown.get("coverage_ratio") or 0.0)
-        res = float(breakdown.get("residual_ratio") or (1.0 - cov))
-        segs = breakdown.get("segments") or []
-        un = breakdown.get("uncovered") or []
-
-        uncovered = []
-        for u in un:
-            # support both {"text": "..."} and plain strings
-            txt = (u.get("text") if isinstance(u, dict) else u) or ""
-            txt = str(txt).strip()
-            if txt:
-                uncovered.append(txt)
-
-        confs = [
-            s.get("semantic_confidence")
-            for s in segs
-            if s.get("semantic_confidence") is not None
-        ]
-        avg_conf = (sum(float(c) for c in confs) / len(confs)) if confs else None
-
-        low_conf = [
-            f"{(s.get('text') or '').strip()}@{float(s.get('semantic_confidence', 0.0)):.2f}"
-            for s in segs
-            if s.get("semantic_confidence") is not None
-            and float(s.get("semantic_confidence", 0.0)) < 0.5
-            and str(s.get("text") or "").strip()
-        ]
-
-        return cls(
-            word=word or normalized,
-            normalized=normalized,
-            definition=str(payload.get("definition") or "").strip(),
-            coverage_ratio=max(0.0, min(1.0, cov)),
-            residual_ratio=max(0.0, min(1.0, res)),
-            uncovered=uncovered,
-            avg_confidence=avg_conf,
-            low_conf_segments=low_conf,
-        )
-
 
 def _top_residue_fragments(details: list[ResidualDetail], k: int = 6) -> list[tuple[str, int, int]]:
     """
