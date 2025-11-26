@@ -21,6 +21,75 @@ class ResidualDetail:
     def length(self) -> int:
         return len(self.normalized or "")
 
+
+def exclude_root_segments(
+    breakdown: dict[str, Any] | None, root_norm: str, target: str
+) -> dict[str, Any]:
+    """
+    Drop segments that simply echo the candidate root from a breakdown.
+
+    This prevents the root n-gram from vacuously explaining 100% of a word's
+    meaning during residual analysis. The returned breakdown recomputes
+    coverage/residual ratios and uncovered spans after stripping the root.
+    """
+
+    if not breakdown:
+        return {
+            "segments": [],
+            "uncovered": [],
+            "coverage_ratio": 0.0,
+            "residual_ratio": 0.0,
+        }
+
+    normalized_root = str(root_norm or "").strip().lower()
+    target_text = str(target or "")
+    total_len = len(target_text)
+    if not normalized_root or total_len == 0:
+        return breakdown
+
+    kept_segments: list[dict[str, Any]] = []
+    coverage_mask = [False] * total_len
+
+    for segment in breakdown.get("segments") or []:
+        canonical = str(segment.get("canonical", "")).strip().lower()
+        ngram = str(segment.get("ngram", "")).strip().lower()
+        if canonical == normalized_root or ngram == normalized_root:
+            continue
+
+        span = segment.get("span") or [segment.get("start", 0), segment.get("end", 0)]
+        start = int(span[0] or 0)
+        end = int(span[1] or start)
+        start = max(0, min(total_len, start))
+        end = max(start, min(total_len, end))
+
+        for idx in range(start, end):
+            coverage_mask[idx] = True
+
+        kept_segment = dict(segment)
+        kept_segment["span"] = [start, end]
+        kept_segments.append(kept_segment)
+
+    uncovered: list[dict[str, Any]] = []
+    idx = 0
+    while idx < total_len:
+        if coverage_mask[idx]:
+            idx += 1
+            continue
+        start = idx
+        while idx < total_len and not coverage_mask[idx]:
+            idx += 1
+        uncovered.append({"span": [start, idx], "text": target_text[start:idx]})
+
+    coverage_ratio = sum(1 for flag in coverage_mask if flag) / total_len
+    residual_ratio = max(0.0, 1.0 - coverage_ratio)
+
+    updated = dict(breakdown)
+    updated["segments"] = kept_segments
+    updated["uncovered"] = uncovered
+    updated["coverage_ratio"] = coverage_ratio
+    updated["residual_ratio"] = residual_ratio
+    return updated
+
     @classmethod
     def from_breakdown(cls, payload: dict[str, Any]) -> "ResidualDetail":
         word = str(payload.get("word") or payload.get("normalized") or "").strip()

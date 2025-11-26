@@ -18,6 +18,7 @@ from typing import Callable, Iterable, Iterator, Sequence
 from enochian_lm.root_extraction.scripts import init_insights_db
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
 from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
+from enochian_lm.root_extraction.utils.residual_refresh import refresh_residual_details
 
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
@@ -728,6 +729,21 @@ def _run_residual_cluster(args: argparse.Namespace) -> dict[str, object]:
         },
     )
 
+
+def _run_residual_refresh(args: argparse.Namespace) -> tuple[int, int]:
+    db_path = Path(args.db_path)
+    logger.info(
+        "Refreshing residual_details without rerunning pipeline",
+        extra={"db": str(db_path), "run_id": args.run_id},
+    )
+
+    refreshed = refresh_residual_details(db_path, run_id=args.run_id)
+    logger.info(
+        "Residual refresh completed",
+        extra={"clusters": refreshed[0], "detail_rows": refreshed[1]},
+    )
+    return refreshed
+
     _print_cluster_summary(summary)
     return summary
 
@@ -1099,6 +1115,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="PMI threshold when computing fallback residuals",
     )
     residual_cluster.set_defaults(handler=_run_residual_cluster)
+
+    residual_refresh = residual_subparsers.add_parser(
+        "refresh", help="Recompute residual_details for an existing run"
+    )
+    residual_refresh.add_argument(
+        "--run-id",
+        help="Optional run id to refresh (defaults to latest run in the database)",
+    )
+    residual_refresh.set_defaults(handler=_run_residual_refresh)
 
     composite = subparsers.add_parser("composite", help="Composite reconstruction utilities")
     composite_subparsers = composite.add_subparsers(dest="composite_command", required=True)
