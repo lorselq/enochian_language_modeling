@@ -742,6 +742,7 @@ def _run_morph_factorize(args: argparse.Namespace) -> None:
             "out": str(out_dir),
             "alpha": args.alpha,
             "embed": args.embed,
+            "max_features": args.max_features,
             "min_morph_count": args.min_morph_count,
             "min_token_morphs": args.min_token_morphs,
             "row_norm": args.row_norm,
@@ -758,6 +759,7 @@ def _run_morph_factorize(args: argparse.Namespace) -> None:
             str(out_dir),
             alpha=args.alpha,
             embed=args.embed,
+            max_features=args.max_features,
             min_morph_count=args.min_morph_count,
             min_token_morphs=args.min_token_morphs,
             row_norm=args.row_norm,
@@ -1019,6 +1021,7 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
         out=args.morph_out,
         alpha=args.alpha,
         embed=args.embed,
+        max_features=args.max_features,
         min_morph_count=args.min_morph_count,
         min_token_morphs=args.min_token_morphs,
         row_norm=args.row_norm,
@@ -1120,6 +1123,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Gloss embedding strategy targeting ~512-dim vectors",
     )
     morph_factorize.add_argument(
+        "--max-features",
+        type=int,
+        default=None,
+        help="Optional cap for TF-IDF features when using gloss embeddings",
+    )
+    morph_factorize.add_argument(
         "--min-morph-count",
         type=int,
         default=1,
@@ -1185,6 +1194,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["gloss-words", "gloss-chars", "hashing-words"],
         default="gloss-chars",
         help="Gloss embedding strategy targeting ~512-dim vectors",
+    )
+    analyze_all.add_argument(
+        "--max-features",
+        type=int,
+        default=None,
+        help="Optional cap for TF-IDF features when using gloss embeddings",
     )
     analyze_all.add_argument(
         "--min-morph-count",
