@@ -208,7 +208,7 @@ __all__ = ["compute_collocations"]
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Compute collocation statistics")
     parser.add_argument("--db", required=True, help="SQLite database path")
-    parser.add_argument("--min-count", type=int, default=5, help="Minimum joint count")
+    parser.add_argument("--min-count", type=int, default=2, help="Minimum joint count")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of pairs processed")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return parser

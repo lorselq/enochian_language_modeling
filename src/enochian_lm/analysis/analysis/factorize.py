@@ -317,7 +317,7 @@ def factorize_morphemes(
     conn: sqlite3.Connection,
     out_dir: str,
     *,
-    alpha: float = 1.0,
+    alpha: float = 0.05,
     embed: str = "gloss-chars",
     min_morph_count: int = 1,
     min_token_morphs: int = 0,
@@ -560,11 +560,12 @@ if __name__ == "__main__":  # pragma: no cover - manual execution helper
     parser = argparse.ArgumentParser(description="Factorize morph semantics")
     parser.add_argument("--db", required=True, help="Path to SQLite database")
     parser.add_argument("--out", required=True, help="Output directory")
-    parser.add_argument("--alpha", type=float, default=1.0)
+    parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
         default="gloss-chars",
+        help="Gloss embedding strategy targeting ~512-dim vectors",
     )
     parser.add_argument("--min-morph-count", type=int, default=1)
     parser.add_argument("--min-token-morphs", type=int, default=0)
