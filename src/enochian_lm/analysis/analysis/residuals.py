@@ -474,8 +474,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Cluster residual morpheme vectors")
     parser.add_argument("--db", required=True, help="SQLite database path")
     parser.add_argument("--k", type=int, default=10, help="Number of clusters")
-    parser.add_argument("--min-df", type=int, default=2, help="Minimum collocation frequency")
-    parser.add_argument("--pmi-thresh", type=float, default=0.0, help="PMI threshold for neighbors")
+    parser.add_argument("--min-df", type=int, default=1, help="Minimum collocation frequency")
+    parser.add_argument("--pmi-thresh", type=float, default=0.05, help="PMI threshold for neighbors")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return parser
 
