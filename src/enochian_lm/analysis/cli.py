@@ -19,6 +19,7 @@ from enochian_lm.root_extraction.scripts import init_insights_db
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
 from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
 from enochian_lm.root_extraction.utils.residual_refresh import refresh_residual_details
+from enochian_lm.root_extraction.utils.remainders import backfill_root_remainders
 
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
@@ -93,6 +94,31 @@ def _normalize_run_ids(raw_run_ids: str | Sequence[str] | None) -> list[str]:
         raise ValueError("No run ids provided; specify at least one --run-id value")
 
     return normalized
+
+
+def _resolve_run_ids(conn, requested: Sequence[str] | None) -> list[str]:
+    """Return validated run ids, defaulting to the latest when none provided."""
+
+    run_ids = _normalize_run_ids(requested) if requested is not None else []
+    if run_ids:
+        placeholders = ",".join("?" for _ in run_ids)
+        rows = conn.execute(
+            f"SELECT run_id FROM runs WHERE run_id IN ({placeholders})",
+            tuple(run_ids),
+        ).fetchall()
+        resolved = [
+            str(row["run_id"] or "") for row in rows if str(row["run_id"] or "").strip()
+        ]
+        if not resolved:
+            raise ValueError("No matching run ids found in database")
+        return resolved
+
+    row = conn.execute(
+        "SELECT run_id FROM runs ORDER BY datetime(created_at) DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        raise ValueError("No runs found in database; cannot resolve target run")
+    return [str(row["run_id"] or "")]  # latest run
 
 
 def _json_safe(value: object) -> object:
@@ -794,6 +820,31 @@ def _run_residual_refresh(args: argparse.Namespace) -> tuple[int, int]:
     return total_clusters, total_rows
 
 
+def _run_remainder_backfill(args: argparse.Namespace) -> tuple[int, int]:
+    db_path = Path(args.db_path)
+    conn = connect_sqlite(str(db_path))
+    try:
+        ensure_analysis_tables(conn)
+        run_ids = _resolve_run_ids(conn, args.run_id)
+        processed_roots = 0
+        inserted = 0
+        for run_id in run_ids:
+            logger.info(
+                "Backfilling root remainders",
+                extra={"db": str(db_path), "run_id": run_id},
+            )
+            roots_seen, rows = backfill_root_remainders(conn, run_ids=[run_id])
+            processed_roots += roots_seen
+            inserted += rows
+            print(
+                f"[{run_id}] Backfilled {rows} remainder spans across {roots_seen} roots."
+            )
+    finally:
+        conn.close()
+
+    return processed_roots, inserted
+
+
 def _run_morph_factorize(args: argparse.Namespace) -> None:
     db_path = Path(args.db_path)
     out_dir = Path(args.out)
@@ -1198,6 +1249,22 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     refresh.set_defaults(handler=_run_residual_refresh)
+
+    roots = subparsers.add_parser("roots", help="Root-level utilities")
+    roots_subparsers = roots.add_subparsers(dest="roots_command", required=True)
+    remainder_backfill = roots_subparsers.add_parser(
+        "backfill-remainders",
+        help="Backfill root remainder spans from existing analysis runs",
+    )
+    remainder_backfill.add_argument(
+        "--run-id",
+        nargs="+",
+        metavar="RUN_ID",
+        help=(
+            "Optional run id(s) to backfill (defaults to latest run in the database)"
+        ),
+    )
+    remainder_backfill.set_defaults(handler=_run_remainder_backfill)
 
     composite = subparsers.add_parser("composite", help="Composite reconstruction utilities")
     composite_subparsers = composite.add_subparsers(dest="composite_command", required=True)
