@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Dict, Iterable, Iterator, List, Tuple
 
+from tqdm import tqdm
+
 try:  # pragma: no cover - optional dependency
     import numpy as _np
 except Exception:  # pragma: no cover - fallback when numpy is unavailable
@@ -167,7 +169,20 @@ def run_leave_one_out(conn: sqlite3.Connection, limit: int | None = None) -> dic
     composites_processed = 0
     pairs_processed = 0
 
-    for row in _iter_composites(conn, limit):
+    total_composites = conn.execute(
+        "SELECT COUNT(*) FROM composite_reconstruction"
+    ).fetchone()[0]
+    if limit is not None:
+        total_composites = min(int(total_composites), int(limit))
+
+    progress = tqdm(
+        _iter_composites(conn, limit),
+        desc="Attribution",
+        unit="composite",
+        total=total_composites or None,
+    )
+
+    for row in progress:
         try:
             used_morphs_raw = json.loads(row["used_morphs_json"])
         except json.JSONDecodeError:
@@ -236,6 +251,8 @@ def run_leave_one_out(conn: sqlite3.Connection, limit: int | None = None) -> dic
 
         if composite_pairs:
             composites_processed += 1
+
+    progress.close()
 
     if not pair_stats:
         logger.info(
