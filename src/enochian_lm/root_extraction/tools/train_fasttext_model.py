@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FastTextParams:
     vector_size: int = 64
-    window: int = 4
+    window: int = 5
     min_count: int = 1
     sg: int = 1
     min_n: int = 2
