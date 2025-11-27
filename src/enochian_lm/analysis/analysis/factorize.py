@@ -347,6 +347,8 @@ def factorize_morphemes(
     row_norm: bool = False,
     metric: str = "cosine",
     limit: int | None = None,
+    svd_dim: int | None = None,
+    seed: int | None = None,
 ) -> dict[str, object]:
     """Factorize morpheme semantics using ridge regression."""
 
@@ -410,8 +412,13 @@ def factorize_morphemes(
         }
 
     gloss_matrix, dim, vectorizer_name = _vectorize_glosses(
-        filtered_records, embed, max_features
+        filtered_records,
+        embed,
+        max_features=max_features,
+        svd_dim=svd_dim,
+        seed=seed,
     )
+
     if dim == 0 or gloss_matrix.size == 0:
         logger.warning("Gloss embedding produced empty matrix; exiting")
         return {

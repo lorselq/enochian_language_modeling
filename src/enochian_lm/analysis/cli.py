@@ -1,4 +1,5 @@
 """Command line interface for Enochian language modeling utilities."""
+
 from __future__ import annotations
 
 import argparse
@@ -40,14 +41,24 @@ def _configure_logging(verbose: bool) -> None:
 
 def _validate_input_file(path: Path, description: str) -> None:
     if not path.exists() or not path.is_file():
-        raise FileNotFoundError(f"{description} '{path}' does not exist or is not a file")
+        raise FileNotFoundError(
+            f"{description} '{path}' does not exist or is not a file"
+        )
     with path.open("r", encoding="utf-8") as handle:
         handle.read(128)
 
 
-def _atomic_write(path: Path, write_fn: Callable[[NamedTemporaryFile], None], *, mode: str = "w", newline: str | None = "\n") -> None:
+def _atomic_write(
+    path: Path,
+    write_fn: Callable[[NamedTemporaryFile], None],
+    *,
+    mode: str = "w",
+    newline: str | None = "\n",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(mode=mode, delete=False, dir=str(path.parent), encoding="utf-8", newline=newline) as tmp:
+    with NamedTemporaryFile(
+        mode=mode, delete=False, dir=str(path.parent), encoding="utf-8", newline=newline
+    ) as tmp:
         write_fn(tmp)
         tmp.flush()
         os.fsync(tmp.fileno())
@@ -62,7 +73,9 @@ def _write_csv_header(path: Path, header: Iterable[str]) -> None:
     _atomic_write(path, writer, newline="")
 
 
-def _write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
+def _write_csv(
+    path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]
+) -> None:
     def writer(tmp: NamedTemporaryFile) -> None:
         csv_writer = csv.writer(tmp)
         csv_writer.writerow(list(header))
@@ -220,9 +233,15 @@ def _coerce_sequence(raw: object) -> list[str]:
             try:
                 data = json.loads(text)
             except json.JSONDecodeError:
-                data = [segment.strip() for segment in text.split(",") if segment.strip()]
+                data = [
+                    segment.strip() for segment in text.split(",") if segment.strip()
+                ]
         else:
-            data = [segment.strip() for segment in text.replace("|", ",").split(",") if segment.strip()]
+            data = [
+                segment.strip()
+                for segment in text.replace("|", ",").split(",")
+                if segment.strip()
+            ]
     if isinstance(data, (set, tuple)):
         iterable = list(data)
     elif isinstance(data, list):
@@ -268,8 +287,14 @@ def _ingest_composite_parses(conn, path: Path) -> int:
                 extra={"payload_keys": list(payload.keys())},
             )
             continue
-        gold_gloss = _coerce_optional_str(payload, ("gold_gloss", "gloss", "definition"))
-        error_raw = payload.get("recon_error") or payload.get("residual") or payload.get("error")
+        gold_gloss = _coerce_optional_str(
+            payload, ("gold_gloss", "gloss", "definition")
+        )
+        error_raw = (
+            payload.get("recon_error")
+            or payload.get("residual")
+            or payload.get("error")
+        )
         try:
             recon_error = float(error_raw) if error_raw is not None else 0.0
         except (TypeError, ValueError):
@@ -370,7 +395,9 @@ def _backfill_composite_reconstruction(
 
     target_run_id: str | None = run_id
     if target_run_id is None:
-        row = conn.execute("SELECT run_id FROM runs ORDER BY created_at DESC LIMIT 1").fetchone()
+        row = conn.execute(
+            "SELECT run_id FROM runs ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
         if row:
             target_run_id = str(row[0])
     if target_run_id is None:
@@ -434,7 +461,9 @@ def _backfill_composite_reconstruction(
         gloss = str(row["definition"] or row["glossator_def"] or "").strip()
         recon_error = row["residual_ratio"]
         if recon_error is None:
-            recon_error = row["cluster_residual"] if row["cluster_residual"] is not None else 0.0
+            recon_error = (
+                row["cluster_residual"] if row["cluster_residual"] is not None else 0.0
+            )
         morph_breakdown = _parse_uncovered_fragments(row["uncovered_json"])
         for key in ("morph_breakdown_json", "morph_breakdown"):
             if morph_breakdown:
@@ -451,7 +480,9 @@ def _backfill_composite_reconstruction(
                     break
 
         if morph_breakdown:
-            morphs = [m for m in (_normalize_for_fasttext(m) for m in morph_breakdown) if m]
+            morphs = [
+                m for m in (_normalize_for_fasttext(m) for m in morph_breakdown) if m
+            ]
         elif accepted_root:
             normalized_root = _normalize_for_fasttext(accepted_root) or accepted_root
             morphs = [normalized_root]
@@ -555,7 +586,14 @@ def _export_attribution_csv(db_path: Path, out_path: Path) -> None:
     finally:
         conn.close()
 
-    header = ("morph_a", "morph_b", "delta_a_given_b", "delta_b_given_a", "n_tokens", "updated_at")
+    header = (
+        "morph_a",
+        "morph_b",
+        "delta_a_given_b",
+        "delta_b_given_a",
+        "n_tokens",
+        "updated_at",
+    )
     data = (
         (
             row["morph_a"],
@@ -745,9 +783,7 @@ def _print_cluster_summary(summary: dict[str, object]) -> None:
             example_str = ", ".join(str(item) for item in examples)
         else:
             example_str = str(examples)
-        print(
-            f"{cluster_id:>7} | {size:>5} | {cluster_mean:>7.3f} | {example_str}"
-        )
+        print(f"{cluster_id:>7} | {size:>5} | {cluster_mean:>7.3f} | {example_str}")
 
 
 def _run_residual_cluster(args: argparse.Namespace) -> dict[str, object]:
@@ -782,9 +818,10 @@ def _run_residual_cluster(args: argparse.Namespace) -> dict[str, object]:
             "morphs": summary.get("morphs", 0),
         },
     )
-    
+
     _print_cluster_summary(summary)
     return summary
+
 
 def _run_residual_refresh(args: argparse.Namespace) -> tuple[int, int]:
     db_path = Path(args.db_path)
@@ -848,6 +885,10 @@ def _run_remainder_backfill(args: argparse.Namespace) -> tuple[int, int]:
 def _run_morph_factorize(args: argparse.Namespace) -> None:
     db_path = Path(args.db_path)
     out_dir = Path(args.out)
+
+    seed = getattr(args, "seed", None)
+    svd_dim = getattr(args, "svd_dim", None)
+
     logger.info(
         "Running morph semantic factorization",
         extra={
@@ -861,6 +902,7 @@ def _run_morph_factorize(args: argparse.Namespace) -> None:
             "row_norm": args.row_norm,
             "metric": args.metric,
             "limit": args.limit,
+            "svd_dim": svd_dim,
         },
     )
 
@@ -878,6 +920,8 @@ def _run_morph_factorize(args: argparse.Namespace) -> None:
             row_norm=args.row_norm,
             metric=args.metric,
             limit=args.limit,
+            svd_dim=svd_dim,
+            seed=seed,
         )
     finally:
         conn.close()
@@ -931,7 +975,11 @@ def _run_morph_factorize(args: argparse.Namespace) -> None:
 
 def _run_report_pipeline(args: argparse.Namespace) -> None:
     db_path = Path(args.db_path)
-    out_dir = Path(args.out) if args.out else Path("runs") / f"{utcnow_iso().replace(':', '').replace('-', '')}_pipeline"
+    out_dir = (
+        Path(args.out)
+        if args.out
+        else Path("runs") / f"{utcnow_iso().replace(':', '').replace('-', '')}_pipeline"
+    )
     baseline = args.baseline
 
     logger.info(
@@ -1004,9 +1052,7 @@ def _run_report_pipeline(args: argparse.Namespace) -> None:
             _fmt(median_error),
         )
     )
-    print(
-        "Report written to {}".format(out_dir.joinpath("pipeline_report.html"))
-    )
+    print("Report written to {}".format(out_dir.joinpath("pipeline_report.html")))
 
 
 def _run_preanalyze(args: argparse.Namespace) -> None:
@@ -1054,6 +1100,7 @@ def _run_preanalyze(args: argparse.Namespace) -> None:
                     preview_items.append(str(canonical))
             preview = f" → {', '.join(preview_items)}" if preview_items else ""
             print(f"- {ngram}: occurrences={occurrences}{preview}")
+
 
 def _run_analyze_all(args: argparse.Namespace) -> None:
     parses_path = Path(args.parses) if args.parses else None
@@ -1144,6 +1191,8 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
         row_norm=args.row_norm,
         metric=args.metric,
         limit=None,
+        svd_dim=getattr(args, "svd_dim", None),
+        seed=getattr(args, "seed", None),
     )
     _run_morph_factorize(combined_args)
 
@@ -1194,7 +1243,9 @@ def _build_parser() -> argparse.ArgumentParser:
     pre_parser.set_defaults(handler=_run_preanalyze)
 
     attrib_parser = subparsers.add_parser("attrib", help="Attribution tooling")
-    attrib_subparsers = attrib_parser.add_subparsers(dest="attrib_command", required=True)
+    attrib_subparsers = attrib_parser.add_subparsers(
+        dest="attrib_command", required=True
+    )
     attrib_loo = attrib_subparsers.add_parser("loo", help="Leave-one-out attribution")
     attrib_loo.add_argument(
         "--limit", type=int, default=None, help="Limit number of composites processed"
@@ -1203,13 +1254,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
     colloc = subparsers.add_parser("colloc", help="Collocation statistics")
     colloc.add_argument("--min-count", type=int, default=2, help="Minimum joint count")
-    colloc.add_argument("--limit", type=int, default=None, help="Limit number of pairs processed")
+    colloc.add_argument(
+        "--limit", type=int, default=None, help="Limit number of pairs processed"
+    )
     colloc.set_defaults(handler=_run_colloc)
 
     residual = subparsers.add_parser("residual", help="Residual analytics")
-    residual_subparsers = residual.add_subparsers(dest="residual_command", required=True)
-    residual_cluster = residual_subparsers.add_parser("cluster", help="Cluster residual spans")
-    residual_cluster.add_argument("--k", type=int, default=10, help="Number of clusters")
+    residual_subparsers = residual.add_subparsers(
+        dest="residual_command", required=True
+    )
+    residual_cluster = residual_subparsers.add_parser(
+        "cluster", help="Cluster residual spans"
+    )
+    residual_cluster.add_argument(
+        "--k", type=int, default=10, help="Number of clusters"
+    )
     residual_cluster.add_argument(
         "--min-df", type=int, default=1, help="Minimum document frequency"
     )
@@ -1228,9 +1287,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--run-id",
         nargs="+",
         metavar="RUN_ID",
-        help=(
-            "Optional run id(s) to refresh (defaults to latest run in the database)"
-        ),
+        help=("Optional run id(s) to refresh (defaults to latest run in the database)"),
     )
     residual_refresh.set_defaults(handler=_run_residual_refresh)
 
@@ -1244,9 +1301,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--run-id",
         nargs="+",
         metavar="RUN_ID",
-        help=(
-            "Optional run id(s) to refresh (defaults to latest run in the database)"
-        ),
+        help=("Optional run id(s) to refresh (defaults to latest run in the database)"),
     )
     refresh.set_defaults(handler=_run_residual_refresh)
 
@@ -1266,8 +1321,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     remainder_backfill.set_defaults(handler=_run_remainder_backfill)
 
-    composite = subparsers.add_parser("composite", help="Composite reconstruction utilities")
-    composite_subparsers = composite.add_subparsers(dest="composite_command", required=True)
+    composite = subparsers.add_parser(
+        "composite", help="Composite reconstruction utilities"
+    )
+    composite_subparsers = composite.add_subparsers(
+        dest="composite_command", required=True
+    )
     composite_backfill = composite_subparsers.add_parser(
         "backfill", help="Backfill composite_reconstruction from cluster residuals"
     )
@@ -1283,9 +1342,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     morph = subparsers.add_parser("morph", help="Morph semantic tooling")
     morph_subparsers = morph.add_subparsers(dest="morph_command", required=True)
-    morph_factorize = morph_subparsers.add_parser("factorize", help="Factorize morph semantics")
-    morph_factorize.add_argument("--alpha", type=float, default=0.05, help="Regularization strength")
-    morph_factorize.add_argument("--out", default="runs/reports/", help="Output directory for run artifacts")
+    morph_factorize = morph_subparsers.add_parser(
+        "factorize", help="Factorize morph semantics"
+    )
+    morph_factorize.add_argument(
+        "--alpha", type=float, default=0.05, help="Regularization strength"
+    )
+    morph_factorize.add_argument(
+        "--out", default="runs/reports/", help="Output directory for run artifacts"
+    )
     morph_factorize.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
@@ -1331,14 +1396,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--svd-dim",
         type=int,
         default=None,
-        help="If set, apply TruncatedSVD to reduce gloss vectors to specified dimensionality (recommended: 512)"
+        help="If set, apply TruncatedSVD to reduce gloss vectors to specified dimensionality (recommended: 512)",
     )
     morph_factorize.set_defaults(handler=_run_morph_factorize)
 
     report = subparsers.add_parser("report", help="Reporting utilities")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
-    report_pipeline = report_subparsers.add_parser("pipeline", help="Generate a pipeline report")
-    report_pipeline.add_argument("--out", default="runs/reports/", help="Output directory for the report")
+    report_pipeline = report_subparsers.add_parser(
+        "pipeline", help="Generate a pipeline report"
+    )
+    report_pipeline.add_argument(
+        "--out", default="runs/reports/", help="Output directory for the report"
+    )
     report_pipeline.add_argument(
         "--baseline",
         help="Optional baseline residual JSONL for comparisons",
@@ -1349,22 +1418,43 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze = subparsers.add_parser("analyze", help="Run all placeholder analytics")
     analyze_subparsers = analyze.add_subparsers(dest="analyze_command", required=True)
     analyze_all = analyze_subparsers.add_parser("all", help="Run all placeholder tasks")
-    
+
     analyze_all.add_argument(
         "--parses",
         required=False,
         help="Path to parses JSONL (required unless reusing existing composite parses)",
     )
-    analyze_all.add_argument("--attrib-out", default="runs/reports/attribution.csv", help="Attribution CSV output path")
-    analyze_all.add_argument("--colloc-out", default="runs/reports/collocations.csv", help="Collocation CSV output path")
-    analyze_all.add_argument("--min-count", type=int, default=2, help="Minimum joint count")
-    analyze_all.add_argument("--k", type=int, default=10, help="Number of clusters")
-    analyze_all.add_argument("--min-df", type=int, default=1, help="Minimum document frequency")
     analyze_all.add_argument(
-        "--pmi-thresh", type=float, default=0.05, help="PMI threshold for residual clustering"
+        "--attrib-out",
+        default="runs/reports/attribution.csv",
+        help="Attribution CSV output path",
     )
-    analyze_all.add_argument("--residual-out", default="runs/reports/residual_clusters.json", help="Residual clustering JSON output path")
-    analyze_all.add_argument("--alpha", type=float, default=0.05, help="Regularization strength")
+    analyze_all.add_argument(
+        "--colloc-out",
+        default="runs/reports/collocations.csv",
+        help="Collocation CSV output path",
+    )
+    analyze_all.add_argument(
+        "--min-count", type=int, default=2, help="Minimum joint count"
+    )
+    analyze_all.add_argument("--k", type=int, default=10, help="Number of clusters")
+    analyze_all.add_argument(
+        "--min-df", type=int, default=1, help="Minimum document frequency"
+    )
+    analyze_all.add_argument(
+        "--pmi-thresh",
+        type=float,
+        default=0.05,
+        help="PMI threshold for residual clustering",
+    )
+    analyze_all.add_argument(
+        "--residual-out",
+        default="runs/reports/residual_clusters.json",
+        help="Residual clustering JSON output path",
+    )
+    analyze_all.add_argument(
+        "--alpha", type=float, default=0.05, help="Regularization strength"
+    )
     analyze_all.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
@@ -1401,7 +1491,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Reconstruction error metric",
     )
     analyze_all.add_argument(
-        "--morph-out", default="runs/reports/", help="Morph factorization output directory"
+        "--morph-out",
+        default="runs/reports/",
+        help="Morph factorization output directory",
     )
     analyze_all.add_argument(
         "--reuse-db-parses",
@@ -1414,7 +1506,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--svd-dim",
         type=int,
         default=None,
-        help="If set, apply TruncatedSVD to reduce gloss vectors to specified dimensionality (recommended: 512)"
+        help="If set, apply TruncatedSVD to reduce gloss vectors to specified dimensionality (recommended: 512)",
     )
     analyze_all.set_defaults(handler=_run_analyze_all)
 
@@ -1445,7 +1537,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args.handler(args)
     except (FileNotFoundError, OSError, ValueError) as error:
-        logger.error(f"Command failed. Reason: {str(error)}", exc_info=False, extra={"error": str(error)})
+        logger.error(
+            f"Command failed. Reason: {str(error)}",
+            exc_info=False,
+            extra={"error": str(error)},
+        )
         return 2
 
     return 0
