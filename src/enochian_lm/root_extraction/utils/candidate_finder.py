@@ -33,6 +33,7 @@ class MorphemeCandidateFinder:
         ngram_db_path: Path,
         fasttext_model_path: Path,
         dictionary_entries: Sequence[EntryRecord],
+        *,
         weights: tuple[float, float, float] = (0.5, 0.3, 0.2),
         similarity_threshold: float = 0.4,
         edit_threshold: int = 70,
@@ -40,6 +41,10 @@ class MorphemeCandidateFinder:
         min_n: int = 2,
         max_n: int = 6,
         beam_width: int = 5,
+        min_candidate_cos_sim: float = 0.2,
+        min_overlap_ratio: float = 0.2,
+        max_candidates: int = 10,
+        multi_segment_bonus: float = 0.0,
     ):
         # Connect to ngram SQLite index
         self.conn = sqlite3.connect(str(ngram_db_path))
@@ -65,6 +70,10 @@ class MorphemeCandidateFinder:
         self.min_n = min_n
         self.max_n = max_n
         self.beam_width = beam_width
+        self.min_candidate_cos_sim = min_candidate_cos_sim
+        self.min_overlap_ratio = min_overlap_ratio
+        self.max_candidates = max_candidates
+        self.multi_segment_bonus = multi_segment_bonus
 
         # Load the ngram → [(canonical, tf, df), ...] map
         self._load_ngram_index()
@@ -350,7 +359,23 @@ class MorphemeCandidateFinder:
             "residual_ratio": residual_ratio,
         }
 
-    def find_candidates(self, target: str, top_k: int = 5) -> list[dict]:
+    def _passes_overlap(self, target: str, breakdown: dict) -> bool:
+        """Heuristic coverage check to keep loosest possible overlaps configurable."""
+
+        if not target:
+            return False
+        if self.min_overlap_ratio <= 0:
+            return True
+        coverage_ratio = float(breakdown.get("coverage_ratio") or 0.0)
+        return coverage_ratio >= self.min_overlap_ratio
+
+    def find_candidates(
+        self,
+        target: str,
+        *,
+        top_k: int | None = None,
+        min_cos_sim: float | None = None,
+    ) -> list[dict]:
         """
         Full pipeline: segment, score, ensure normalized, prune by cos_sim, and return top-K.
         Guarantees we never lose valid index hits simply because their 'normalized' was missing.
@@ -380,10 +405,13 @@ class MorphemeCandidateFinder:
         )
 
         # 3) Prune low-semantic matches (skip for very short targets)
+        cos_cutoff = max(self.prune_threshold, self.min_candidate_cos_sim)
+        if min_cos_sim is not None:
+            cos_cutoff = max(cos_cutoff, float(min_cos_sim))
         if len(target) <= 2:
             filtered = scored
         else:
-            filtered = [c for c in scored if c["cos_sim"] >= self.prune_threshold]
+            filtered = [c for c in scored if c["cos_sim"] >= cos_cutoff]
 
         # 4) Guarantee at least the root itself
         root_norm = target.lower()
@@ -407,10 +435,31 @@ class MorphemeCandidateFinder:
             if all(c["normalized"] != root_norm for c in filtered):
                 filtered.insert(0, fallback)
 
-        # 5) Sort by composite score and trim to top_k
-        candidates = sorted(filtered, key=lambda c: c["composite"], reverse=True)[
-            :top_k
-        ]
+        # 5) Apply coverage-based overlap filter
+        overlap_filtered = []
+        dropped_overlap = 0
+        for cand in filtered:
+            bd = cand.get("breakdown") or {}
+            if self._passes_overlap(target, bd):
+                overlap_filtered.append(cand)
+            else:
+                dropped_overlap += 1
+
+        if dropped_overlap:
+            logger.info(
+                "Dropped candidates below overlap threshold",
+                extra={"target": target, "dropped": dropped_overlap},
+            )
+        filtered = overlap_filtered or filtered
+
+        # 6) Sort by composite score (with optional bonus for multi-segment parses)
+        def _score_for_sort(cand: dict) -> float:
+            segments = cand.get("breakdown", {}).get("segments") or []
+            bonus = self.multi_segment_bonus if len(segments) >= 2 else 0.0
+            return cand.get("composite", 0.0) + bonus
+
+        top_limit = top_k if top_k is not None else self.max_candidates
+        candidates = sorted(filtered, key=_score_for_sort, reverse=True)[:top_limit]
         print(
             "[Debug][find_candidates] final candidates:",
             [c["normalized"] for c in candidates],
