@@ -39,7 +39,7 @@ class MorphemeCandidateFinder:
         edit_threshold: int = 70,
         prune_threshold: float = 0.0,
         min_n: int = 2,
-        max_n: int = 6,
+        max_n: int = 7,
         beam_width: int = 5,
         min_candidate_cos_sim: float = 0.2,
         min_overlap_ratio: float = 0.2,
