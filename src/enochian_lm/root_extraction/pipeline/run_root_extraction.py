@@ -33,6 +33,12 @@ from enochian_lm.root_extraction.utils.residual_analysis import (
     exclude_root_segments,
     summarize_residuals,
 )
+from enochian_lm.root_extraction.utils.remainders import (
+    RootRemainder,
+    extract_root_remainders,
+    persist_root_remainders,
+    summarize_root_remainders,
+)
 from enochian_lm.root_extraction.utils.analytics_bridge import gather_morph_evidence
 from enochian_lm.root_extraction.utils.preanalysis import (
     fetch_preanalysis_summary,
@@ -480,6 +486,14 @@ class RootExtractionCrew:
     @staticmethod
     def _vector_norm(values: Sequence[float]) -> float:
         return math.sqrt(sum(float(v) * float(v) for v in values))
+
+    def _persist_root_remainders(self, rows: list[RootRemainder]) -> None:
+        """Persist deterministic root remainder spans for the current run."""
+
+        if not rows:
+            return
+
+        persist_root_remainders(self.new_definitions_db, rows=rows)
 
     def _persist_composite_reconstruction(
         self, composites: list[dict[str, object]]
@@ -1036,6 +1050,8 @@ class RootExtractionCrew:
         residual_inputs = []
         segment_counter: Counter[str] = Counter()
         residual_counter: Counter[str] = Counter()
+        remainder_rows: list[RootRemainder] = []
+        now_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
         seen_norms = set()
         for original in cluster:
             norm_form = _get_field(original, "normalized", "").lower()
@@ -1083,10 +1099,34 @@ class RootExtractionCrew:
                 }
             )
 
+            for remainder in extract_root_remainders(ngram_lower, norm_form):
+                remainder_rows.append(
+                    RootRemainder(
+                        run_id=self.run_id,
+                        root=ngram_lower,
+                        word=str(display_word or norm_form),
+                        normalized=norm_form,
+                        remainder=remainder["remainder"],
+                        kind=remainder["kind"],
+                        span_start=int(remainder["span_start"]),
+                        span_end=int(remainder["span_end"]),
+                        created_at=now_ts,
+                    )
+                )
+
         residual_report = summarize_residuals(
             root=ngram_lower,
             analyses=residual_inputs,
         )
+
+        self._persist_root_remainders(remainder_rows)
+        remainder_summary = summarize_root_remainders(
+            self.new_definitions_db, run_id=self.run_id, root=ngram_lower
+        )
+        if isinstance(residual_report, dict):
+            guidance_json = residual_report.get("residual_guidance_json") or {}
+            guidance_json["remainders"] = remainder_summary
+            residual_report["residual_guidance_json"] = guidance_json
 
         analytics_summary = gather_morph_evidence(
             self.new_definitions_db,
