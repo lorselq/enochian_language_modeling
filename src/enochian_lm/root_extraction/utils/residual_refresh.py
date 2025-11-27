@@ -18,6 +18,9 @@ from enochian_lm.root_extraction.utils.residual_analysis import (
 
 logger = logging.getLogger(__name__)
 
+COMPOSITE_TOP_K = 5
+MIN_MULTI_SEGMENTS = 2
+
 
 def _safe_float(value: object) -> float | None:
     try:
@@ -129,6 +132,19 @@ def _apply_root_prefix_residual_fallback(
     )
 
 
+def _is_self_composite(breakdown: dict[str, object]) -> bool:
+    segments = breakdown.get("segments") if isinstance(breakdown, dict) else None
+    if not segments or len(segments) < MIN_MULTI_SEGMENTS:
+        return False
+    canonicals = [
+        str(seg.get("canonical") or "").lower()
+        for seg in segments
+        if isinstance(seg, dict)
+    ]
+    canonicals = [c for c in canonicals if c]
+    return len(canonicals) >= MIN_MULTI_SEGMENTS and len(set(canonicals)) == 1
+
+
 def _load_words(conn: sqlite3.Connection, cluster_id: int) -> list[tuple[str, str]]:
     rows = conn.execute(
         "SELECT DISTINCT source_word, definition FROM raw_defs WHERE cluster_id = ?",
@@ -182,6 +198,13 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
 
         updated_clusters = 0
         detail_rows_total = 0
+        token_stats = {
+            "considered": 0,
+            "multi_selected": 0,
+            "self_pair_dropped": 0,
+            "fallback_used": 0,
+            "missing_breakdown": 0,
+        }
 
         for cluster in tqdm(clusters, desc="Refreshing clusters", unit="cluster"):
             cluster_id = int(cluster["cluster_id"])
@@ -198,11 +221,37 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                 leave=False,
             ):
                 norm = word.lower()
+                token_stats["considered"] += 1
                 breakdown = None
-                candidates = candidate_finder.find_candidates(norm, top_k=1)
-                if candidates:
-                    breakdown = candidates[0].get("breakdown")
+                candidates = candidate_finder.find_candidates(
+                    norm,
+                    top_k=COMPOSITE_TOP_K,
+                    min_cos_sim=candidate_finder.min_candidate_cos_sim,
+                )
+
+                multi_segment_breakdowns: list[dict[str, object]] = []
+                single_breakdowns: list[dict[str, object]] = []
+                for cand in candidates:
+                    bd = cand.get("breakdown") if isinstance(cand, dict) else None
+                    if not bd:
+                        token_stats["missing_breakdown"] += 1
+                        continue
+                    if _is_self_composite(bd):
+                        token_stats["self_pair_dropped"] += 1
+                        continue
+                    segments = bd.get("segments") if isinstance(bd, dict) else []
+                    if segments and len(segments) >= MIN_MULTI_SEGMENTS:
+                        multi_segment_breakdowns.append(bd)
+                    else:
+                        single_breakdowns.append(bd)
+
+                if multi_segment_breakdowns:
+                    breakdown = multi_segment_breakdowns[0]
+                    token_stats["multi_selected"] += 1
+                elif single_breakdowns:
+                    breakdown = single_breakdowns[0]
                 if not breakdown:
+                    token_stats["fallback_used"] += 1
                     uncovered = (
                         [{"span": [0, len(norm)], "text": norm}] if norm else []
                     )
@@ -307,6 +356,11 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                 "run_id": target_run,
                 "clusters": updated_clusters,
                 "detail_rows": detail_rows_total,
+                "tokens_considered": token_stats["considered"],
+                "multi_selected": token_stats["multi_selected"],
+                "self_pair_dropped": token_stats["self_pair_dropped"],
+                "fallback_used": token_stats["fallback_used"],
+                "missing_breakdown": token_stats["missing_breakdown"],
             },
         )
         return updated_clusters, detail_rows_total

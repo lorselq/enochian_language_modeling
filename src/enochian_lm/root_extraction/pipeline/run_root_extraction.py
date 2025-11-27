@@ -49,6 +49,9 @@ from enochian_lm.analysis.utils.sql import ensure_analysis_tables
 
 logger = logging.getLogger(__name__)
 
+CANDIDATE_TOP_K = 5
+MIN_MULTI_SEGMENTS = 2
+
 GOLD = "\033[38;5;178m"
 GREEN = "\033[38;5;120m"
 YELLOW = "\033[38;5;190m"
@@ -91,6 +94,10 @@ class RootExtractionCrew:
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=self.model_path,
             dictionary_entries=self.entries,
+            min_candidate_cos_sim=0.15,
+            min_overlap_ratio=0.1,
+            max_candidates=CANDIDATE_TOP_K,
+            multi_segment_bonus=0.25,
         )
 
         self._upgrade_run_schema()
@@ -586,11 +593,23 @@ class RootExtractionCrew:
             return None
         if norm in self._breakdown_cache:
             return self._breakdown_cache[norm]
-        candidates = self.candidate_finder.find_candidates(norm, top_k=1)
+        candidates = self.candidate_finder.find_candidates(norm, top_k=CANDIDATE_TOP_K)
         breakdown = None
-        if candidates:
-            top_candidate = candidates[0]
-            breakdown = top_candidate.get("breakdown") if top_candidate else None
+        multi = []
+        singles = []
+        for cand in candidates:
+            bd = cand.get("breakdown") if isinstance(cand, dict) else None
+            if not bd:
+                continue
+            segments = bd.get("segments") if isinstance(bd, dict) else []
+            if segments and len(segments) >= MIN_MULTI_SEGMENTS:
+                multi.append(bd)
+            else:
+                singles.append(bd)
+        if multi:
+            breakdown = multi[0]
+        elif singles:
+            breakdown = singles[0]
         self._breakdown_cache[norm] = breakdown
         return breakdown
 
