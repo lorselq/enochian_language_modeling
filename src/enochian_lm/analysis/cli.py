@@ -1285,12 +1285,12 @@ def _build_parser() -> argparse.ArgumentParser:
     morph_subparsers = morph.add_subparsers(dest="morph_command", required=True)
     morph_factorize = morph_subparsers.add_parser("factorize", help="Factorize morph semantics")
     morph_factorize.add_argument("--alpha", type=float, default=0.05, help="Regularization strength")
-    morph_factorize.add_argument("--out", default="src/enochian_lm/root_extraction/interpretation/", help="Output directory for run artifacts")
+    morph_factorize.add_argument("--out", default="runs/reports/", help="Output directory for run artifacts")
     morph_factorize.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
         default="gloss-chars",
-        help="Gloss embedding strategy targeting ~512-dim vectors",
+        help="Gloss embedding strategy (hashing-words: ~4096; gloss-chars and gloss-words: ~5000 to ~6000)",
     )
     morph_factorize.add_argument(
         "--max-features",
@@ -1318,7 +1318,7 @@ def _build_parser() -> argparse.ArgumentParser:
     morph_factorize.add_argument(
         "--metric",
         choices=["mse", "cosine"],
-        default="mse",
+        default="cosine",
         help="Reconstruction error metric",
     )
     morph_factorize.add_argument(
@@ -1327,12 +1327,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Limit number of tokens processed",
     )
+    morph_factorize.add_argument(
+        "--svd-dim",
+        type=int,
+        default=None,
+        help="If set, apply TruncatedSVD to reduce gloss vectors to specified dimensionality (recommended: 512)"
+    )
     morph_factorize.set_defaults(handler=_run_morph_factorize)
 
     report = subparsers.add_parser("report", help="Reporting utilities")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
     report_pipeline = report_subparsers.add_parser("pipeline", help="Generate a pipeline report")
-    report_pipeline.add_argument("--out", default="src/enochian_lm/root_extraction/interpretation/", help="Output directory for the report")
+    report_pipeline.add_argument("--out", default="runs/reports/", help="Output directory for the report")
     report_pipeline.add_argument(
         "--baseline",
         help="Optional baseline residual JSONL for comparisons",
@@ -1349,21 +1355,21 @@ def _build_parser() -> argparse.ArgumentParser:
         required=False,
         help="Path to parses JSONL (required unless reusing existing composite parses)",
     )
-    analyze_all.add_argument("--attrib-out", default="src/enochian_lm/root_extraction/interpretation/attribution.csv", help="Attribution CSV output path")
-    analyze_all.add_argument("--colloc-out", default="src/enochian_lm/root_extraction/interpretation/collocations.csv", help="Collocation CSV output path")
+    analyze_all.add_argument("--attrib-out", default="runs/reports/attribution.csv", help="Attribution CSV output path")
+    analyze_all.add_argument("--colloc-out", default="runs/reports/collocations.csv", help="Collocation CSV output path")
     analyze_all.add_argument("--min-count", type=int, default=2, help="Minimum joint count")
     analyze_all.add_argument("--k", type=int, default=10, help="Number of clusters")
     analyze_all.add_argument("--min-df", type=int, default=1, help="Minimum document frequency")
     analyze_all.add_argument(
         "--pmi-thresh", type=float, default=0.05, help="PMI threshold for residual clustering"
     )
-    analyze_all.add_argument("--residual-out", default="src/enochian_lm/root_extraction/interpretation/residual_clusters.json", help="Residual clustering JSON output path")
+    analyze_all.add_argument("--residual-out", default="runs/reports/residual_clusters.json", help="Residual clustering JSON output path")
     analyze_all.add_argument("--alpha", type=float, default=0.05, help="Regularization strength")
     analyze_all.add_argument(
         "--embed",
         choices=["gloss-words", "gloss-chars", "hashing-words"],
         default="gloss-chars",
-        help="Gloss embedding strategy targeting ~512-dim vectors",
+        help="Gloss embedding strategy (hashing-words: ~4096; gloss-chars and gloss-words: ~5000 to ~6000)",
     )
     analyze_all.add_argument(
         "--max-features",
@@ -1391,11 +1397,11 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze_all.add_argument(
         "--metric",
         choices=["mse", "cosine"],
-        default="mse",
+        default="cosine",
         help="Reconstruction error metric",
     )
     analyze_all.add_argument(
-        "--morph-out", default="src/enochian_lm/root_extraction/interpretation/", help="Morph factorization output directory"
+        "--morph-out", default="runs/reports/", help="Morph factorization output directory"
     )
     analyze_all.add_argument(
         "--reuse-db-parses",
@@ -1403,6 +1409,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Reuse existing composite_reconstruction rows instead of ingesting --parses"
         ),
+    )
+    analyze_all.add_argument(
+        "--svd-dim",
+        type=int,
+        default=None,
+        help="If set, apply TruncatedSVD to reduce gloss vectors to specified dimensionality (recommended: 512)"
     )
     analyze_all.set_defaults(handler=_run_analyze_all)
 
