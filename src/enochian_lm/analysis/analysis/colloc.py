@@ -10,6 +10,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterator
 
+from tqdm import tqdm
+
 from ..utils.sql import ensure_analysis_tables, upsert_rows
 from ..utils.stats import llr, pmi
 from ..utils.text import utcnow_iso
@@ -101,7 +103,7 @@ def compute_collocations(
     asym_values: list[float] = []
     debug_candidates: list[tuple[float, str, str, int]] = []
 
-    for record in pairs:
+    for record in tqdm(pairs, desc="Scoring collocations", unit="pair"):
         count_ab = record.count_ab
         if count_ab < min_count:
             continue
