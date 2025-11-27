@@ -5,6 +5,8 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from tqdm import tqdm
+
 from enochian_lm.analysis.utils.sql import connect_sqlite
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_lm.root_extraction.utils.config import get_config_paths
@@ -181,7 +183,7 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
         updated_clusters = 0
         detail_rows_total = 0
 
-        for cluster in clusters:
+        for cluster in tqdm(clusters, desc="Refreshing clusters", unit="cluster"):
             cluster_id = int(cluster["cluster_id"])
             root = str(cluster["ngram"] or "").strip().lower()
             words = _load_words(conn, cluster_id)
@@ -189,7 +191,12 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                 continue
 
             residual_inputs: list[dict[str, object]] = []
-            for word, definition in words:
+            for word, definition in tqdm(
+                words,
+                desc=f"Cluster {cluster_id} words",
+                unit="word",
+                leave=False,
+            ):
                 norm = word.lower()
                 breakdown = None
                 candidates = candidate_finder.find_candidates(norm, top_k=1)

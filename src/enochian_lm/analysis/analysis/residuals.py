@@ -11,6 +11,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, List
 
+from tqdm import tqdm
+
 try:  # pragma: no cover - optional dependency guard
     import numpy as _np
 except Exception:  # pragma: no cover - fallback path when numpy missing
@@ -130,7 +132,11 @@ def _compute_residual_fallback(
 ) -> dict[str, Vector]:
     _ensure_numpy()
     residuals: dict[str, Vector] = {}
-    for morph, vector in morph_vectors.items():
+    for morph, vector in tqdm(
+        morph_vectors.items(),
+        desc="Computing residual fallbacks",
+        unit="morph",
+    ):
         neighbor_entries = [
             morph_vectors[neighbor]
             for neighbor, score in neighbors.get(morph, [])
@@ -149,7 +155,9 @@ def _compute_residual_fallback(
 def _normalize_vectors(raw: dict[str, Vector]) -> dict[str, Vector]:
     _ensure_numpy()
     normalized: dict[str, Vector] = {}
-    for morph, vector in raw.items():
+    for morph, vector in tqdm(
+        raw.items(), desc="Normalizing residual vectors", unit="vector"
+    ):
         norm = float(_np.linalg.norm(vector))
         if norm <= 0 or not math.isfinite(norm):
             logger.debug("Skipping morph with zero residual norm", extra={"morph": morph})
