@@ -479,15 +479,28 @@ def _backfill_composite_reconstruction(
                     accepted_root = candidate_root
                     break
 
-        if morph_breakdown:
-            morphs = [
-                m for m in (_normalize_for_fasttext(m) for m in morph_breakdown) if m
-            ]
-        elif accepted_root:
+        # Build morph list as: [root?, residual1, residual2, ...]
+        morphs: list[str] = []
+
+        if accepted_root:
             normalized_root = _normalize_for_fasttext(accepted_root) or accepted_root
-            morphs = [normalized_root]
-        else:
-            morphs = []
+            normalized_root = normalized_root.strip()
+            if normalized_root:
+                morphs.append(normalized_root)
+
+        if morph_breakdown:
+            for m in morph_breakdown:
+                nm = _normalize_for_fasttext(m) or str(m or "").strip()
+                if nm and nm not in morphs:
+                    morphs.append(nm)
+
+        if len(morphs) >= 2 and len(set(morphs)) == 1:
+            logger.debug(
+                "Skipping self-composite for token %s with morph %s",
+                token,
+                morphs[0],
+            )
+            continue
 
         token_vector = _fasttext_vector(token)
         vector_source = "fasttext"

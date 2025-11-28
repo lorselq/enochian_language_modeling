@@ -11,6 +11,11 @@ from rapidfuzz import process as rf_process, fuzz
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
 
+DEFAULT_MIN_CANDIDATE_COS_SIM = 0.15
+DEFAULT_MIN_OVERLAP_RATIO = 0.1
+DEFAULT_MAX_CANDIDATES = 15
+DEFAULT_MULTI_SEGMENT_BONUS = 0.25
+
 # --- Logging setup ---
 logging.basicConfig(
     format="%(asctime)s %(levelname)s:%(message)s", level=logging.WARNING
@@ -41,10 +46,10 @@ class MorphemeCandidateFinder:
         min_n: int = 2,
         max_n: int = 7,
         beam_width: int = 5,
-        min_candidate_cos_sim: float = 0.2,
-        min_overlap_ratio: float = 0.2,
-        max_candidates: int = 10,
-        multi_segment_bonus: float = 0.0,
+        min_candidate_cos_sim: float = DEFAULT_MIN_CANDIDATE_COS_SIM,
+        min_overlap_ratio: float = DEFAULT_MIN_OVERLAP_RATIO,
+        max_candidates: int = DEFAULT_MAX_CANDIDATES,
+        multi_segment_bonus: float = DEFAULT_MULTI_SEGMENT_BONUS,
     ):
         # Connect to ngram SQLite index
         self.conn = sqlite3.connect(str(ngram_db_path))
@@ -80,6 +85,7 @@ class MorphemeCandidateFinder:
         logger.info(
             f"Initialized MorphemeCandidateFinder with {self.total_docs} entries"
         )
+        self.stats = {"tokens": 0, "multi_candidates": 0, "filtered": 0, "kept": 0}
 
     def _load_ngram_index(self):
         """Populate self.ngram_index using new schema:
@@ -464,7 +470,28 @@ class MorphemeCandidateFinder:
             "[Debug][find_candidates] final candidates:",
             [c["normalized"] for c in candidates],
         )
+
+        # --- stats & debug logging ---
+        self.stats["tokens"] += 1
+        if len(candidates) > 1:
+            self.stats["multi_candidates"] += 1
+        self.stats["kept"] += len(candidates)
+        # treat `scored` as the "raw" set before pruning+top_k
+        self.stats["filtered"] += max(0, len(scored) - len(candidates))
+
+        logger.debug(
+            "[Finder] %s: %d kept / %d raw (sim≥%.3f, overlap≥%.3f)",
+            target,
+            len(candidates),
+            len(scored),
+            self.min_candidate_cos_sim,
+            self.min_overlap_ratio,
+        )
+
         return candidates
+
+    def get_stats(self): 
+        return self.stats
 
     def get_all_ngram_candidates(self, target: str) -> list[dict]:
         """
