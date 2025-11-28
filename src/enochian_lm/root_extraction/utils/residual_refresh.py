@@ -137,16 +137,33 @@ def _apply_root_prefix_residual_fallback(
 
 
 def _is_self_composite(breakdown: dict[str, object]) -> bool:
-    segments = breakdown.get("segments") if isinstance(breakdown, dict) else None
-    if not segments or len(segments) < MIN_MULTI_SEGMENTS:
+    if not isinstance(breakdown, dict):
         return False
+
+    segments = breakdown.get("segments") or []
+    if len(segments) < MIN_MULTI_SEGMENTS:
+        return False
+
+    # If there are uncovered fragments, this is not a trivial self-composite;
+    # we want to keep it so residuals can be analyzed.
+    uncovered = breakdown.get("uncovered") or []
+    if uncovered:
+        return False
+
     canonicals = [
         str(seg.get("canonical") or "").lower()
         for seg in segments
         if isinstance(seg, dict)
     ]
     canonicals = [c for c in canonicals if c]
-    return len(canonicals) >= MIN_MULTI_SEGMENTS and len(set(canonicals)) == 1
+
+    coverage_ratio = float(breakdown.get("coverage_ratio") or 0.0)
+
+    return (
+        len(canonicals) >= MIN_MULTI_SEGMENTS
+        and len(set(canonicals)) == 1
+        and coverage_ratio >= 0.99
+    )
 
 
 def _load_words(conn: sqlite3.Connection, cluster_id: int) -> list[tuple[str, str]]:
@@ -166,13 +183,17 @@ def _load_words(conn: sqlite3.Connection, cluster_id: int) -> list[tuple[str, st
 def _target_run_id(conn: sqlite3.Connection, run_id: str | None) -> str:
     if run_id:
         return str(run_id)
-    row = conn.execute("SELECT run_id FROM runs ORDER BY created_at DESC LIMIT 1").fetchone()
+    row = conn.execute(
+        "SELECT run_id FROM runs ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
     if not row:
         raise ValueError("No runs found in database; cannot refresh residual details")
     return str(row[0])
 
 
-def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tuple[int, int]:
+def refresh_residual_details(
+    db_path: Path, *, run_id: str | None = None
+) -> tuple[int, int]:
     """Recompute ``residual_details`` rows without rerunning the full pipeline."""
 
     paths = get_config_paths()
@@ -201,7 +222,10 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
         ).fetchall()
 
         if not clusters:
-            logger.info("No clusters found for run; nothing to refresh", extra={"run_id": target_run})
+            logger.info(
+                "No clusters found for run; nothing to refresh",
+                extra={"run_id": target_run},
+            )
             return (0, 0)
 
         updated_clusters = 0
@@ -260,9 +284,7 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                     breakdown = single_breakdowns[0]
                 if not breakdown:
                     token_stats["fallback_used"] += 1
-                    uncovered = (
-                        [{"span": [0, len(norm)], "text": norm}] if norm else []
-                    )
+                    uncovered = [{"span": [0, len(norm)], "text": norm}] if norm else []
                     breakdown = {
                         "segments": [],
                         "uncovered": uncovered,
@@ -270,7 +292,9 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                         "residual_ratio": 1.0 if uncovered else 0.0,
                     }
                 else:
-                    breakdown = exclude_root_segments(breakdown, root_norm=root, target=norm)
+                    breakdown = exclude_root_segments(
+                        breakdown, root_norm=root, target=norm
+                    )
                     breakdown = _apply_root_prefix_residual_fallback(
                         breakdown, root_norm=root, target=norm
                     )
@@ -381,4 +405,3 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
         return updated_clusters, detail_rows_total
     finally:
         conn.close()
-
