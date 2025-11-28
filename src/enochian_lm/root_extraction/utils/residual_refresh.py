@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 COMPOSITE_TOP_K = 5
 MIN_MULTI_SEGMENTS = 2
+CANDIDATE_FT_MIN_COS_SIM = 0.15
+CANDIDATE_FT_MIN_OVERLAP_RATIO = 0.1
+CANDIDATE_MAX_CANDIDATES = 15
+CANDIDATE_MULTI_SEGMENT_BONUS = 0.25
 
 
 def _safe_float(value: object) -> float | None:
@@ -176,6 +180,10 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
         ngram_db_path=paths["ngram_index"],
         fasttext_model_path=paths["model_output"],
         dictionary_entries=load_dictionary(paths["dictionary"]),
+        min_candidate_cos_sim=CANDIDATE_FT_MIN_COS_SIM,
+        min_overlap_ratio=CANDIDATE_FT_MIN_OVERLAP_RATIO,
+        max_candidates=CANDIDATE_MAX_CANDIDATES,
+        multi_segment_bonus=CANDIDATE_MULTI_SEGMENT_BONUS,
     )
 
     conn = connect_sqlite(str(db_path))
@@ -363,6 +371,13 @@ def refresh_residual_details(db_path: Path, *, run_id: str | None = None) -> tup
                 "missing_breakdown": token_stats["missing_breakdown"],
             },
         )
+
+        stats = candidate_finder.get_stats()
+        logger.info(
+            f"[Residual Refresh] Tokens={stats['tokens']} | MultiCandidates={stats['multi_candidates']} "
+            f"| Filtered={stats['filtered']} | Kept={stats['kept']}"
+        )
+
         return updated_clusters, detail_rows_total
     finally:
         conn.close()
