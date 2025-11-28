@@ -1809,13 +1809,103 @@ class RootExtractionCrew:
                         residual_report.get("explained_ratio")
                     )
                     residual_ratio = _safe_float(residual_report.get("residual_ratio"))
-                    residual_headline = residual_report.get("headline") or None
-                    residual_focus_prompt = residual_report.get("focus_prompt") or None
+
+                    # Per-word residual diagnostics (used for both headline and prompt)
                     residual_word_details = (
                         residual_report.get("word_details") or []
                         if isinstance(residual_report, dict)
                         else []
                     )
+
+                    # --- 1) Build a clearer residual_headline ---------------------------------
+                    # Example target:
+                    #   "Top residuals: GEBOFAL:1.00, ZEBOG:1.00"
+                    residual_headline = None
+                    if residual_word_details:
+                        # sort by highest residual_ratio first
+                        sorted_details = sorted(
+                            residual_word_details,
+                            key=lambda d: _safe_float(d.get("residual_ratio")) or 0.0,
+                            reverse=True,
+                        )
+                        bits: list[str] = []
+                        for d in sorted_details[:3]:
+                            w = str(d.get("word") or d.get("normalized") or "").strip()
+                            r = _safe_float(d.get("residual_ratio"))
+                            if w and r is not None:
+                                bits.append(f"{w}:{r:.2f}")
+                        if bits:
+                            residual_headline = "Top residuals: " + ", ".join(bits)
+
+                    # --- 2) Build an explicit, LLM-friendly residual_focus_prompt --------------
+                    residual_focus_prompt = None
+                    if residual_word_details:
+                        cov_vals = [
+                            _safe_float(d.get("coverage_ratio"))
+                            for d in residual_word_details
+                            if d.get("coverage_ratio") is not None
+                        ]
+                        res_vals = [
+                            _safe_float(d.get("residual_ratio"))
+                            for d in residual_word_details
+                            if d.get("residual_ratio") is not None
+                        ]
+
+                        # simple averages over words in this cluster
+                        avg_cov = (
+                            sum(v for v in cov_vals if v is not None) / len(cov_vals)
+                            if cov_vals
+                            else None
+                        )
+                        avg_res = (
+                            sum(v for v in res_vals if v is not None) / len(res_vals)
+                            if res_vals
+                            else None
+                        )
+
+                        n_words = len(residual_word_details)
+
+                        # Human / LLM readable explanation
+                        pieces: list[str] = [
+                            f"ROOT={root_token.upper()}",
+                            f"N={n_words}",
+                        ]
+                        if avg_cov is not None:
+                            pieces.append(f"avg_cov={avg_cov:.2f}")
+                        if avg_res is not None:
+                            pieces.append(f"avg_res={avg_res:.2f}")
+                        if residual_explained is not None:
+                            pieces.append(f"explained={residual_explained:.2f}")
+                        if residual_ratio is not None:
+                            pieces.append(f"residual={residual_ratio:.2f}")
+                        if residual_headline:
+                            pieces.append(residual_headline)
+
+                        summary_line = " | ".join(pieces)
+
+                        # Short instruction that explains what these metrics are and how to use them
+                        metric_explainer = (
+                            "Here, N is the number of candidate words in this cluster. "
+                            "avg_cov is the average fraction of each word that is morphologically covered "
+                            "by the proposed root (0.0–1.0). "
+                            "avg_res is the average fraction of each word that remains morphologically "
+                            "unexplained by the root (0.0–1.0). "
+                            "'explained' is a cluster-level score for how much of the residual morphology "
+                            "is accounted for by the root, and 'residual' is the remaining unexplained "
+                            "portion (roughly 1.0 - explained). "
+                        )
+
+                        usage_hint = (
+                            "Use these values when deciding whether to accept the root: higher avg_cov and "
+                            "explained, and lower residual, mean the root morphologically explains more of "
+                            "the cluster. If residual is close to 1.0 and avg_cov is near 0.0, treat the "
+                            "listed words as unexplained residuals and be skeptical of the root."
+                        )
+
+                        residual_focus_prompt = (
+                            summary_line + ". " + metric_explainer + usage_hint
+                        )
+
 
                     # 2) insert cluster and llm records into sqlite
                     xstr = lambda s: str(s).lower() or ""
