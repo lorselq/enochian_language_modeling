@@ -329,7 +329,8 @@ CREATE TABLE IF NOT EXISTS root_residual_semantics (
   glossator_prompt TEXT,
   glossator_def TEXT,
   verdict TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 
 -- Helpful indexes (no FTS)
 CREATE INDEX IF NOT EXISTS idx_clusters_ngram       ON clusters(ngram);
