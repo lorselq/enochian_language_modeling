@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from enochian_lm.analysis.utils.sql import connect_sqlite
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.residual_analysis import (
     exclude_root_segments,
