@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 sys.modules.setdefault("gensim", types.SimpleNamespace(models=types.SimpleNamespace(FastText=object)))
+dummy_gensim_utils = types.ModuleType("gensim.utils")
+dummy_gensim_utils.simple_preprocess = lambda text, deacc=True, min_len=1: []
+sys.modules["gensim.utils"] = dummy_gensim_utils
 sys.modules.setdefault(
     "gensim.models", types.SimpleNamespace(FastText=object)
 )
@@ -113,7 +116,7 @@ def test_run_composite_backfill_processes_each_run(monkeypatch, capsys):
     def fake_ensure(_):
         return None
 
-    def fake_backfill(conn, run_id=None):
+    def fake_backfill(conn, run_id=None, **_):
         assert conn is dummy_conn
         calls.append(run_id)
         return (2, run_id or "latest")
