@@ -131,3 +131,37 @@ def test_run_composite_backfill_processes_each_run(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "run x" in output
     assert "run y" in output
+
+
+def test_run_residual_semantic_pass(monkeypatch, capsys):
+    class DummyConn:
+        def close(self):
+            pass
+
+    dummy_conn = DummyConn()
+    monkeypatch.setattr(cli, "connect_sqlite", lambda path: dummy_conn)
+    monkeypatch.setattr(cli, "ensure_analysis_tables", lambda conn: None)
+    monkeypatch.setattr(cli, "_resolve_run_ids", lambda conn, run_id: ["run-a", "run-b"])
+
+    calls: list[tuple] = []
+
+    class DummyEngine:
+        def __init__(self, conn, use_remote=True, llm_responder=None):
+            calls.append(("init", conn, use_remote))
+
+        def process_run(self, run_id, limit=None):
+            calls.append(("run", run_id, limit))
+            return {"processed": 2, "accepted": 1, "rejected": 1}
+
+    monkeypatch.setattr(cli, "SubtractiveSemanticsEngine", DummyEngine)
+
+    args = argparse.Namespace(db_path="/tmp/demo.sqlite3", run_id=None, limit=5, local=True)
+    total = cli._run_residual_semantic_pass(args)
+
+    assert total == 4
+    assert calls[0] == ("init", dummy_conn, False)  # use_remote = not local
+    assert ("run", "run-a", 5) in calls
+    assert ("run", "run-b", 5) in calls
+
+    output = capsys.readouterr().out
+    assert "accepted=1" in output
