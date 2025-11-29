@@ -582,6 +582,23 @@ ANALYSIS_TABLE_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS idx_root_remainders_root_remainder
     ON root_remainders(root, remainder);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS root_residual_semantics (
+      run_id         TEXT NOT NULL,
+      root           TEXT NOT NULL,
+      parent_word    TEXT NOT NULL,
+      residual       TEXT NOT NULL,
+      evaluation     TEXT NOT NULL,
+      definition     TEXT,
+      semantic_core  TEXT,
+      example_usage  TEXT,
+      confidence     REAL,
+      reason         TEXT,
+      raw_json       TEXT,
+      created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      PRIMARY KEY (run_id, root, parent_word, residual)
+    );
+    """,
 )
 
 # -------------------------

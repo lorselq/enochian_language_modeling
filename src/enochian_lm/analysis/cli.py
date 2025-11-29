@@ -26,6 +26,7 @@ from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
 from .analysis.factorize import factorize_morphemes
 from .analysis.residuals import cluster_residuals
+from .analysis.residual_semantics import SubtractiveSemanticsEngine
 from .report.pipeline_summary import generate_pipeline_report
 from .utils.sql import connect_sqlite, ensure_analysis_tables
 from .utils.text import set_global_seeds, utcnow_iso
@@ -870,6 +871,33 @@ def _run_residual_refresh(args: argparse.Namespace) -> tuple[int, int]:
     return total_clusters, total_rows
 
 
+def _run_residual_semantic_pass(args: argparse.Namespace) -> int:
+    db_path = Path(args.db_path)
+    conn = connect_sqlite(str(db_path))
+    try:
+        ensure_analysis_tables(conn)
+        run_ids = _resolve_run_ids(conn, args.run_id)
+        total_processed = 0
+        for run_id in run_ids:
+            logger.info(
+                "Running subtractive semantics pass",
+                extra={"db": str(db_path), "run_id": run_id},
+            )
+            engine = SubtractiveSemanticsEngine(
+                conn, use_remote=not args.local
+            )
+            stats = engine.process_run(run_id, limit=args.limit)
+            total_processed += stats["processed"]
+            print(
+                f"[{run_id}] Residual semantics processed={stats['processed']} "
+                f"accepted={stats['accepted']} rejected={stats['rejected']}"
+            )
+    finally:
+        conn.close()
+
+    return total_processed
+
+
 def _run_remainder_backfill(args: argparse.Namespace) -> tuple[int, int]:
     db_path = Path(args.db_path)
     conn = connect_sqlite(str(db_path))
@@ -1292,6 +1320,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="PMI threshold when computing fallback residuals",
     )
     residual_cluster.set_defaults(handler=_run_residual_cluster)
+
+    residual_semantic = residual_subparsers.add_parser(
+        "semantic-pass", help="Infer singleton residual glosses via subtractive semantics"
+    )
+    residual_semantic.add_argument(
+        "--run-id",
+        nargs="+",
+        metavar="RUN_ID",
+        help="Optional run id(s) (defaults to latest run)",
+    )
+    residual_semantic.add_argument(
+        "--limit", type=int, default=None, help="Cap number of residuals processed"
+    )
+    residual_semantic.add_argument(
+        "--local",
+        action="store_true",
+        help="Use local LLM backend instead of remote",
+    )
+    residual_semantic.set_defaults(handler=_run_residual_semantic_pass)
 
     residual_refresh = residual_subparsers.add_parser(
         "refresh", help="Recompute residual_details for an existing run"
