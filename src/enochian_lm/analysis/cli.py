@@ -26,7 +26,7 @@ from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
 from .analysis.factorize import factorize_morphemes
 from .analysis.residuals import cluster_residuals
-from .analysis.residual_semantics import SubtractiveSemanticsEngine
+from ..root_extraction.tools.solo_remainder_engine import SubtractiveSemanticsEngine
 from .report.pipeline_summary import generate_pipeline_report
 from .utils.sql import connect_sqlite, ensure_analysis_tables
 from .utils.text import set_global_seeds, utcnow_iso

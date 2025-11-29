@@ -320,6 +320,17 @@ CREATE TABLE IF NOT EXISTS morph_hypotheses (
   UNIQUE(morph, source_word)
 );
 
+CREATE TABLE IF NOT EXISTS root_residual_semantics (
+  residual_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  ngram TEXT NOT NULL,
+  parent_word TEXT NOT NULL,
+  model TEXT,
+  glossator_prompt TEXT,
+  glossator_def TEXT,
+  verdict TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+
 -- Helpful indexes (no FTS)
 CREATE INDEX IF NOT EXISTS idx_clusters_ngram       ON clusters(ngram);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_ngram   ON clusters(run_id, ngram);
@@ -582,23 +593,6 @@ ANALYSIS_TABLE_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS idx_root_remainders_root_remainder
     ON root_remainders(root, remainder);
     """,
-    """
-    CREATE TABLE IF NOT EXISTS root_residual_semantics (
-      run_id         TEXT NOT NULL,
-      root           TEXT NOT NULL,
-      parent_word    TEXT NOT NULL,
-      residual       TEXT NOT NULL,
-      evaluation     TEXT NOT NULL,
-      definition     TEXT,
-      semantic_core  TEXT,
-      example_usage  TEXT,
-      confidence     REAL,
-      reason         TEXT,
-      raw_json       TEXT,
-      created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-      PRIMARY KEY (run_id, root, parent_word, residual)
-    );
-    """,
 )
 
 # -------------------------
@@ -610,6 +604,7 @@ def _infer_variant_from_path(path: str | PathLike[str]) -> str:
     path_l = os.fspath(path).lower()
     return "solo" if "solo" in path_l else "debate"
 
+
 def _open(db_path: str | PathLike[str]) -> sqlite3.Connection:
     db_path = os.fspath(db_path)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -618,6 +613,7 @@ def _open(db_path: str | PathLike[str]) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
     return conn
+
 
 def init_db(path: str | PathLike[str]) -> None:
     """Initialize (or migrate) a database at `path`."""
@@ -686,8 +682,12 @@ def init_db(path: str | PathLike[str]) -> None:
                 for column, decl in debate_columns.items():
                     _add_column_if_missing(conn, "clusters", column, decl)
 
-            _add_column_if_missing(conn, "runs", "phase", "TEXT NOT NULL DEFAULT 'translation'")
-            _add_column_if_missing(conn, "runs", "queue_cycle", "INTEGER NOT NULL DEFAULT 0")
+            _add_column_if_missing(
+                conn, "runs", "phase", "TEXT NOT NULL DEFAULT 'translation'"
+            )
+            _add_column_if_missing(
+                conn, "runs", "queue_cycle", "INTEGER NOT NULL DEFAULT 0"
+            )
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)
