@@ -16,7 +16,7 @@ from typing import Dict, Optional
 from gensim.models import FastText
 from sentence_transformers import SentenceTransformer
 
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 
 __all__ = [
     "get_fasttext_model",

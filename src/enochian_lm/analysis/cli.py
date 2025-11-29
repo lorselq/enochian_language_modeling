@@ -25,7 +25,7 @@ from enochian_lm.analysis.utils.token_morphs import (
 from enochian_lm.root_extraction.scripts import init_insights_db
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
 from enochian_lm.root_extraction.utils.residual_refresh import refresh_residual_details

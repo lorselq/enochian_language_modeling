@@ -14,7 +14,7 @@ from enochian_lm.root_extraction.tools.debate_engine import debate_ngram
 from enochian_lm.root_extraction.tools.solo_remainder_engine import (
     solo_residual_semantics_analysis,
 )
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.semantic_search import (
     solo_remainder_analysis,
     compute_cluster_cohesion,

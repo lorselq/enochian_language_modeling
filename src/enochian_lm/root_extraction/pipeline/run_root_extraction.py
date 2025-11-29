@@ -14,7 +14,7 @@ from enochian_lm.root_extraction.tools.debate_engine import debate_ngram
 from enochian_lm.root_extraction.tools.solo_analysis_engine import (
     solo_agent_ngram_analysis,
 )
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.semantic_search import (
     find_semantically_similar_words,
     compute_cluster_cohesion,

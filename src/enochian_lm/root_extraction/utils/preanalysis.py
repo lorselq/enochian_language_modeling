@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
 
-from .config import get_config_paths
+from ...common.config import get_config_paths
 from .dictionary_loader import load_dictionary
 
 Stage = Literal["initial", "subsequent"]

@@ -9,7 +9,7 @@ from pathlib import Path
 from dataclasses import dataclass, asdict
 from gensim.models import FastText, Word2Vec
 from gensim.utils import simple_preprocess
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import (
     load_dictionary,
     load_dictionary_v2,
