@@ -24,7 +24,7 @@ from typing import Dict, Tuple
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 
-INTERPRETATION_DIR = Path(__file__).resolve().parents[2] / "interpretation"
+INTERPRETATION_DIR = Path(__file__).resolve().parents[1] / "interpretation"
 
 # -------------------------
 # Paths
@@ -325,12 +325,40 @@ CREATE TABLE IF NOT EXISTS root_residual_semantics (
   run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
   ngram TEXT NOT NULL,
   parent_word TEXT NOT NULL,
+  group_index INTEGER NOT NULL,
+  group_size INTEGER NOT NULL,
   model TEXT,
   glossator_prompt TEXT,
   glossator_def TEXT,
   verdict TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+
+CREATE TABLE IF NOT EXISTS token_morph_decomp (
+  run_id      TEXT NOT NULL,
+  token       TEXT NOT NULL,
+  seg_index   INTEGER NOT NULL,
+  morph       TEXT NOT NULL,
+  span_start  INTEGER NOT NULL,
+  span_end    INTEGER NOT NULL,
+  score       REAL,
+  source      TEXT,
+  PRIMARY KEY (run_id, token, seg_index)
+);
+
+CREATE TABLE IF NOT EXISTS root_remainders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  root TEXT NOT NULL,
+  word TEXT NOT NULL,
+  normalized TEXT NOT NULL,
+  remainder TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  span_start INTEGER NOT NULL,
+  span_end INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 
 -- Helpful indexes (no FTS)
 CREATE INDEX IF NOT EXISTS idx_clusters_ngram       ON clusters(ngram);
@@ -341,6 +369,13 @@ CREATE INDEX IF NOT EXISTS idx_residual_details_cluster ON residual_details(clus
 CREATE INDEX IF NOT EXISTS idx_citations_def        ON citations(def_id);
 CREATE INDEX IF NOT EXISTS idx_skips_run_ngram      ON skips(run_id, ngram);
 CREATE INDEX IF NOT EXISTS idx_llm_job_run          ON llm_job(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_root_remainders_root
+ON root_remainders(root);
+
+CREATE INDEX IF NOT EXISTS idx_root_remainders_root_remainder
+ON root_remainders(root, remainder);
+
 
 -- Convenience view of rows that have a non-empty definition (regardless of verdict)
 CREATE VIEW IF NOT EXISTS accepted_clusters AS
@@ -571,41 +606,6 @@ ANALYSIS_TABLE_STATEMENTS = (
       vector_source TEXT,
       updated_at TEXT NOT NULL
     );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS token_morph_decomp (
-      run_id      TEXT NOT NULL,
-      token       TEXT NOT NULL,
-      seg_index   INTEGER NOT NULL,
-      morph       TEXT NOT NULL,
-      span_start  INTEGER NOT NULL,
-      span_end    INTEGER NOT NULL,
-      score       REAL,
-      source      TEXT,
-      PRIMARY KEY (run_id, token, seg_index)
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS root_remainders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT NOT NULL,
-      root TEXT NOT NULL,
-      word TEXT NOT NULL,
-      normalized TEXT NOT NULL,
-      remainder TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      span_start INTEGER NOT NULL,
-      span_end INTEGER NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_root_remainders_root
-    ON root_remainders(root);
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_root_remainders_root_remainder
-    ON root_remainders(root, remainder);
     """,
 )
 
