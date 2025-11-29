@@ -87,6 +87,15 @@ class MorphemeCandidateFinder:
         )
         self.stats = {"tokens": 0, "multi_candidates": 0, "filtered": 0, "kept": 0}
 
+    def _score_with_bonus(self, composite: float, breakdown: dict | None) -> float:
+        """Return composite score with optional multi-segment bonus."""
+
+        segments = []
+        if isinstance(breakdown, dict):
+            segments = breakdown.get("segments") or []
+        bonus = self.multi_segment_bonus if len(segments) >= 2 else 0.0
+        return composite + bonus
+
     def _load_ngram_index(self):
         """Populate self.ngram_index using new schema:
         - TF from ngrams.total_occurrences
@@ -460,9 +469,7 @@ class MorphemeCandidateFinder:
 
         # 6) Sort by composite score (with optional bonus for multi-segment parses)
         def _score_for_sort(cand: dict) -> float:
-            segments = cand.get("breakdown", {}).get("segments") or []
-            bonus = self.multi_segment_bonus if len(segments) >= 2 else 0.0
-            return cand.get("composite", 0.0) + bonus
+            return self._score_with_bonus(cand.get("composite", 0.0), cand.get("breakdown"))
 
         top_limit = top_k if top_k is not None else self.max_candidates
         candidates = sorted(filtered, key=_score_for_sort, reverse=True)[:top_limit]
@@ -489,6 +496,53 @@ class MorphemeCandidateFinder:
         )
 
         return candidates
+
+    def best_segmentation(
+        self,
+        target: str,
+        *,
+        min_segments: int = 1,
+        min_cos_sim: float | None = None,
+    ) -> dict | None:
+        """Return the highest-scoring segmentation for a token.
+
+        This is root-independent and applies the same composite + bonus scoring
+        as ``find_candidates`` while allowing a caller to require a minimum
+        number of morph segments.
+        """
+
+        if not target:
+            return None
+
+        cos_cutoff = max(self.prune_threshold, self.min_candidate_cos_sim)
+        if min_cos_sim is not None:
+            cos_cutoff = max(cos_cutoff, float(min_cos_sim))
+
+        parses = self.segment_target(target)
+        scored: list[dict] = []
+        for path, _, ngram_scores, coverage in parses:
+            composite = self.score_parse(path, ngram_scores, target)
+            breakdown = self._build_breakdown(target, coverage)
+            if not self._passes_overlap(target, breakdown):
+                continue
+            cos_sim = float(composite.get("cos_sim", 0.0))
+            if len(target) > 2 and cos_sim < cos_cutoff:
+                continue
+            scored.append({**composite, "breakdown": breakdown})
+
+        if not scored:
+            return None
+
+        scored = [s for s in scored if len(s.get("breakdown", {}).get("segments", [])) >= min_segments]
+        if not scored:
+            return None
+
+        def _score(entry: dict) -> float:
+            return self._score_with_bonus(
+                float(entry.get("composite", 0.0)), entry.get("breakdown")
+            )
+
+        return max(scored, key=_score)
 
     def get_stats(self): 
         return self.stats
