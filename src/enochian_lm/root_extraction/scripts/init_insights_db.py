@@ -573,6 +573,19 @@ ANALYSIS_TABLE_STATEMENTS = (
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS token_morph_decomp (
+      run_id      TEXT NOT NULL,
+      token       TEXT NOT NULL,
+      seg_index   INTEGER NOT NULL,
+      morph       TEXT NOT NULL,
+      span_start  INTEGER NOT NULL,
+      span_end    INTEGER NOT NULL,
+      score       REAL,
+      source      TEXT,
+      PRIMARY KEY (run_id, token, seg_index)
+    );
+    """,
+    """
     CREATE TABLE IF NOT EXISTS root_remainders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_id TEXT NOT NULL,

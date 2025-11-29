@@ -16,8 +16,17 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Callable, Iterable, Iterator, Sequence
 
+from enochian_lm.analysis.utils.token_morphs import (
+    fetch_token_morphs,
+    fetch_token_segments,
+    summarize_token_decomp,
+    tokens_with_morph,
+)
 from enochian_lm.root_extraction.scripts import init_insights_db
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
+from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
+from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
 from enochian_lm.root_extraction.utils.residual_refresh import refresh_residual_details
 from enochian_lm.root_extraction.utils.remainders import backfill_root_remainders
@@ -25,6 +34,7 @@ from enochian_lm.root_extraction.utils.remainders import backfill_root_remainder
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
 from .analysis.factorize import factorize_morphemes
+from .analysis.residual_semantics import SubtractiveSemanticsEngine
 from .analysis.residuals import cluster_residuals
 from .report.pipeline_summary import generate_pipeline_report
 from .utils.sql import connect_sqlite, ensure_analysis_tables
@@ -32,6 +42,15 @@ from .utils.text import set_global_seeds, utcnow_iso
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 logger = logging.getLogger(__name__)
+
+TOKEN_DECOMP_MIN_MORPH_LEN = 2
+TOKEN_DECOMP_MAX_SEGMENTS: int | None = None
+TOKEN_DECOMP_DEFAULT_SOURCE = "seg_v1"
+TOKEN_DECOMP_MIN_SEGMENTS = 1
+TOKEN_DECOMP_MIN_COS_SIM = 0.15
+TOKEN_DECOMP_MIN_OVERLAP_RATIO = 0.1
+TOKEN_DECOMP_MAX_CANDIDATES = 15
+TOKEN_DECOMP_MULTI_SEGMENT_BONUS = 0.25
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -355,6 +374,20 @@ def _normalize_for_fasttext(token: str) -> str:
     return _FASTTEXT_TOKEN_RE.sub("", without_diacritics)
 
 
+def _normalize_morph_sequence(morphs: Sequence[str]) -> list[str]:
+    """Normalize and deduplicate morph strings for downstream joins."""
+
+    normalized: list[str] = []
+    for morph in morphs:
+        candidate = _normalize_for_fasttext(morph) or str(morph or "").strip()
+        if not candidate:
+            continue
+        if normalized and normalized[-1] == candidate:
+            continue
+        normalized.append(candidate)
+    return normalized
+
+
 def _parse_uncovered_fragments(payload: str | Sequence[object] | None) -> list[str]:
     if payload is None:
         return []
@@ -390,6 +423,8 @@ def _backfill_composite_reconstruction(
     conn,
     *,
     run_id: str | None = None,
+    use_token_decomp: bool = False,
+    skip_identical_multimorph: bool = True,
 ) -> tuple[int, str]:
     ensure_analysis_tables(conn)
 
@@ -431,6 +466,7 @@ def _backfill_composite_reconstruction(
     composite_rows: list[tuple[str, str | None, str, float, str, str | None, str]] = []
     morph_rows: dict[str, tuple[str, float, str]] = {}
     vector_source_counts: Counter[str] = Counter()
+    token_decomp_used = 0
 
     def _fasttext_vector(token: str) -> list[float]:
         candidates = []
@@ -464,37 +500,46 @@ def _backfill_composite_reconstruction(
             recon_error = (
                 row["cluster_residual"] if row["cluster_residual"] is not None else 0.0
             )
-        morph_breakdown = _parse_uncovered_fragments(row["uncovered_json"])
-        for key in ("morph_breakdown_json", "morph_breakdown"):
-            if morph_breakdown:
-                break
-            if key in row.keys():
-                morph_breakdown = _parse_uncovered_fragments(row[key])
-
-        accepted_root: str | None = None
-        for key in ("accepted_root", "root"):
-            if key in row.keys():
-                candidate_root = str(row[key] or "").strip()
-                if candidate_root:
-                    accepted_root = candidate_root
-                    break
-
-        # Build morph list as: [root?, residual1, residual2, ...]
         morphs: list[str] = []
+        morph_breakdown: list[str] = []
+        if use_token_decomp:
+            morphs = _normalize_morph_sequence(
+                fetch_token_morphs(conn, token, run_id=target_run_id)
+            )
+            if morphs:
+                token_decomp_used += 1
 
-        if accepted_root:
-            normalized_root = _normalize_for_fasttext(accepted_root) or accepted_root
-            normalized_root = normalized_root.strip()
-            if normalized_root:
-                morphs.append(normalized_root)
+        if not morphs:
+            morph_breakdown = _parse_uncovered_fragments(row["uncovered_json"])
+            for key in ("morph_breakdown_json", "morph_breakdown"):
+                if morph_breakdown:
+                    break
+                if key in row.keys():
+                    morph_breakdown = _parse_uncovered_fragments(row[key])
 
-        if morph_breakdown:
-            for m in morph_breakdown:
-                nm = _normalize_for_fasttext(m) or str(m or "").strip()
-                if nm and nm not in morphs:
-                    morphs.append(nm)
+            accepted_root: str | None = None
+            for key in ("accepted_root", "root"):
+                if key in row.keys():
+                    candidate_root = str(row[key] or "").strip()
+                    if candidate_root:
+                        accepted_root = candidate_root
+                        break
 
-        if len(morphs) >= 2 and len(set(morphs)) == 1:
+            if accepted_root:
+                normalized_root = _normalize_for_fasttext(accepted_root) or accepted_root
+                normalized_root = normalized_root.strip()
+                if normalized_root:
+                    morphs.append(normalized_root)
+
+            if morph_breakdown:
+                for m in morph_breakdown:
+                    nm = _normalize_for_fasttext(m) or str(m or "").strip()
+                    if nm and nm not in morphs:
+                        morphs.append(nm)
+
+        morphs = _normalize_morph_sequence(morphs)
+
+        if skip_identical_multimorph and len(morphs) >= 2 and len(set(morphs)) == 1:
             logger.debug(
                 "Skipping self-composite for token %s with morph %s",
                 token,
@@ -562,6 +607,7 @@ def _backfill_composite_reconstruction(
             "morphs": len(morph_rows),
             "run_id": target_run_id,
             "vector_sources": dict(vector_source_counts),
+            "token_decomp_used": token_decomp_used,
         },
     )
 
@@ -585,7 +631,140 @@ def _backfill_composite_reconstruction(
         )
     except Exception:
         logger.warning("Failed to summarize morph counts", exc_info=True)
+
+    if use_token_decomp:
+        try:
+            summary = summarize_token_decomp(conn, run_id=target_run_id)
+            logger.info(
+                "Token morph decomposition coverage used for composites",
+                extra={"run_id": target_run_id, **summary},
+            )
+        except Exception:
+            logger.warning("Failed to summarize token decompositions", exc_info=True)
     return len(composite_rows), target_run_id
+
+
+def _collect_tokens_for_run(
+    conn, run_id: str, *, limit: int | None = None
+) -> list[str]:
+    query = """
+        SELECT DISTINCT LOWER(TRIM(rd.normalized)) AS token
+        FROM residual_details rd
+        JOIN clusters c ON c.cluster_id = rd.cluster_id
+        WHERE c.run_id = ? AND TRIM(rd.normalized) <> ''
+        UNION
+        SELECT DISTINCT LOWER(TRIM(rd.source_word)) AS token
+        FROM raw_defs rd
+        JOIN clusters c ON c.cluster_id = rd.cluster_id
+        WHERE c.run_id = ? AND TRIM(rd.source_word) <> ''
+    """
+    rows = conn.execute(query, (run_id, run_id)).fetchall()
+    tokens = sorted({str(row[0]).strip() for row in rows if str(row[0]).strip()})
+    if limit is not None:
+        return tokens[:limit]
+    return tokens
+
+
+def _decompose_tokens_for_run(
+    conn,
+    run_id: str,
+    candidate_finder: MorphemeCandidateFinder,
+    *,
+    source: str = TOKEN_DECOMP_DEFAULT_SOURCE,
+    min_morph_len: int = TOKEN_DECOMP_MIN_MORPH_LEN,
+    max_segments: int | None = TOKEN_DECOMP_MAX_SEGMENTS,
+    min_segments: int = TOKEN_DECOMP_MIN_SEGMENTS,
+    limit: int | None = None,
+) -> dict[str, int]:
+    tokens = _collect_tokens_for_run(conn, run_id, limit=limit)
+    if not tokens:
+        logger.info(
+            "No tokens found for token decomposition",
+            extra={"run_id": run_id},
+        )
+        return {"tokens": 0, "zero": 0, "single": 0, "multi": 0}
+
+    rows_to_insert: list[tuple] = []
+    stats = {"zero": 0, "single": 0, "multi": 0}
+    for token in tokens:
+        best = candidate_finder.best_segmentation(
+            token, min_segments=min_segments, min_cos_sim=TOKEN_DECOMP_MIN_COS_SIM
+        )
+        kept_segments = 0
+        if best:
+            for segment in best.get("breakdown", {}).get("segments", []):
+                morph = str(segment.get("canonical") or segment.get("text") or "").strip()
+                normalized_morph = _normalize_for_fasttext(morph) or morph
+                if not normalized_morph or len(normalized_morph) < min_morph_len:
+                    continue
+                span = segment.get("span") or [segment.get("start", 0), segment.get("end", 0)]
+                start = int(span[0] or 0)
+                end = int(span[1] or start)
+                score = segment.get("tfidf")
+                rows_to_insert.append(
+                    (
+                        run_id,
+                        token,
+                        kept_segments,
+                        normalized_morph,
+                        start,
+                        end,
+                        None if score is None else float(score),
+                        source,
+                    )
+                )
+                kept_segments += 1
+                if max_segments is not None and kept_segments >= max_segments:
+                    break
+
+        if kept_segments == 0:
+            fallback_morph = _normalize_for_fasttext(token) or token
+            if fallback_morph:
+                rows_to_insert.append(
+                    (
+                        run_id,
+                        token,
+                        0,
+                        fallback_morph,
+                        0,
+                        len(token),
+                        None,
+                        source,
+                    )
+                )
+                stats["single"] += 1
+            else:
+                stats["zero"] += 1
+        elif kept_segments == 1:
+            stats["single"] += 1
+        else:
+            stats["multi"] += 1
+
+    with conn:
+        conn.execute("DELETE FROM token_morph_decomp WHERE run_id = ?", (run_id,))
+        if rows_to_insert:
+            conn.executemany(
+                """
+                INSERT INTO token_morph_decomp (
+                  run_id, token, seg_index, morph, span_start, span_end, score, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows_to_insert,
+            )
+
+    summary = summarize_token_decomp(conn, run_id=run_id)
+    logger.info(
+        "Computed token morph decomposition",
+        extra={
+            "run_id": run_id,
+            "source": source,
+            "tokens": summary.get("tokens", 0),
+            "zero": stats["zero"],
+            "single": stats["single"],
+            "multi": stats["multi"],
+        },
+    )
+    return summary
 
 
 def _export_attribution_csv(db_path: Path, out_path: Path) -> None:
@@ -673,7 +852,12 @@ def _run_composite_backfill(args: argparse.Namespace) -> None:
         ensure_analysis_tables(conn)
         for run_id in run_ids:
             rows, resolved_run_id = _backfill_composite_reconstruction(
-                conn, run_id=run_id
+                conn,
+                run_id=run_id,
+                use_token_decomp=bool(getattr(args, "use_token_decomp", False)),
+                skip_identical_multimorph=not bool(
+                    getattr(args, "allow_identical_morphs", False)
+                ),
             )
             total_rows += rows
             print(
@@ -684,6 +868,94 @@ def _run_composite_backfill(args: argparse.Namespace) -> None:
 
     if total_rows == 0:
         raise ValueError("No composite reconstructions were backfilled")
+
+
+def _run_residual_semantic_pass(args: argparse.Namespace) -> int:
+    conn = connect_sqlite(str(args.db_path))
+    try:
+        ensure_analysis_tables(conn)
+        run_ids = _resolve_run_ids(conn, args.run_id)
+    finally:
+        conn.close()
+
+    engine = SubtractiveSemanticsEngine(
+        connect_sqlite(str(args.db_path)),
+        use_remote=not bool(getattr(args, "local", False)),
+        llm_responder=None,
+    )
+
+    total_processed = 0
+    try:
+        for run_id in run_ids:
+            stats = engine.process_run(run_id, limit=getattr(args, "limit", None))
+            processed = int(stats.get("processed", 0))
+            accepted = int(stats.get("accepted", 0))
+            rejected = int(stats.get("rejected", 0))
+            total_processed += processed
+
+            logger.info(
+                "Residual semantic pass completed",
+                extra={
+                    "run_id": run_id,
+                    "processed": processed,
+                    "accepted": accepted,
+                    "rejected": rejected,
+                },
+            )
+            print(
+                f"[{run_id}] processed={processed} accepted={accepted} rejected={rejected}"
+            )
+    finally:
+        if hasattr(engine, "conn"):
+            try:
+                engine.conn.close()
+            except Exception:
+                pass
+    return total_processed
+
+
+def _run_token_decomposition(args: argparse.Namespace) -> None:
+    conn = connect_sqlite(str(args.db_path))
+    candidate_finder = None
+    try:
+        ensure_analysis_tables(conn)
+        run_ids = _resolve_run_ids(conn, args.run_id)
+        paths = get_config_paths()
+        dictionary_entries = load_dictionary(paths["dictionary"])
+        candidate_finder = MorphemeCandidateFinder(
+            ngram_db_path=paths["ngram_index"],
+            fasttext_model_path=paths["model_output"],
+            dictionary_entries=dictionary_entries,
+            min_candidate_cos_sim=TOKEN_DECOMP_MIN_COS_SIM,
+            min_overlap_ratio=TOKEN_DECOMP_MIN_OVERLAP_RATIO,
+            max_candidates=TOKEN_DECOMP_MAX_CANDIDATES,
+            multi_segment_bonus=TOKEN_DECOMP_MULTI_SEGMENT_BONUS,
+        )
+
+        for run_id in run_ids:
+            summary = _decompose_tokens_for_run(
+                conn,
+                run_id,
+                candidate_finder,
+                source=args.source,
+                min_morph_len=args.min_morph_len,
+                max_segments=args.max_segments,
+                min_segments=args.min_segments,
+                limit=args.limit,
+            )
+            print(
+                "[{run}] token morphs: tokens={tokens} zero={zero} single={single} multi={multi}".format(
+                    run=run_id,
+                    tokens=summary.get("tokens", 0),
+                    zero=summary.get("zero", 0),
+                    single=summary.get("single", 0),
+                    multi=summary.get("multi", 0),
+                )
+            )
+    finally:
+        conn.close()
+        if candidate_finder:
+            candidate_finder.close()
 
 
 def _run_attrib_loo(args: argparse.Namespace) -> None:
@@ -1351,10 +1623,63 @@ def _build_parser() -> argparse.ArgumentParser:
             "Optional run id(s) to backfill (defaults to latest run in the database)"
         ),
     )
+    composite_backfill.add_argument(
+        "--use-token-decomp",
+        action="store_true",
+        help=(
+            "Use token_morph_decomp rows to build composites instead of residual uncovered spans"
+        ),
+    )
+    composite_backfill.add_argument(
+        "--allow-identical-morphs",
+        action="store_true",
+        help="Keep composites whose morph list collapses to a single repeated morph",
+    )
     composite_backfill.set_defaults(handler=_run_composite_backfill)
 
     morph = subparsers.add_parser("morph", help="Morph semantic tooling")
     morph_subparsers = morph.add_subparsers(dest="morph_command", required=True)
+    morph_decompose = morph_subparsers.add_parser(
+        "decompose", help="Compute root-independent token morph decompositions"
+    )
+    morph_decompose.add_argument(
+        "--run-id",
+        nargs="+",
+        metavar="RUN_ID",
+        help=(
+            "Optional run id(s) to decompose (defaults to latest run in the database)"
+        ),
+    )
+    morph_decompose.add_argument(
+        "--source",
+        default=TOKEN_DECOMP_DEFAULT_SOURCE,
+        help="Source label stored alongside morph segments",
+    )
+    morph_decompose.add_argument(
+        "--min-morph-len",
+        type=int,
+        default=TOKEN_DECOMP_MIN_MORPH_LEN,
+        help="Minimum morph length to keep (after normalization)",
+    )
+    morph_decompose.add_argument(
+        "--max-segments",
+        type=int,
+        default=TOKEN_DECOMP_MAX_SEGMENTS,
+        help="Optional cap on stored morph segments per token",
+    )
+    morph_decompose.add_argument(
+        "--min-segments",
+        type=int,
+        default=TOKEN_DECOMP_MIN_SEGMENTS,
+        help="Minimum segments required from the search path",
+    )
+    morph_decompose.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional cap on tokens to process for quick smoke tests",
+    )
+    morph_decompose.set_defaults(handler=_run_token_decomposition)
     morph_factorize = morph_subparsers.add_parser(
         "factorize", help="Factorize morph semantics"
     )
