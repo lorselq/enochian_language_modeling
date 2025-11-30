@@ -1178,7 +1178,7 @@ class RemainderExtractionCrew:
         single_ngram=None,
         style="debate",
         min_semantic_similarity: float = 0.60,
-        process_only_skipped: bool = False,
+        process_remainders: bool = False,
         skipped_reason_code: str | None = None,
     ):
         # TEMPORARY; delete when debate_remainder is come online!
