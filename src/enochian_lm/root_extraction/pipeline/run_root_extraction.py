@@ -1239,7 +1239,7 @@ class RootExtractionCrew:
                 candidates=trimmed_cluster,
                 stats_summary=stats_summary,
                 stream_callback=stream_callback,
-                root_entry=None,
+                root_entry=None,   # can be None; debate engine will handle
                 use_remote=self.use_remote,
                 residual_prompt=focus_prompt,
                 residual_guidance=(
@@ -1676,6 +1676,7 @@ class RootExtractionCrew:
                 cohesion_score = compute_cluster_cohesion(
                     definitions, self.sentence_model
                 )
+
                 semantic_hits = sum(
                     1 for c in merged_cluster if c["source"] in ("semantic", "both")
                 )
@@ -1684,12 +1685,12 @@ class RootExtractionCrew:
                     if merged_cluster
                     else 0.0
                 )
-
                 sem_count = sum(
                     1
                     for c in merged_cluster
                     if _get_field(c, "source", "") in ("semantic", "both")
                 )
+
                 idx_count = sum(
                     1
                     for c in merged_cluster
@@ -1697,6 +1698,9 @@ class RootExtractionCrew:
                 )
                 overlap_count = sum(
                     1 for c in cluster if _get_field(c, "source", "") == "both"
+                )
+                semantic_hits = sum(
+                    1 for c in cluster if _get_field(c, "source", "") in ("semantic", "both")
                 )
                 clustering_meta_json = json.dumps(best_config)
                 stats_summary = self._build_stats_summary(
@@ -1778,7 +1782,6 @@ class RootExtractionCrew:
                             accepted=verdict,
                             style=style,
                         )
-                    #                self.save_results(output)
 
                     def _to_text(x, sep="\n\n========\n\n"):
                         if x is None:
@@ -1904,6 +1907,9 @@ class RootExtractionCrew:
                         residual_focus_prompt = (
                             summary_line + ". " + metric_explainer + usage_hint
                         )
+
+                        if isinstance(residual_report, dict):
+                            residual_report["focus_prompt"] = residual_focus_prompt
 
 
                     # 2) insert cluster and llm records into sqlite

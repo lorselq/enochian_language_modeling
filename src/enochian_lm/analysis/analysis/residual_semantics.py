@@ -1,4 +1,7 @@
-"""Lightweight subtractive semantics pass for uncovered residuals."""
+""" Lightweight subtractive semantics pass for uncovered residuals.
+    NOTE: currently unused!
+"""
+
 from __future__ import annotations
 
 import json

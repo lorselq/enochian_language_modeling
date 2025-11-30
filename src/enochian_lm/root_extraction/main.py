@@ -4,7 +4,7 @@ from dotenv import load_dotenv, find_dotenv
 from collections import defaultdict
 from enochian_lm.root_extraction.utils.local_env_refresher import refresh_local_env
 from enochian_lm.root_extraction.pipeline.run_root_extraction import RootExtractionCrew
-from enochian_lm.root_extraction.pipeline.run_remainder_extraction import (
+from enochian_lm.root_extraction.pipeline.run_residual_semantic_extraction import (
     RemainderExtractionCrew,
 )
 
