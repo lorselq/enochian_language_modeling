@@ -10,13 +10,15 @@ import uuid, json, sys, platform, datetime
 from typing import List, Optional, Dict, Any, Tuple, Sequence
 from collections import defaultdict, Counter
 from enochian_lm.root_extraction.utils.logger import save_log
-from enochian_lm.root_extraction.tools.debate_residual_semantic_engine import debate_remainder
+from enochian_lm.root_extraction.tools.debate_residual_semantic_engine import (
+    debate_remainder,
+)
 from enochian_lm.root_extraction.tools.solo_residual_semantic_engine import (
     solo_analyze_remainder,
 )
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.semantic_search import (
-    solo_remainder_analysis,
+    find_semantically_similar_words,
     compute_cluster_cohesion,
     cluster_definitions,
 )
@@ -84,7 +86,9 @@ class RemainderExtractionCrew:
         self.sentence_model_name = "paraphrase-MiniLM-L6-v2"
         self.sentence_model = get_sentence_transformer(self.sentence_model_name)
         self.trusted_ngrams = set(load_trusted_ngrams())
-        self._trusted_max_len = max((len(token) for token in self.trusted_ngrams), default=0)
+        self._trusted_max_len = max(
+            (len(token) for token in self.trusted_ngrams), default=0
+        )
         self.completed_roots, self.incomplete_roots = self._load_cluster_progress()
         self.completed_roots |= self._load_root_level_skips()
         self._breakdown_cache: dict[str, dict | None] = {}
@@ -168,6 +172,45 @@ class RemainderExtractionCrew:
                 )
         self.run_id = run_id
         return run_id
+
+    def _dynamic_coh_floor(self, n: int | None, gram_len: int | None) -> float:
+        """
+        Lenient cohesion floor:
+        n ≤ 3  → 0.30   (down from 0.40)
+        n ≤ 5  → 0.27
+        n ≤ 10 → 0.23
+        n > 10 → 0.18
+        N-gram adjustment:
+        gram_len ≤ 2  → -0.05
+        gram_len ≥ 5  → +0.05
+        """
+        if not n or n <= 0:
+            base = 0.23
+        elif n <= 3:
+            base = 0.30
+        elif n <= 5:
+            base = 0.27
+        elif n <= 10:
+            base = 0.23
+        else:
+            base = 0.18
+        if gram_len is not None:
+            if gram_len <= 2:
+                base -= 0.05
+            elif gram_len >= 5:
+                base += 0.05
+        return max(0.05, min(0.95, base))
+
+    def _get_source_label(
+        self, sem_entry: Optional[Dict[str, Any]], index_entry: Optional[Dict[str, Any]]
+    ) -> str:
+        if sem_entry and index_entry:
+            return "both"
+        if sem_entry:
+            return "semantic"
+        if index_entry:
+            return "index"
+        return "other"
 
     def _insert_skip(
         self,
@@ -274,9 +317,7 @@ class RemainderExtractionCrew:
         cols = {row[1] for row in cursor.fetchall()}  # row[1] = column name
 
         if "queue_cycle" not in cols:
-            cursor.execute(
-                "ALTER TABLE runs ADD COLUMN queue_cycle INTEGER DEFAULT 0"
-            )
+            cursor.execute("ALTER TABLE runs ADD COLUMN queue_cycle INTEGER DEFAULT 0")
 
         self.new_definitions_db.commit()
 
@@ -292,7 +333,9 @@ class RemainderExtractionCrew:
     def _sync_queue_with_inventory(self) -> None:
         cursor = self.new_definitions_db.cursor()
         rows = cursor.execute("SELECT ngram, queue_index FROM ngram_queue").fetchall()
-        seen = {self._normalize_root(row[0]): int(row[1]) for row in rows if row and row[0]}
+        seen = {
+            self._normalize_root(row[0]): int(row[1]) for row in rows if row and row[0]
+        }
         inserts = []
         for idx, (ngram, _) in enumerate(self._ngram_inventory):
             if not ngram or ngram in seen:
@@ -362,9 +405,7 @@ class RemainderExtractionCrew:
 
     def _get_current_cycle(self) -> int:
         cursor = self.new_definitions_db.cursor()
-        row = cursor.execute(
-            "SELECT MIN(cycles_completed) FROM ngram_queue"
-        ).fetchone()
+        row = cursor.execute("SELECT MIN(cycles_completed) FROM ngram_queue").fetchone()
         if not row or row[0] is None:
             return 0
         return int(row[0])
@@ -420,14 +461,12 @@ class RemainderExtractionCrew:
             rows = cursor.execute(query).fetchall()
         except sqlite3.OperationalError:
             try:
-                fallback = cursor.execute("SELECT DISTINCT ngram FROM clusters").fetchall()
+                fallback = cursor.execute(
+                    "SELECT DISTINCT ngram FROM clusters"
+                ).fetchall()
             except sqlite3.Error:
                 return set(), set()
-            completed = {
-                self._normalize_root(row[0])
-                for row in fallback
-                if row[0]
-            }
+            completed = {self._normalize_root(row[0]) for row in fallback if row[0]}
             return completed, set()
 
         for row in rows:
@@ -458,13 +497,11 @@ class RemainderExtractionCrew:
             ).fetchall()
         except sqlite3.Error:
             return set()
-        return {
-            self._normalize_root(row[0])
-            for row in rows
-            if row and row[0]
-        }
+        return {self._normalize_root(row[0]) for row in rows if row and row[0]}
 
-    def _is_root_processed(self, root: str, *, current_cycle: int | None = None) -> bool:
+    def _is_root_processed(
+        self, root: str, *, current_cycle: int | None = None
+    ) -> bool:
         norm = self._normalize_root(root)
         if not norm:
             return False
@@ -537,7 +574,11 @@ class RemainderExtractionCrew:
             composite_rows.append(
                 (
                     norm,
-                    gold_gloss if isinstance(gold_gloss, str) and gold_gloss.strip() else None,
+                    (
+                        gold_gloss
+                        if isinstance(gold_gloss, str) and gold_gloss.strip()
+                        else None
+                    ),
                     json.dumps(self._round_vector(vector)),
                     round(float(breakdown.get("residual_ratio") or 0.0), 4),
                     json.dumps(morphs),
@@ -682,7 +723,9 @@ class RemainderExtractionCrew:
                 break
             prefix = haystack[:idx]
             suffix = haystack[idx + len(target) :]
-            if self._is_text_covered_by_trusted(prefix) and self._is_text_covered_by_trusted(suffix):
+            if self._is_text_covered_by_trusted(
+                prefix
+            ) and self._is_text_covered_by_trusted(suffix):
                 return True
             start = idx + 1
         return False
@@ -1089,7 +1132,7 @@ class RemainderExtractionCrew:
                 candidates=trimmed_cluster,
                 stats_summary=stats_summary,
                 stream_callback=stream_callback,
-                root_entry=None,   # can be None; debate engine will handle
+                root_entry=None,  # can be None; debate engine will handle
                 use_remote=self.use_remote,
                 residual_prompt=focus_prompt,
                 residual_guidance=(
@@ -1137,10 +1180,12 @@ class RemainderExtractionCrew:
         min_semantic_similarity: float = 0.60,
         process_only_skipped: bool = False,
         skipped_reason_code: str | None = None,
-    ):    
+    ):
         # TEMPORARY; delete when debate_remainder is come online!
         if style != "solo":
-            raise ValueError("run_remainder_extraction is intended for style='solo' only.")
+            raise ValueError(
+                "run_remainder_extraction is intended for style='solo' only."
+            )
 
         def _get_field(item, field, default=""):
             return self._get_field_value(item, field, default)
@@ -1156,12 +1201,14 @@ class RemainderExtractionCrew:
 
             skip_roots = self._load_root_level_skips()
             pending = [
-                    (root, df)
-                    for root, df in self._ngram_inventory
-                    if self._normalize_root(root) in skip_roots
-                ]
+                (root, df)
+                for root, df in self._ngram_inventory
+                if self._normalize_root(root) in skip_roots
+            ]
             cycle_msg = "📎 Running remainder extraction on *skipped* roots only.\n\n"
-            incomplete_roots = {item[0] for item in pending if self._is_root_incomplete(item[0])}
+            incomplete_roots = {
+                item[0] for item in pending if self._is_root_incomplete(item[0])
+            }
             ngrams = [item for item in pending if item[0] in incomplete_roots] + [
                 item for item in pending if item[0] not in incomplete_roots
             ]
@@ -1178,7 +1225,10 @@ class RemainderExtractionCrew:
 
         for count, ngram in enumerate(ngrams):
             root_token, df_count = ngram
-            if self._is_root_processed(root_token, current_cycle=current_cycle if 'current_cycle' in locals() else None):
+            if self._is_root_processed(
+                root_token,
+                current_cycle=current_cycle if "current_cycle" in locals() else None,
+            ):
                 continue
 
             semantic_candidates = find_semantically_similar_words(
@@ -1190,7 +1240,9 @@ class RemainderExtractionCrew:
                 min_similarity=min_semantic_similarity,
             )
 
-            index_candidates = self.candidate_finder.get_all_ngram_candidates(root_token)
+            index_candidates = self.candidate_finder.get_all_ngram_candidates(
+                root_token
+            )
 
             stream_text(
                 f"[{GREEN}✓{RESET}] Beginning examination of root-word candidate {GOLD}{root_token.upper()}{RESET}.\n",
@@ -1219,7 +1271,6 @@ class RemainderExtractionCrew:
                 stream_text(deduped_clusters_text)
 
             clusters = unique
-            total_clusters = len(clusters)
             best_config = clusters_result["config"]
 
             if len(clusters) == 0:
@@ -1315,13 +1366,11 @@ class RemainderExtractionCrew:
                             if loc or ctx:
                                 citations.append({"location": loc, "context": ctx})
 
-
                     dict_entry = next(
                         (
                             e
                             for e in self.entries
-                            if e.get("normalized") == norm
-                            or e.get("canonical") == norm
+                            if e.get("normalized") == norm or e.get("canonical") == norm
                         ),
                         None,
                     )
@@ -1358,8 +1407,12 @@ class RemainderExtractionCrew:
                             "normalized": norm.upper(),
                             "definition": definition,
                             "enhanced_definition": enhanced,
-                            "fasttext": float(_get_field(index_entry, "fasttext", "0.0")),
-                            "semantic": float(_get_field(index_entry, "semantic", "0.0")),
+                            "fasttext": float(
+                                _get_field(index_entry, "fasttext", "0.0")
+                            ),
+                            "semantic": float(
+                                _get_field(index_entry, "semantic", "0.0")
+                            ),
                             "score": float(_get_field(index_entry, "score", "0.0")),
                             "tier": (
                                 index_entry.get("tier", "Untiered")
@@ -1370,9 +1423,11 @@ class RemainderExtractionCrew:
                                 index_entry.get("priority", 0) if index_entry else 0
                             ),
                             "levenshtein": (
-                                index_entry.get("levenshtein", 99) if index_entry else 99
+                                index_entry.get("levenshtein", 99)
+                                if index_entry
+                                else 99
                             ),
-                            "source": self._get_source_label(index_entry),
+                            "source": self._get_source_label(sem_entry, index_entry),
                             "citations": list(citations),
                         }
                     )
@@ -1422,524 +1477,502 @@ class RemainderExtractionCrew:
                     1 for c in cluster if _get_field(c, "source", "") == "both"
                 )
 
-                coh_floor = self._dynamic_coh_floor(len(cluster), len(root_token) if root_token else None)
-                too_divergent = (
-                    len(cluster) > 1
+                coh_floor = self._dynamic_coh_floor(
+                    len(cluster), len(root_token) if root_token else None
                 )
+                # Treat each host word as its own pseudo-cluster of size 1
+                singleton_results = []
+                for single in cluster:
+                    single_candidates = [single]
+                    single_stats_summary = self._build_stats_summary(
+                        root_token,
+                        cluster_size=1,
+                        cohesion_score=cohesion_score,
+                        semantic_hits=semantic_hits,
+                        semantic_coverage=semantic_coverage,
+                        sem_count=sem_count,
+                        idx_count=idx_count,
+                        overlap_count=overlap_count,
+                        residual_report=None,
+                    )
 
-                if too_divergent:
-                    # Treat each host word as its own pseudo-cluster of size 1
-                    singleton_results = []
-                    for single in cluster:
-                        single_candidates = [single]
-                        single_stats_summary = self._build_stats_summary(
-                            root_token,
-                            cluster_size=1,
-                            cohesion_score=cohesion_score,
-                            semantic_hits=semantic_hits,
-                            semantic_coverage=semantic_coverage,
-                            sem_count=sem_count,
-                            idx_count=idx_count,
-                            overlap_count=overlap_count,
-                            residual_report=residual_report,
-                        )
+                    single_result = self.evaluate_ngram(
+                        ngram=root_token,
+                        cluster=single_candidates,
+                        cohesion_score=cohesion_score,
+                        semantic_hits=semantic_hits,
+                        semantic_coverage=semantic_coverage,
+                        sem_count=sem_count,
+                        idx_count=idx_count,
+                        overlap_count=overlap_count,
+                        stats_summary=single_stats_summary,
+                        stream_callback=stream_callback,
+                        style=style,
+                    )
 
-                        single_result = self.evaluate_ngram(
-                            cluster=single_candidates,
-                            use_remote=self.use_remote,
-                            query_db=self.new_definitions_db,
-                            query_run_id=self.run_id,
-
-                            stream_callback=stream_callback,
-                            cohesion_score=cohesion_score,
-                            semantic_hits=semantic_hits,
-                            semantic_coverage=semantic_coverage,
-
-                            stats_summary=single_stats_summary,
-
-                            sem_count=sem_count,
-                            idx_count=idx_count,
-                            overlap_count=overlap_count,
-                            style=style,
-
-                        )
-
-                        singleton_results.append({
+                    singleton_results.append(
+                        {
                             "root": root_token,
                             "cluster_index": cluster_id,
                             "word": single.get("canonical") or single.get("word"),
                             "llm_result": single_result,
-                        })
-
-                clustering_meta_json = json.dumps(best_config)
-
-                prefix_count = sum(
-                    e["normalized"].startswith(root_token.lower()) for e in merged_cluster
-                )
-                suffix_count = sum(
-                    e["normalized"].endswith(root_token.lower()) for e in merged_cluster
-                )
-
-                evaluated = single_result
-                evaluated["overlap_count"] = len(overlap)
-                evaluated["cluster_size"] = len(merged_cluster)
-
-                output.append(evaluated)
-
-                # 1) Save the log
-                if style == "debate":
-                    save_log(
-                        evaluated["Archivist"]
-                        or evaluated["raw_output"].get("Archivist"),
-                        label=root_token,
-                        cluster_number=str(cluster_id + 1),
-                        cluster_total=str(len(clusters)),
-                        accepted=len(evaluated["Glossator"]) > 0,
-                        style=style,
-                    )
-                elif style == "solo":
-                    txt = self._extract_evaluation(
-                        evaluated["Glossator"].strip().lower()
-                    )
-                    print(f"\n\n[Debug] Just so you know: {txt}\n\n")
-                    verdict = "accept" in txt.lower() if txt else False
-                    save_log(
-                        evaluated["Archivist"]
-                        or evaluated["raw_output"].get("Archivist"),
-                        label=root_token,
-                        cluster_number=str(cluster_id + 1),
-                        cluster_total=str(len(clusters)),
-                        accepted=verdict,
-                        style=style,
+                        }
                     )
 
-                def _to_text(x, sep="\n\n========\n\n"):
-                    if x is None:
-                        return None
-                    if isinstance(x, str):
-                        return x
-                    if isinstance(x, (list, tuple)):
-                        # If it's a list of strings, join; otherwise JSON.
-                        if all(isinstance(i, str) for i in x):
-                            return sep.join(x)
-                        return json.dumps(x, ensure_ascii=False)
-                    if isinstance(x, dict):
-                        return json.dumps(x, ensure_ascii=False)
-                    # numbers / other simple types
-                    return str(x)
+                    evaluated = single_result
+                    evaluated["overlap_count"] = len(overlap)
+                    evaluated["cluster_size"] = len(merged_cluster)
 
-                cursor = self.new_definitions_db.cursor()
+                    output.append(evaluated)
 
-                def _safe_float(value):
-                    try:
-                        return float(value)
-                    except (TypeError, ValueError):
-                        return None
+                    # 1) Save the log
+                    if style == "debate":
+                        save_log(
+                            evaluated["Archivist"]
+                            or evaluated["raw_output"].get("Archivist"),
+                            label=root_token,
+                            cluster_number=str(cluster_id + 1),
+                            cluster_total=str(len(clusters)),
+                            accepted=len(evaluated["Glossator"]) > 0,
+                            style=style,
+                        )
+                    elif style == "solo":
+                        txt = self._extract_evaluation(
+                            evaluated["Glossator"].strip().lower()
+                        )
+                        print(f"\n\n[Debug] Just so you know: {txt}\n\n")
+                        verdict = "accept" in txt.lower() if txt else False
+                        save_log(
+                            evaluated["Archivist"]
+                            or evaluated["raw_output"].get("Archivist"),
+                            label=root_token,
+                            cluster_number=str(cluster_id + 1),
+                            cluster_total=str(len(clusters)),
+                            accepted=verdict,
+                            style=style,
+                        )
 
-                residual_report = evaluated.get("residual_report") or {}
-                residual_explained = _safe_float(
-                    residual_report.get("explained_ratio")
-                )
-                residual_ratio = _safe_float(residual_report.get("residual_ratio"))
+                    def _to_text(x, sep="\n\n========\n\n"):
+                        if x is None:
+                            return None
+                        if isinstance(x, str):
+                            return x
+                        if isinstance(x, (list, tuple)):
+                            # If it's a list of strings, join; otherwise JSON.
+                            if all(isinstance(i, str) for i in x):
+                                return sep.join(x)
+                            return json.dumps(x, ensure_ascii=False)
+                        if isinstance(x, dict):
+                            return json.dumps(x, ensure_ascii=False)
+                        # numbers / other simple types
+                        return str(x)
 
-                # Per-word residual diagnostics (used for both headline and prompt)
-                residual_word_details = (
-                    residual_report.get("word_details") or []
-                    if isinstance(residual_report, dict)
-                    else []
-                )
+                    cursor = self.new_definitions_db.cursor()
 
-                # --- 1) Build a clearer residual_headline ---------------------------------
-                # Example target:
-                #   "Top residuals: GEBOFAL:1.00, ZEBOG:1.00"
-                residual_headline = None
-                if residual_word_details:
-                    # sort by highest residual_ratio first
-                    sorted_details = sorted(
-                        residual_word_details,
-                        key=lambda d: _safe_float(d.get("residual_ratio")) or 0.0,
-                        reverse=True,
-                    )
-                    bits: list[str] = []
-                    for d in sorted_details[:3]:
-                        w = str(d.get("word") or d.get("normalized") or "").strip()
-                        r = _safe_float(d.get("residual_ratio"))
-                        if w and r is not None:
-                            bits.append(f"{w}:{r:.2f}")
-                    if bits:
-                        residual_headline = "Top residuals: " + ", ".join(bits)
+                    def _safe_float(value):
+                        try:
+                            return float(value)
+                        except (TypeError, ValueError):
+                            return None
 
-                # --- 2) Build an explicit, LLM-friendly residual_focus_prompt --------------
-                residual_focus_prompt = None
-                if residual_word_details:
-                    cov_vals = [
-                        _safe_float(d.get("coverage_ratio"))
-                        for d in residual_word_details
-                        if d.get("coverage_ratio") is not None
-                    ]
-                    res_vals = [
-                        _safe_float(d.get("residual_ratio"))
-                        for d in residual_word_details
-                        if d.get("residual_ratio") is not None
-                    ]
+                    residual_report = evaluated.get("residual_report") or {}
+                    residual_explained = _safe_float(residual_report.get("explained_ratio"))
+                    residual_ratio = _safe_float(residual_report.get("residual_ratio"))
 
-                    # simple averages over words in this cluster
-                    avg_cov = (
-                        sum(v for v in cov_vals if v is not None) / len(cov_vals)
-                        if cov_vals
-                        else None
-                    )
-                    avg_res = (
-                        sum(v for v in res_vals if v is not None) / len(res_vals)
-                        if res_vals
-                        else None
+                    # Per-word residual diagnostics (used for both headline and prompt)
+                    residual_word_details = (
+                        residual_report.get("word_details") or []
+                        if isinstance(residual_report, dict)
+                        else []
                     )
 
-                    n_words = len(residual_word_details)
+                    # --- 1) Build a clearer residual_headline ---------------------------------
+                    # Example target:
+                    #   "Top residuals: GEBOFAL:1.00, ZEBOG:1.00"
+                    residual_headline = None
+                    if residual_word_details:
+                        # sort by highest residual_ratio first
+                        sorted_details = sorted(
+                            residual_word_details,
+                            key=lambda d: _safe_float(d.get("residual_ratio")) or 0.0,
+                            reverse=True,
+                        )
+                        bits: list[str] = []
+                        for d in sorted_details[:3]:
+                            w = str(d.get("word") or d.get("normalized") or "").strip()
+                            r = _safe_float(d.get("residual_ratio"))
+                            if w and r is not None:
+                                bits.append(f"{w}:{r:.2f}")
+                        if bits:
+                            residual_headline = "Top residuals: " + ", ".join(bits)
 
-                    # Human / LLM readable explanation
-                    pieces: list[str] = [
-                        f"ROOT={root_token.upper()}",
-                        f"N={n_words}",
-                    ]
-                    if avg_cov is not None:
-                        pieces.append(f"avg_cov={avg_cov:.2f}")
-                    if avg_res is not None:
-                        pieces.append(f"avg_res={avg_res:.2f}")
-                    if residual_explained is not None:
-                        pieces.append(f"explained={residual_explained:.2f}")
-                    if residual_ratio is not None:
-                        pieces.append(f"residual={residual_ratio:.2f}")
-                    if residual_headline:
-                        pieces.append(residual_headline)
+                    # --- 2) Build an explicit, LLM-friendly residual_focus_prompt --------------
+                    residual_focus_prompt = None
+                    if residual_word_details:
+                        cov_vals = [
+                            _safe_float(d.get("coverage_ratio"))
+                            for d in residual_word_details
+                            if d.get("coverage_ratio") is not None
+                        ]
+                        res_vals = [
+                            _safe_float(d.get("residual_ratio"))
+                            for d in residual_word_details
+                            if d.get("residual_ratio") is not None
+                        ]
 
-                    summary_line = " | ".join(pieces)
+                        # simple averages over words in this cluster
+                        avg_cov = (
+                            sum(v for v in cov_vals if v is not None) / len(cov_vals)
+                            if cov_vals
+                            else None
+                        )
+                        avg_res = (
+                            sum(v for v in res_vals if v is not None) / len(res_vals)
+                            if res_vals
+                            else None
+                        )
 
-                    # Short instruction that explains what these metrics are and how to use them
-                    metric_explainer = (
-                        "Here, N is the number of candidate words in this cluster. "
-                        "avg_cov is the average fraction of each word that is morphologically covered "
-                        "by the proposed root (0.0–1.0). "
-                        "avg_res is the average fraction of each word that remains morphologically "
-                        "unexplained by the root (0.0–1.0). "
-                        "'explained' is a cluster-level score for how much of the residual morphology "
-                        "is accounted for by the root, and 'residual' is the remaining unexplained "
-                        "portion (roughly 1.0 - explained). "
+                        n_words = len(residual_word_details)
+
+                        # Human / LLM readable explanation
+                        pieces: list[str] = [
+                            f"ROOT={root_token.upper()}",
+                            f"N={n_words}",
+                        ]
+                        if avg_cov is not None:
+                            pieces.append(f"avg_cov={avg_cov:.2f}")
+                        if avg_res is not None:
+                            pieces.append(f"avg_res={avg_res:.2f}")
+                        if residual_explained is not None:
+                            pieces.append(f"explained={residual_explained:.2f}")
+                        if residual_ratio is not None:
+                            pieces.append(f"residual={residual_ratio:.2f}")
+                        if residual_headline:
+                            pieces.append(residual_headline)
+
+                        summary_line = " | ".join(pieces)
+
+                        # Short instruction that explains what these metrics are and how to use them
+                        metric_explainer = (
+                            "Here, N is the number of candidate words in this cluster. "
+                            "avg_cov is the average fraction of each word that is morphologically covered "
+                            "by the proposed root (0.0–1.0). "
+                            "avg_res is the average fraction of each word that remains morphologically "
+                            "unexplained by the root (0.0–1.0). "
+                            "'explained' is a cluster-level score for how much of the residual morphology "
+                            "is accounted for by the root, and 'residual' is the remaining unexplained "
+                            "portion (roughly 1.0 - explained). "
+                        )
+
+                        usage_hint = (
+                            "Use these values when deciding whether to accept the root: higher avg_cov and "
+                            "explained, and lower residual, mean the root morphologically explains more of "
+                            "the cluster. If residual is close to 1.0 and avg_cov is near 0.0, treat the "
+                            "listed words as unexplained residuals and be skeptical of the root."
+                        )
+
+                        residual_focus_prompt = (
+                            summary_line + ". " + metric_explainer + usage_hint
+                        )
+
+                        if isinstance(residual_report, dict):
+                            residual_report["focus_prompt"] = residual_focus_prompt
+
+                    # 2) insert residual and llm records into sqlite
+                    residual_rows = []
+                    group_idx = cluster_id
+                    group_size = len(residual_word_details) if residual_word_details else 0
+
+                    # Reuse model and glossator fields we already computed for the cluster
+                    model_text = _to_text(evaluated["Model"]) or _to_text(
+                        evaluated["raw_output"].get("Model")
+                    )
+                    glossator_prompt_text = _to_text(
+                        evaluated["Glossator_Prompt"]
+                    ) or _to_text(evaluated["raw_output"].get("Glossator_Prompt"))
+                    glossator_def_text = _to_text(evaluated["Glossator"]) or _to_text(
+                        evaluated["raw_output"].get("Glossator")
                     )
 
-                    usage_hint = (
-                        "Use these values when deciding whether to accept the root: higher avg_cov and "
-                        "explained, and lower residual, mean the root morphologically explains more of "
-                        "the cluster. If residual is close to 1.0 and avg_cov is near 0.0, treat the "
-                        "listed words as unexplained residuals and be skeptical of the root."
+                    # These may be populated later if you teach the LLM to emit them explicitly
+                    derivational_validity = _safe_float(
+                        evaluated.get("raw_output", {}).get("Derivational_Validity")
+                    )
+                    rebuttal_resilience = _safe_float(
+                        evaluated.get("raw_output", {}).get("Rebuttal_Resilience")
                     )
 
-                    residual_focus_prompt = (
-                        summary_line + ". " + metric_explainer + usage_hint
-                    )
-
-                    if isinstance(residual_report, dict):
-                        residual_report["focus_prompt"] = residual_focus_prompt
-
-                # 2) insert residual and llm records into sqlite                
-                residual_rows = []
-                group_idx = cluster_id
-                group_size = len(residual_word_details) if residual_word_details else 0
-
-                # Reuse model and glossator fields we already computed for the cluster
-                model_text = (
-                    _to_text(evaluated["Model"])
-                    or _to_text(evaluated["raw_output"].get("Model"))
-                )
-                glossator_prompt_text = (
-                    _to_text(evaluated["Glossator_Prompt"])
-                    or _to_text(evaluated["raw_output"].get("Glossator_Prompt"))
-                )
-                glossator_def_text = (
-                    _to_text(evaluated["Glossator"])
-                    or _to_text(evaluated["raw_output"].get("Glossator"))
-                )
-
-                # These may be populated later if you teach the LLM to emit them explicitly
-                derivational_validity = _safe_float(
-                    evaluated.get("raw_output", {}).get("Derivational_Validity")
-                )
-                rebuttal_resilience = _safe_float(
-                    evaluated.get("raw_output", {}).get("Rebuttal_Resilience")
-                )
-
-                if residual_word_details:
-                    for detail in residual_word_details:
-                        if not isinstance(detail, dict):
-                            continue
-
-                        parent_word = str(
-                            detail.get("word")
-                            or detail.get("normalized")
-                            or ""
-                        ).strip()
-                        if not parent_word:
-                            continue
-
-                        uncovered = detail.get("uncovered") or []
-                        if not isinstance(uncovered, list):
-                            uncovered = [uncovered] if uncovered else []
-
-                        # If we somehow have no uncovered spans, treat the whole parent word as residual
-                        if not uncovered:
-                            uncovered = [parent_word]
-
-                        for frag in uncovered:
-                            if isinstance(frag, dict):
-                                residual_text = str(frag.get("text") or "").strip()
-                            else:
-                                residual_text = str(frag or "").strip()
-
-                            if not residual_text:
+                    if residual_word_details:
+                        for detail in residual_word_details:
+                            if not isinstance(detail, dict):
                                 continue
 
-                            if style == "debate":
-                                residual_rows.append(
-                                    (
-                                        self.run_id,                  # run_id
-                                        residual_text,                # residual
-                                        parent_word,                  # parent_word
-                                        group_idx,                    # group_idx
-                                        group_size,                   # group_size
-                                        len(sem_norms),               # sem_count
-                                        len(index_norms),             # idx_count
-                                        evaluated["overlap_count"],   # overlap_count
-                                        model_text,                   # model
-                                        _to_text(
-                                            evaluated["raw_output"].get("Proposal")
-                                        ),
-                                        _to_text(
-                                            evaluated["raw_output"].get("Critique")
-                                        ),
-                                        _to_text(
-                                            evaluated["raw_output"].get("Initial_Defense")
-                                        ),
-                                        _to_text(
-                                            evaluated["raw_output"].get("Adjudicator")
-                                        ),
-                                        _to_text(
-                                            evaluated["raw_output"].get("Skeptic")
-                                        ),
-                                        _to_text(
-                                            evaluated["raw_output"].get("Linguist")
-                                        ),
-                                        glossator_prompt_text,        # glossator_prompt
-                                        glossator_def_text,           # glossator_def
-                                        derivational_validity,        # derivational_validity
-                                        rebuttal_resilience,          # rebuttal_resilience
-                                        cohesion_score,               # semantic_cohesion
-                                        cohesion_score,               # cohesion (you can swap if you later distinguish)
-                                        semantic_coverage,            # semantic_coverage
-                                        residual_explained,           # residual_explained
-                                        residual_ratio,               # residual_ratio
-                                        residual_headline,            # residual_headline
-                                        residual_focus_prompt,        # residual_focus_prompt
+                            parent_word = str(
+                                detail.get("word") or detail.get("normalized") or ""
+                            ).strip()
+                            if not parent_word:
+                                continue
+
+                            uncovered = detail.get("uncovered") or []
+                            if not isinstance(uncovered, list):
+                                uncovered = [uncovered] if uncovered else []
+
+                            # If we somehow have no uncovered spans, treat the whole parent word as residual
+                            if not uncovered:
+                                uncovered = [parent_word]
+
+                            for frag in uncovered:
+                                if isinstance(frag, dict):
+                                    residual_text = str(frag.get("text") or "").strip()
+                                else:
+                                    residual_text = str(frag or "").strip()
+
+                                if not residual_text:
+                                    continue
+
+                                if style == "debate":
+                                    residual_rows.append(
+                                        (
+                                            self.run_id,  # run_id
+                                            residual_text,  # residual
+                                            parent_word,  # parent_word
+                                            group_idx,  # group_idx
+                                            group_size,  # group_size
+                                            len(sem_norms),  # sem_count
+                                            len(index_norms),  # idx_count
+                                            evaluated["overlap_count"],  # overlap_count
+                                            model_text,  # model
+                                            _to_text(
+                                                evaluated["raw_output"].get("Proposal")
+                                            ),
+                                            _to_text(
+                                                evaluated["raw_output"].get("Critique")
+                                            ),
+                                            _to_text(
+                                                evaluated["raw_output"].get(
+                                                    "Initial_Defense"
+                                                )
+                                            ),
+                                            _to_text(
+                                                evaluated["raw_output"].get("Adjudicator")
+                                            ),
+                                            _to_text(
+                                                evaluated["raw_output"].get("Skeptic")
+                                            ),
+                                            _to_text(
+                                                evaluated["raw_output"].get("Linguist")
+                                            ),
+                                            glossator_prompt_text,  # glossator_prompt
+                                            glossator_def_text,  # glossator_def
+                                            derivational_validity,  # derivational_validity
+                                            rebuttal_resilience,  # rebuttal_resilience
+                                            cohesion_score,  # semantic_cohesion
+                                            cohesion_score,  # cohesion (you can swap if you later distinguish)
+                                            semantic_coverage,  # semantic_coverage
+                                            residual_explained,  # residual_explained
+                                            residual_ratio,  # residual_ratio
+                                            residual_headline,  # residual_headline
+                                            residual_focus_prompt,  # residual_focus_prompt
+                                        )
                                     )
-                                )
-                            else:
-                                # SOLO style: no full tribunal rounds, just glossator-centric
-                                residual_rows.append(
-                                    (
-                                        self.run_id,                  # run_id
-                                        residual_text,                # residual
-                                        parent_word,                  # parent_word
-                                        group_idx,                    # group_idx
-                                        group_size,                   # group_size
-                                        len(sem_norms),               # sem_count
-                                        len(index_norms),             # idx_count
-                                        evaluated["overlap_count"],   # overlap_count
-                                        model_text,                   # model
-                                        glossator_prompt_text,        # glossator_prompt
-                                        glossator_def_text,           # glossator_def
-                                        derivational_validity,        # derivational_validity
-                                        rebuttal_resilience,          # rebuttal_resilience
-                                        cohesion_score,               # semantic_cohesion
-                                        cohesion_score,               # cohesion
-                                        semantic_coverage,            # semantic_coverage
-                                        residual_explained,           # residual_explained
-                                        residual_ratio,               # residual_ratio
-                                        residual_headline,            # residual_headline
-                                        residual_focus_prompt,        # residual_focus_prompt
+                                else:
+                                    # SOLO style: no full tribunal rounds, just glossator-centric
+                                    residual_rows.append(
+                                        (
+                                            self.run_id,  # run_id
+                                            residual_text,  # residual
+                                            parent_word,  # parent_word
+                                            group_idx,  # group_idx
+                                            group_size,  # group_size
+                                            len(sem_norms),  # sem_count
+                                            len(index_norms),  # idx_count
+                                            evaluated["overlap_count"],  # overlap_count
+                                            model_text,  # model
+                                            glossator_prompt_text,  # glossator_prompt
+                                            glossator_def_text,  # glossator_def
+                                            derivational_validity,  # derivational_validity
+                                            rebuttal_resilience,  # rebuttal_resilience
+                                            cohesion_score,  # semantic_cohesion
+                                            cohesion_score,  # cohesion
+                                            semantic_coverage,  # semantic_coverage
+                                            residual_explained,  # residual_explained
+                                            residual_ratio,  # residual_ratio
+                                            residual_headline,  # residual_headline
+                                            residual_focus_prompt,  # residual_focus_prompt
+                                        )
                                     )
-                                )
 
-                if residual_rows:
-                    if style == "debate":
-                        cursor.executemany(
-                            """
-                            INSERT INTO root_residual_semantics (
-                                run_id,
-                                residual,
-                                parent_word,
-                                group_idx,
-                                group_size,
-                                sem_count,
-                                idx_count,
-                                overlap_count,
-                                model,
-                                proposal,
-                                critique,
-                                defense,
-                                adjudicator_rounds,
-                                skeptic_rounds,
-                                linguist_rounds,
-                                glossator_prompt,
-                                glossator_def,
-                                derivational_validity,
-                                rebuttal_resilience,
-                                semantic_cohesion,
-                                cohesion,
-                                semantic_coverage,
-                                residual_explained,
-                                residual_ratio,
-                                residual_headline,
-                                residual_focus_prompt
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            residual_rows,
-                        )
-                    else:
-                        cursor.executemany(
-                            """
-                            INSERT INTO root_residual_semantics (
-                                run_id,
-                                residual,
-                                parent_word,
-                                group_idx,
-                                group_size,
-                                sem_count,
-                                idx_count,
-                                overlap_count,
-                                model,
-                                glossator_prompt,
-                                glossator_def,
-                                derivational_validity,
-                                rebuttal_resilience,
-                                semantic_cohesion,
-                                cohesion,
-                                semantic_coverage,
-                                residual_explained,
-                                residual_ratio,
-                                residual_headline,
-                                residual_focus_prompt
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            residual_rows,
-                        )
-
-                cluster_rowid = cursor.lastrowid
-
-                if residual_word_details:
-                    detail_rows = []
-                    for detail in residual_word_details:
-                        if not isinstance(detail, dict):
-                            continue
-                        residual_span = str(detail.get("word") or "").strip()
-                        normalized_word = str(
-                            detail.get("normalized") or residual_span
-                        ).strip()
-                        if not (residual_span or normalized_word):
-                            continue
-                        uncovered = detail.get("uncovered") or []
-                        if not isinstance(uncovered, list):
-                            uncovered = [str(uncovered)] if uncovered else []
-                        low_conf = detail.get("low_conf_segments") or []
-                        if not isinstance(low_conf, list):
-                            low_conf = [str(low_conf)] if low_conf else []
-
-                        detail_rows.append(
-                            (
-                                cluster_rowid,
-                                residual_span or normalized_word,
-                                normalized_word,
-                                str(detail.get("definition") or ""),
-                                _safe_float(detail.get("coverage_ratio")),
-                                _safe_float(detail.get("residual_ratio")),
-                                _safe_float(detail.get("avg_confidence")),
-                                json.dumps(uncovered, ensure_ascii=False),
-                                json.dumps(low_conf, ensure_ascii=False),
+                    if residual_rows:
+                        if style == "debate":
+                            cursor.executemany(
+                                """
+                                INSERT INTO root_residual_semantics (
+                                    run_id,
+                                    residual,
+                                    parent_word,
+                                    group_idx,
+                                    group_size,
+                                    sem_count,
+                                    idx_count,
+                                    overlap_count,
+                                    model,
+                                    proposal,
+                                    critique,
+                                    defense,
+                                    adjudicator_rounds,
+                                    skeptic_rounds,
+                                    linguist_rounds,
+                                    glossator_prompt,
+                                    glossator_def,
+                                    derivational_validity,
+                                    rebuttal_resilience,
+                                    semantic_cohesion,
+                                    cohesion,
+                                    semantic_coverage,
+                                    residual_explained,
+                                    residual_ratio,
+                                    residual_headline,
+                                    residual_focus_prompt
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                residual_rows,
                             )
-                        )
-
-                    if detail_rows:
-                        cursor.executemany(
-                            """
-                            INSERT INTO residual_details (
-                                cluster_id,
-                                residual_span,
-                                normalized,
-                                definition,
-                                coverage_ratio,
-                                residual_ratio,
-                                avg_confidence,
-                                uncovered_json,
-                                low_conf_json
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            detail_rows,
-                        )
-
-                # 3) Insert each of the merged defs into `raw_defs`
-                for entry in merged_cluster:
-                    cursor.execute(
-                        """
-                        INSERT INTO raw_defs (
-                            cluster_id,
-                            source_word,
-                            variant,
-                            definition,
-                            enhanced_def,
-                            fasttext,
-                            similarity,
-                            tier
-                        ) VALUES (?,?,?,?,?,?,?,?)
-                        """,
-                        (
-                            cluster_rowid,
-                            entry["normalized"].upper(),  # canonical appearance
-                            (
-                                entry["word"].upper()
-                                if entry["normalized"].upper()
-                                == entry["word"].upper()
-                                else ""
-                            ),  # variant if applicable
-                            entry.get("definition", "") or "",
-                            entry.get("enhanced_definition", "") or "",
-                            float(entry.get("fasttext", 0.0)),
-                            float(
-                                max(
-                                    entry.get("semantic", 0.0),
-                                    entry.get("score", 0.0),
-                                )
-                            ),
-                            entry.get("tier", "[no tiering given]"),
-                        ),
-                    )
-
-                    raw_def_id = cursor.lastrowid
-
-                    # Insert this entry's citations → citations(def_id, location, context)
-                    rows = []
-                    for c in entry.get("citations") or []:
-                        loc = c.get("location") if isinstance(c, dict) else None
-                        ctx = c.get("context") if isinstance(c, dict) else None
-                        if loc or ctx:
-                            rows.append((raw_def_id, loc, ctx))
-                    if rows:
-                        cursor.executemany(
-                            "INSERT INTO citations (def_id, location, context) VALUES (?,?,?)",
-                            rows,
-                        )
-
-                    # 4) commit once per cluster-member
-                    self.new_definitions_db.commit()
+                        else:
+                            cursor.executemany(
+                                """
+                                INSERT INTO root_residual_semantics (
+                                    run_id,
+                                    residual,
+                                    parent_word,
+                                    group_idx,
+                                    group_size,
+                                    sem_count,
+                                    idx_count,
+                                    overlap_count,
+                                    model,
+                                    glossator_prompt,
+                                    glossator_def,
+                                    derivational_validity,
+                                    rebuttal_resilience,
+                                    semantic_cohesion,
+                                    cohesion,
+                                    semantic_coverage,
+                                    residual_explained,
+                                    residual_ratio,
+                                    residual_headline,
+                                    residual_focus_prompt
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                residual_rows,
+                            )
 
                     cluster_rowid = cursor.lastrowid
+
+                    if residual_word_details:
+                        detail_rows = []
+                        for detail in residual_word_details:
+                            if not isinstance(detail, dict):
+                                continue
+                            residual_span = str(detail.get("word") or "").strip()
+                            normalized_word = str(
+                                detail.get("normalized") or residual_span
+                            ).strip()
+                            if not (residual_span or normalized_word):
+                                continue
+                            uncovered = detail.get("uncovered") or []
+                            if not isinstance(uncovered, list):
+                                uncovered = [str(uncovered)] if uncovered else []
+                            low_conf = detail.get("low_conf_segments") or []
+                            if not isinstance(low_conf, list):
+                                low_conf = [str(low_conf)] if low_conf else []
+
+                            detail_rows.append(
+                                (
+                                    cluster_rowid,
+                                    residual_span or normalized_word,
+                                    normalized_word,
+                                    str(detail.get("definition") or ""),
+                                    _safe_float(detail.get("coverage_ratio")),
+                                    _safe_float(detail.get("residual_ratio")),
+                                    _safe_float(detail.get("avg_confidence")),
+                                    json.dumps(uncovered, ensure_ascii=False),
+                                    json.dumps(low_conf, ensure_ascii=False),
+                                )
+                            )
+
+                        if detail_rows:
+                            cursor.executemany(
+                                """
+                                INSERT INTO residual_details (
+                                    cluster_id,
+                                    residual_span,
+                                    normalized,
+                                    definition,
+                                    coverage_ratio,
+                                    residual_ratio,
+                                    avg_confidence,
+                                    uncovered_json,
+                                    low_conf_json
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                detail_rows,
+                            )
+
+                    # 3) Insert each of the merged defs into `raw_defs`
+                    for entry in merged_cluster:
+                        cursor.execute(
+                            """
+                            INSERT INTO raw_defs (
+                                cluster_id,
+                                source_word,
+                                variant,
+                                definition,
+                                enhanced_def,
+                                fasttext,
+                                similarity,
+                                tier
+                            ) VALUES (?,?,?,?,?,?,?,?)
+                            """,
+                            (
+                                cluster_rowid,
+                                entry["normalized"].upper(),  # canonical appearance
+                                (
+                                    entry["word"].upper()
+                                    if entry["normalized"].upper() == entry["word"].upper()
+                                    else ""
+                                ),  # variant if applicable
+                                entry.get("definition", "") or "",
+                                entry.get("enhanced_definition", "") or "",
+                                float(entry.get("fasttext", 0.0)),
+                                float(
+                                    max(
+                                        entry.get("semantic", 0.0),
+                                        entry.get("score", 0.0),
+                                    )
+                                ),
+                                entry.get("tier", "[no tiering given]"),
+                            ),
+                        )
+
+                        raw_def_id = cursor.lastrowid
+
+                        # Insert this entry's citations → citations(def_id, location, context)
+                        rows = []
+                        for c in entry.get("citations") or []:
+                            loc = c.get("location") if isinstance(c, dict) else None
+                            ctx = c.get("context") if isinstance(c, dict) else None
+                            if loc or ctx:
+                                rows.append((raw_def_id, loc, ctx))
+                        if rows:
+                            cursor.executemany(
+                                "INSERT INTO citations (def_id, location, context) VALUES (?,?,?)",
+                                rows,
+                            )
+
+                        # 4) commit once per cluster-member
+                        self.new_definitions_db.commit()
+
+                        cluster_rowid = cursor.lastrowid
 
             self._mark_root_complete(root_token)
             self._record_preanalysis_consumed(root_token)
