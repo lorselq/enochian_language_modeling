@@ -73,6 +73,11 @@ class RemainderExtractionCrew:
 
         # Load everything
         self.entries: list[EntryRecord] = self.load_entries()
+        self.entry_by_norm: dict[str, EntryRecord] = {
+            entry.get("normalized", ""): entry
+            for entry in self.entries
+            if entry.get("normalized")
+        }
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.new_definitions_db = sqlite3.connect(paths[style])
         self._prepare_db(self.new_definitions_db)
@@ -289,11 +294,134 @@ class RemainderExtractionCrew:
     def _normalize_root(self, value: str) -> str:
         return str(value or "").strip().lower()
 
+    def _get_dictionary_entry(self, token: str) -> EntryRecord | None:
+        return self.entry_by_norm.get(self._normalize_root(token))
+
+    def _dictionary_definition(self, entry: EntryRecord | None) -> str:
+        if not entry:
+            return ""
+        if entry.get("enhanced_definition"):
+            return str(entry.get("enhanced_definition") or "").strip()
+        senses = entry.get("senses") or []
+        if senses:
+            return str(senses[0].get("definition") or "").strip()
+        return ""
+
+    def _minimize_gloss_json(self, payload: str | dict | list | None) -> str | None:
+        if payload is None:
+            return None
+        if isinstance(payload, (dict, list)):
+            try:
+                return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            except TypeError:
+                return None
+        if not isinstance(payload, str):
+            return None
+        text = payload.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+        try:
+            return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+        except TypeError:
+            return text
+
+    def _load_accepted_glosses(self, token: str) -> list[str]:
+        """Fetch accepted glossator JSON for a token, minimizing whitespace."""
+
+        cursor = self.new_definitions_db.cursor()
+        rows: list[tuple[str]] = []
+        try:
+            rows = cursor.execute(
+                """
+                SELECT glossator_def
+                FROM clusters
+                WHERE LOWER(ngram) = ?
+                  AND TRIM(COALESCE(glossator_def, '')) <> ''
+                """,
+                (self._normalize_root(token),),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+
+        accepted: list[str] = []
+        for row in rows:
+            raw = row[0]
+            minimized = self._minimize_gloss_json(raw)
+            if not minimized:
+                continue
+            try:
+                parsed = json.loads(minimized)
+            except json.JSONDecodeError:
+                continue
+            verdict = str(parsed.get("EVALUATION") or parsed.get("Evaluation") or "").lower()
+            if "accept" not in verdict and "accepted" not in minimized.lower():
+                continue
+            accepted.append(minimized)
+        return accepted
+
     @staticmethod
     def _get_field_value(item, field: str, default=""):
         if isinstance(item, dict):
             return item.get(field, default)
         return getattr(item, field, default)
+
+    def _build_parent_entries(
+        self,
+        parent_dict_entries: dict[str, EntryRecord],
+        parent_gloss_map: dict[str, list[str]] | None = None,
+    ) -> list[dict]:
+        parent_gloss_map = parent_gloss_map or {}
+        entries: list[dict] = []
+        seen_norms: set[str] = set()
+        for norm, entry in parent_dict_entries.items():
+            definition = self._dictionary_definition(entry)
+            if not definition:
+                continue
+            entries.append(
+                {
+                    "word": entry.get("canonical", norm).upper(),
+                    "normalized": norm,
+                    "definition": definition,
+                    "enhanced_definition": entry.get("enhanced_definition", "")
+                    or definition,
+                    "tier": "Dictionary",  # highlight dictionary provenance
+                    "priority": 1,
+                    "source": "dictionary_parent",
+                    "citations": entry.get("key_citations", []) or [],
+                    "accepted_glosses": parent_gloss_map.get(norm, []) or [],
+                }
+            )
+            seen_norms.add(norm)
+
+        for norm, glosses in parent_gloss_map.items():
+            if norm in seen_norms or not glosses:
+                continue
+            minimized_glosses = [
+                self._minimize_gloss_json(g) or str(g).strip() for g in glosses if g
+            ]
+            gloss_definition = next(
+                (g for g in minimized_glosses if g), glosses[0] if glosses else ""
+            )
+            if not gloss_definition:
+                continue
+            entries.append(
+                {
+                    "word": norm.upper(),
+                    "normalized": norm,
+                    "definition": gloss_definition,
+                    "enhanced_definition": gloss_definition,
+                    "tier": "AcceptedGloss",  # signal glossator provenance
+                    "priority": 0,
+                    "source": "cluster_gloss",
+                    "citations": [],
+                    "accepted_glosses": minimized_glosses,
+                }
+            )
+        return entries
 
     def _init_queue_table(self) -> None:
         cursor = self.new_definitions_db.cursor()
@@ -1029,6 +1157,19 @@ class RemainderExtractionCrew:
             analyses=residual_inputs,
         )
 
+        accepted_glosses: list[str] = []
+        for entry in cluster:
+            if isinstance(entry, dict):
+                accepted_glosses.extend(entry.get("accepted_glosses") or [])
+        if not accepted_glosses:
+            accepted_glosses = self._load_accepted_glosses(ngram_lower)
+
+        minimized_glosses: list[str] = []
+        for gloss in accepted_glosses:
+            minimized = self._minimize_gloss_json(gloss) or str(gloss).strip()
+            if minimized:
+                minimized_glosses.append(minimized)
+
         self._persist_root_remainders(remainder_rows)
         remainder_summary = summarize_root_remainders(
             self.new_definitions_db, run_id=self.run_id, root=ngram_lower
@@ -1044,6 +1185,14 @@ class RemainderExtractionCrew:
             partner_counts=segment_counter,
             residual_counts=residual_counter,
         )
+
+        if minimized_glosses:
+            analytics_summary = analytics_summary or {}
+            analytics_summary["accepted_glosses"] = minimized_glosses
+            residual_report = residual_report or {}
+            guidance_json = residual_report.get("residual_guidance_json") or {}
+            guidance_json["accepted_glosses"] = minimized_glosses
+            residual_report["residual_guidance_json"] = guidance_json
 
         self._persist_composite_reconstruction(residual_inputs)
 
@@ -1085,6 +1234,11 @@ class RemainderExtractionCrew:
             stats_lines.append("")
             stats_lines.append("Analytics priors:")
             stats_lines.extend(analytics_lines)
+
+        if minimized_glosses:
+            stats_lines.append("")
+            stats_lines.append("Previously accepted glosses (JSON):")
+            stats_lines.extend(minimized_glosses)
 
         analytics_focus = analytics_summary.get("focus_lines") or []
         if analytics_focus:
@@ -1225,6 +1379,7 @@ class RemainderExtractionCrew:
 
         for count, ngram in enumerate(ngrams):
             root_token, df_count = ngram
+            ngram_lower = self._normalize_root(root_token)
             if self._is_root_processed(
                 root_token,
                 current_cycle=current_cycle if "current_cycle" in locals() else None,
@@ -1244,6 +1399,41 @@ class RemainderExtractionCrew:
                 root_token
             )
 
+            parent_norms = {
+                self._normalize_root(c.get("normalized"))
+                for c in index_candidates
+                if c.get("normalized")
+                and len(str(c.get("normalized"))) > len(ngram_lower)
+            }
+            parent_norms.discard(ngram_lower)
+
+            parent_dict_entries: dict[str, EntryRecord] = {
+                norm: self._get_dictionary_entry(norm)
+                for norm in parent_norms
+                if self._get_dictionary_entry(norm)
+            }
+            parent_gloss_map: dict[str, list[str]] = {
+                norm: self._load_accepted_glosses(norm) for norm in parent_norms
+            }
+
+            standalone_defined = (
+                self._get_dictionary_entry(ngram_lower) is not None
+                and not parent_norms
+            )
+            has_parent_context = bool(parent_dict_entries or any(parent_gloss_map.values()))
+
+            if not standalone_defined and not has_parent_context:
+                self._insert_skip(
+                    ngram_lower,
+                    reason_code="no_parent_context",
+                    cluster_index=None,
+                )
+                continue
+
+            parent_entries = self._build_parent_entries(
+                parent_dict_entries, parent_gloss_map
+            )
+
             stream_text(
                 f"[{GREEN}✓{RESET}] Beginning examination of root-word candidate {GOLD}{root_token.upper()}{RESET}.\n",
                 delay=0.005,
@@ -1254,6 +1444,12 @@ class RemainderExtractionCrew:
             )
             clusters = clusters_result["clusters"]
             total_clusters = len(clusters)
+
+            # If this ngram only makes sense as part of larger words, constrain the
+            # cluster list to dictionary-backed parent entries per the remainder rules.
+            if not standalone_defined and parent_entries:
+                clusters = [parent_entries]
+                total_clusters = 1
             # dedupe any clusters that are identical up to ordering
             unique, seen_sigs = [], set()
             for cl in clusters:
@@ -1693,6 +1889,11 @@ class RemainderExtractionCrew:
                     glossator_def_text = _to_text(evaluated["Glossator"]) or _to_text(
                         evaluated["raw_output"].get("Glossator")
                     )
+                    minimized_glossator_def = self._minimize_gloss_json(
+                        glossator_def_text
+                    )
+                    if minimized_glossator_def:
+                        glossator_def_text = minimized_glossator_def
 
                     # These may be populated later if you teach the LLM to emit them explicitly
                     derivational_validity = _safe_float(
