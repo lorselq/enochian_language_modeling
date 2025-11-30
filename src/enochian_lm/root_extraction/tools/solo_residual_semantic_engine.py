@@ -35,12 +35,6 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 embedder = get_sentence_transformer("all-MiniLM-L6-v2")
 
-def _safe_float(value: object) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
 
 def _get_field(item, field, default=""):
     if isinstance(item, dict):
@@ -48,7 +42,7 @@ def _get_field(item, field, default=""):
     return getattr(item, field, default)
 
 
-def solo_remainder_analysis(
+def solo_analyze_remainder(
     root: str,
     candidates: list[EntryRecord],
     stats_summary: str,
@@ -100,7 +94,7 @@ def solo_remainder_analysis(
                                 "cosine-ish semantic alignment between the sense of "
                                 f"{word} and {root.upper()}'s proposed semantics"
                             ),
-                            "confidence": "must be a float between 0.0 and 1.0 (e.g. 0.75, 0.92)",
+                            "confidence": "must be a float between 0.0 and 1.0 (e.g., 0.75, 0.92)",
                             "note": (
                                 f"breakdown for how {root.upper()} contributes to the sense of {word}"
                             ),
@@ -114,10 +108,22 @@ def solo_remainder_analysis(
         ",\n    ".join(evidence_prompt_portion) if evidence_prompt_portion else ""
     )
 
+    if root_entry is None:
+        root_entry = next(
+            (
+                c
+                for c in candidates
+                if _get_field(c, "normalized", "").lower() == root.lower()
+            ),
+            None,
+        )
+
     # === ROOT-LEVEL CONTEXT ===
     stats_section = f"ROOT-LEVEL STATS\n{stats_summary}\n\n"
 
-    candidate_defs = "\n".join(joined_defs) if joined_defs else "(no definitions available)"
+    candidate_defs = (
+        "\n".join(joined_defs) if joined_defs else "(no definitions available)"
+    )
 
     lexicon_section = textwrap.dedent(
         f"""
@@ -182,7 +188,7 @@ def solo_remainder_analysis(
                     "cosine-ish semantic alignment between the sense of <word> and "
                     f"{root.upper()}'s proposed semantics"
                 ),
-                "confidence": "must be a float between 0.0 and 1.0 (e.g. 0.75, 0.92)",
+                "confidence": "must be a float between 0.0 and 1.0 (e.g., 0.75, 0.92)",
                 "note": f"breakdown for how {root.upper()} contributes to the sense of <word>",
             },
         },
@@ -201,7 +207,7 @@ def solo_remainder_analysis(
           "EXAMPLE": "give 1-3 short example sentences of how its English equivalence would be used, marking it in each sentence",
           "DECODING_GUIDE": "concrete rules to resolve compound words, <=25 words",
           "SEMANTIC_CORE": ["up to three nouns or gerunds that captures the semantics of the root {root.upper()}"],
-          "NEGATIVE_CONTRAST": ["max 4 phrases (e.g. 'non-temporal', 'non-agentive')"],
+          "NEGATIVE_CONTRAST": ["max 4 phrases (e.g., 'non-temporal', 'non-agentive')"],
           "CONTRIBUTION": {{"lemmas describing ontology of {root.upper()}, accompanied by a rating of semantic composition": 0.0}},
           "POS_BIAS": {{"nounness": 0.0, "modifier": 0.0, "verbness": 0.0}},
           "ATTACHMENT": {{
@@ -221,8 +227,8 @@ def solo_remainder_analysis(
           ],
           "CONFIDENCE": {{
             "score": 0.0,
-            "drivers": ["list of factors supporting this interpretation"],
-            "risks": ["list of uncertainties or confounds"]
+            "drivers": ["list of one to three short phrases that explain why you are confident in this analysis"],
+            "risks": ["list of one to three short phrases that explain where your reservations are in this analysis"]
           }}
         }}
         """
@@ -349,6 +355,7 @@ def solo_remainder_analysis(
         expected_output=example_output,
     )
 
+    # === Direct Tool Access with Streaming ===
     GRAY = "\033[38;5;250m"
     RESET = "\033[0m"
 
@@ -358,6 +365,7 @@ def solo_remainder_analysis(
         else None
     )
 
+    # separator between words
     print(
         f"\n==={(len('Now examining the possible residual root ') + len(f'<{root.upper()}>')) * '='}==="
     )
@@ -390,10 +398,10 @@ def solo_remainder_analysis(
     archivist = [
         "\n\n\n========================\n====== TRANSCRIPT ======\n========================\n\n"
     ]
-    archivist.append("=== 📖 PROMPT FOR RESIDUAL LEXICOGRAPHER ===\n")
+    archivist.append("=== 📖 PROMPT FOR LEXICOGRAPHER ===\n")
     archivist.append(do_it_all.description)
     archivist.append("\n\n")
-    archivist.append("=== 👩‍🏫 RESIDUAL LEXICOGRAPHER ===\n")
+    archivist.append("=== 👩‍🏫 LEXICOGRAPHER ===\n")
     archivist.append(response)
     archivist_recording = "\n".join(archivist)
 
@@ -406,11 +414,11 @@ def solo_remainder_analysis(
         "Glossator": parsed,
         "Model": model,
         "Glossator_Prompt": do_it_all.description,
-        "Adjudicator": "",
-        "Adjudicator_Prompt": "",
         "Archivist": archivist_recording,
         "raw_output": {
+            "Glossator": response,
+            "Glossator_Prompt": do_it_all.description,
             "Model": model,
-            "response_text": response,
+            "Archivist": archivist_recording,
         },
     }

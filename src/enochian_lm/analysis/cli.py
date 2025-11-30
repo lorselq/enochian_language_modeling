@@ -34,7 +34,6 @@ from enochian_lm.root_extraction.utils.remainders import backfill_root_remainder
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
 from .analysis.factorize import factorize_morphemes
-from .analysis.residual_semantics import SubtractiveSemanticsEngine
 from .analysis.residuals import cluster_residuals
 from .report.pipeline_summary import generate_pipeline_report
 from .utils.sql import connect_sqlite, ensure_analysis_tables
@@ -868,50 +867,6 @@ def _run_composite_backfill(args: argparse.Namespace) -> None:
 
     if total_rows == 0:
         raise ValueError("No composite reconstructions were backfilled")
-
-
-def _run_residual_semantic_pass(args: argparse.Namespace) -> int:
-    conn = connect_sqlite(str(args.db_path))
-    try:
-        ensure_analysis_tables(conn)
-        run_ids = _resolve_run_ids(conn, args.run_id)
-    finally:
-        conn.close()
-
-    engine = SubtractiveSemanticsEngine(
-        connect_sqlite(str(args.db_path)),
-        use_remote=not bool(getattr(args, "local", False)),
-        llm_responder=None,
-    )
-
-    total_processed = 0
-    try:
-        for run_id in run_ids:
-            stats = engine.process_run(run_id, limit=getattr(args, "limit", None))
-            processed = int(stats.get("processed", 0))
-            accepted = int(stats.get("accepted", 0))
-            rejected = int(stats.get("rejected", 0))
-            total_processed += processed
-
-            logger.info(
-                "Residual semantic pass completed",
-                extra={
-                    "run_id": run_id,
-                    "processed": processed,
-                    "accepted": accepted,
-                    "rejected": rejected,
-                },
-            )
-            print(
-                f"[{run_id}] processed={processed} accepted={accepted} rejected={rejected}"
-            )
-    finally:
-        if hasattr(engine, "conn"):
-            try:
-                engine.conn.close()
-            except Exception:
-                pass
-    return total_processed
 
 
 def _run_token_decomposition(args: argparse.Namespace) -> None:
