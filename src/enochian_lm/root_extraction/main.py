@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "--only-skipped",
+        "--remainders",
         nargs="?",
         const="",
         default=None,
