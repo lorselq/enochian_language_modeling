@@ -39,7 +39,7 @@ import json
 import math
 import re
 from enochian_lm.common.sqlite_bootstrap import sqlite3
-import sys
+from enochian_lm.common.config import get_config_paths
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Set, Tuple

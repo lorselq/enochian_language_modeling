@@ -3744,7 +3744,7 @@
     },
     {
         "word": "BOOAPIS",
-        "normalized": "boapis",
+        "normalized": "booapis",
         "canon_word": true,
         "definition": "to serve",
         "commentary": "BOAP and BOOAP are both the same root",
@@ -6304,7 +6304,7 @@
     },
     {
         "word": "CRPL",
-        "normalized": "cripl",
+        "normalized": "crpl",
         "canon_word": true,
         "definition": "but one",
         "key_citations": [
@@ -8146,7 +8146,7 @@
     },
     {
         "word": "DSONF",
-        "normalized": "dssonf",
+        "normalized": "dsonf",
         "canon_word": true,
         "definition": "which reign",
         "key_citations": [
@@ -12100,7 +12100,7 @@
     },
     {
         "word": "IL",
-        "normalized": "iel",
+        "normalized": "il",
         "canon_word": true,
         "definition": "is one",
         "key_citations": [
@@ -12119,18 +12119,9 @@
                         "context": "...our Lord and Master *is all one*."
                     }
                 ]
-            }
-        ]
-    },
-    {
-        "word": "YL",
-        "normalized": "il",
-        "canon_word": true,
-        "definition": "thy",
-        "commentary": "not a word that occurs in isolation within the Keys, but it can be extrapolated based on other words",
-        "senses": [
+            },
             {
-                "sense_id": 1,
+                "sense_id": 2,
                 "definition": "thy",
                 "commentary": "not a word that occurs in isolation within the Keys, but it can be extrapolated based on other words"
             }
@@ -12138,7 +12129,7 @@
     },
     {
         "word": "ILI",
-        "normalized": "ieli",
+        "normalized": "ili",
         "canon_word": true,
         "definition": "(the) first, (at) first",
         "key_citations": [
@@ -13440,7 +13431,7 @@
     },
     {
         "word": "LIL",
-        "normalized": "elil",
+        "normalized": "lil",
         "canon_word": true,
         "definition": "the first aethyr",
         "commentary": "this word, as with all of the other ones for aethyrs, is inserted into the fill-in-the-blank section of the 19th key",
@@ -13530,7 +13521,7 @@
     },
     {
         "word": "LNIBM",
-        "normalized": "elnibm",
+        "normalized": "lnibm",
         "canon_word": true,
         "definition": "one season",
         "key_citations": [
@@ -13796,7 +13787,7 @@
     },
     {
         "word": "LORSLQ",
-        "normalized": "lorselq",
+        "normalized": "lorslq",
         "canon_word": true,
         "definition": "flowers",
         "key_citations": [
@@ -21912,7 +21903,7 @@
     },
     {
         "word": "RIT",
-        "normalized": "mercy",
+        "normalized": "rit",
         "canon_word": true,
         "definition": "mercy",
         "key_citations": [
@@ -23738,7 +23729,7 @@
     },
     {
         "word": "TELOCVOVIM",
-        "normalized": "telochvovim",
+        "normalized": "telocvovim",
         "canon_word": true,
         "definition": "death dragon, Him that has Fallen",
         "commentary": "alternate names for Lucifer/Satan/Devil (which are and are not the same)—CHORONZOM, GITHGULCAG; \"death dragon\" is a more literal translation (allowing that VONIN can become VOVIM)",
