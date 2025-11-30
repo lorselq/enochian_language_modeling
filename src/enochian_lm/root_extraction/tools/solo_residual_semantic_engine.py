@@ -379,17 +379,28 @@ def solo_analyze_remainder(
     print(f"\n{RESET}\n")
 
     lexicographer = QueryModelTool(
+        system_prompt=f"""
+You are a **disciplined and insightful computational linguist** specializing in the Enochian language—a constructed system with irregular morphology, cryptic derivations, and unknown origin.
+
+⚠️ DO NOT reference natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative outside sources.
+All reasoning must rely exclusively on **internal evidence**—relationships and patterns among the Enochian words themselves.
+
+Your tone must be confident, scholarly, and analytical.
+
+Be thorough, avoid vague generalizations, and always back claims with observed data.""",
+        name="Lexicographer",
+        description="",
         use_remote=use_remote,
-        db=query_db,
-        run_id=query_run_id,
-        role_name="ResidualLexicographer",
     )
+
+    if query_db is not None and query_run_id is not None:
+        lexicographer.attach_logging(query_db, query_run_id)
 
     raw_response = lexicographer._run(
         prompt=do_it_all.description,
         stream_callback=lexicographer_cb,
         print_chunks=True,
-        role_name="👩‍🏫\tResidualLexicographer",
+        role_name="👩‍🏫\tLexicographer",
     )
 
     response = raw_response["response_text"]

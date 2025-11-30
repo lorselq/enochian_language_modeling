@@ -110,10 +110,10 @@ def main():
     else:
         style = "solo"
 
-    process_only_skipped = args.only_skipped is not None
-    skipped_reason_code = args.only_skipped or None
+    process_remainders = args.remainders is not None
+    skipped_reason_code = args.remainders or None
 
-    if not process_only_skipped:
+    if not process_remainders:
         crew = RootExtractionCrew(style, remote)
     else:
         crew = RemainderExtractionCrew(style, remote)
@@ -142,7 +142,7 @@ def main():
             max_words=max_words,
             stream_callback=stream_callback,
             style=style,
-            process_only_skipped=process_only_skipped,
+            process_remainders=process_remainders,
             skipped_reason_code=skipped_reason_code,
         )
 

@@ -24,7 +24,7 @@ from typing import Dict, Tuple
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 
-INTERPRETATION_DIR = Path(__file__).resolve().parents[2] / "interpretation"
+INTERPRETATION_DIR = Path(__file__).resolve().parents[1] / "interpretation"
 
 # -------------------------
 # Paths
