@@ -12,7 +12,7 @@ from collections import defaultdict, Counter
 from enochian_lm.root_extraction.utils.logger import save_log
 from enochian_lm.root_extraction.tools.debate_residual_semantic_engine import debate_remainder
 from enochian_lm.root_extraction.tools.solo_residual_semantic_engine import (
-    solo_residual_semantics_analysis,
+    solo_analyze_remainder,
 )
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.semantic_search import (
@@ -1084,7 +1084,7 @@ class RemainderExtractionCrew:
                 query_run_id=self.run_id,
             )
         else:
-            the_result = solo_remainder_analysis(
+            the_result = solo_analyze_remainder(
                 root=ngram.upper(),
                 candidates=trimmed_cluster,
                 stats_summary=stats_summary,
