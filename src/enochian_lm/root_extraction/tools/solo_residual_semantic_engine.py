@@ -310,8 +310,7 @@ def solo_analyze_remainder(
 
     task_description = textwrap.dedent(
         f"""
-        INPUT
-        =====
+
 
         {stats_section}
 
@@ -374,7 +373,6 @@ def solo_analyze_remainder(
         f"==={(len('Now examining the possible residual root ') + len(f'<{root.upper()}>')) * '='}==="
     )
 
-    print(f"{GRAY}Starting prompt for residual lexicographer:", end=" ")
     stream_text(do_it_all.description)
     print(f"\n{RESET}\n")
 
