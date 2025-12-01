@@ -53,6 +53,7 @@ def solo_analyze_remainder(
     residual_guidance: dict | None = None,
     query_db: Any | None = None,
     query_run_id: Any | None = None,
+    has_host: bool = False
 ):
     """
     Solo-style analysis for *residual*-leaning roots, reusing the same JSON
@@ -104,6 +105,10 @@ def solo_analyze_remainder(
                 )
             )
 
+    residual_circumstance = "accepted or rejected "
+#    residual_circumstance = "accepted" if has_host else "accepted or rejected (use your best judgment based on the evidence present)"
+    residual_circumstance = residual_circumstance + "(use your best judgment; for supporting bigrams, give no charity, but an increasing amount for trigrams, tetragrams, etc.)" if has_host else residual_circumstance + "(use your best judgment based on the evidence present)"
+    
     evidence_prompt_text = (
         ",\n    ".join(evidence_prompt_portion) if evidence_prompt_portion else ""
     )
@@ -155,26 +160,27 @@ def solo_analyze_remainder(
 
         Treat {root.upper()} exactly like any other hypothesized root, but be
         especially attentive to how it behaves as a *remainder* or *leftover*
-        segment when other, stronger roots are subtracted.
+        segment when other roots that have been already established are
+        subtracted.
 
         Use ONLY the evidence given here. Do not import external etymology,
         theology, or conlang lore.
         """
     ).strip()
 
-    about_metrics = (
-        "The metrics are as follows:\n"
-        "- FastText Score—measures surface-level similarity based on character n-grams; "
-        "ranges 0.0 to 1.0, with higher being more morphologically similar.\n"
-        "- Semantic Similarity: Compares word definitions using sentence embeddings; "
-        "ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n"
-        "- Tier: a very strong connection begins/ends with the root and has a high "
-        "combined score and should be taken into special consideration; from there, "
-        "possible connection > somewhat possible connection > weak or no connection.\n\n"
-        "For residual-style roots, pay extra attention to whether the leftover segment "
-        "seems to add a coherent semantic twist across its host words, or whether it "
-        "behaves like noise."
-    )
+    # about_metrics = (
+    #     "The metrics are as follows:\n"
+    #     "- FastText Score—measures surface-level similarity based on character n-grams; "
+    #     "ranges 0.0 to 1.0, with higher being more morphologically similar.\n"
+    #     "- Semantic Similarity: Compares word definitions using sentence embeddings; "
+    #     "ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n"
+    #     "- Tier: a very strong connection begins/ends with the root and has a high "
+    #     "combined score and should be taken into special consideration; from there, "
+    #     "possible connection > somewhat possible connection > weak or no connection.\n\n"
+    #     "For residual-style roots, pay extra attention to whether the leftover segment "
+    #     "seems to add a coherent semantic twist across its host words, or whether it "
+    #     "behaves like noise."
+    # )
 
     default_evidence_entry = json.dumps(
         {
@@ -201,7 +207,7 @@ def solo_analyze_remainder(
         f"""
         {{
           "ROOT": "{root.upper()}",
-          "EVALUATION": "accepted or rejected (choose exactly one)",
+          "EVALUATION": "{residual_circumstance}",
           "REASON": "1-3 sentences explaining the reason for the evaluation selected",
           "DEFINITION": "1-3 sentences of core semantics; no negatives, be as concrete as possible and not vague",
           "EXAMPLE": "give 1-3 short example sentences of how its English equivalence would be used, marking it in each sentence",
@@ -308,6 +314,7 @@ def solo_analyze_remainder(
         """
     ).strip()
 
+# note: removed {about_metrics} from task_description (was after about_task)
     task_description = textwrap.dedent(
         f"""
 
@@ -319,8 +326,6 @@ def solo_analyze_remainder(
         {residual_section}
 
         {about_task}
-
-        {about_metrics}
 
         TASK
         ----
