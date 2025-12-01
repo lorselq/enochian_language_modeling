@@ -139,11 +139,7 @@ def main():
                 print("Invalid number. Please use a digit.")
         print(f"🔍 Evaluating {GOLD}{max_words}{RESET} ngrams...")
         crew.process_ngrams(
-            max_words=max_words,
-            stream_callback=stream_callback,
-            style=style,
-            process_remainders=process_remainders,
-            skipped_reason_code=skipped_reason_code,
+            max_words=max_words, stream_callback=stream_callback, style=style
         )
 
     if style == "solo":
