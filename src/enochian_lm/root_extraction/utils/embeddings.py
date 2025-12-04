@@ -16,7 +16,7 @@ from typing import Dict, Optional
 from gensim.models import FastText
 from sentence_transformers import SentenceTransformer
 
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 
 __all__ = [
     "get_fasttext_model",
@@ -26,8 +26,52 @@ __all__ = [
     "stream_text",
 ]
 
+
+# --- FastText wrapper + caching -------------------------------------------------
+
+
+class FastTextWrapper:
+    """
+    Thin wrapper around a FastText-like model that normalizes vector access.
+
+    It guarantees a .get_word_vector(token: str) method, regardless of whether
+    the underlying model is:
+      - Facebook fasttext (C++/python bindings),
+      - gensim.models.FastText,
+      - gensim KeyedVectors, etc.
+
+    All other attributes/methods are proxied to the underlying model.
+    """
+
+    def __init__(self, model: FastText):
+        self._model = model
+
+    def get_word_vector(self, token: str):
+        m = self._model
+
+        # Facebook fasttext-style API
+        if hasattr(m, "get_word_vector"):
+            return m.get_word_vector(token)
+
+        # gensim FastText: vectors live under .wv
+        if hasattr(m, "wv") and hasattr(m.wv, "get_vector"):
+            return m.wv.get_vector(token)
+
+        # gensim KeyedVectors or similar
+        if hasattr(m, "get_vector"):
+            return m.get_vector(token)
+
+        raise TypeError(
+            f"Cannot obtain vector for token {token!r} from model of type {type(m)!r}"
+        )
+
+    def __getattr__(self, name: str):
+        # Delegate everything else (most_similar, wv, etc.) to the real model
+        return getattr(self._model, name)
+
+
 _FASTTEXT_LOCK = Lock()
-_FASTTEXT_MODEL: Optional[FastText] = None
+_FASTTEXT_MODEL: Optional[FastTextWrapper] = None
 _FASTTEXT_PATH: Optional[str] = None
 
 _SENTENCE_LOCK = Lock()
@@ -41,23 +85,33 @@ def _resolve_fasttext_path(model_path: Optional[Path | str]) -> str:
     return str(paths["model_output"])
 
 
-def get_fasttext_model(model_path: Optional[Path | str] = None) -> FastText:
-    """Return a process-wide FastText instance, loading it on first use."""
+def get_fasttext_model(model_path: Optional[Path | str] = None) -> FastTextWrapper:
+    """Return a process-wide FastText wrapper, loading the underlying model on first use."""
 
     global _FASTTEXT_MODEL, _FASTTEXT_PATH
 
     desired_path = _resolve_fasttext_path(model_path)
 
     with _FASTTEXT_LOCK:
+        # Cache hit with same path: reuse wrapper
         if _FASTTEXT_MODEL is not None and _FASTTEXT_PATH == desired_path:
             return _FASTTEXT_MODEL
 
-        _FASTTEXT_MODEL = FastText.load(desired_path)
+        # Load gensim FastText model and wrap it
+        base_model = FastText.load(desired_path)
+        wrapped = FastTextWrapper(base_model)
+
+        _FASTTEXT_MODEL = wrapped
         _FASTTEXT_PATH = desired_path
-        return _FASTTEXT_MODEL
+        return wrapped
 
 
-def get_sentence_transformer(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
+# --- Sentence-transformer caching ----------------------------------------------
+
+
+def get_sentence_transformer(
+    model_name: str = "all-MiniLM-L6-v2",
+) -> SentenceTransformer:
     """Return a cached sentence-transformer instance by model name."""
 
     with _SENTENCE_LOCK:
@@ -66,6 +120,9 @@ def get_sentence_transformer(model_name: str = "all-MiniLM-L6-v2") -> SentenceTr
             model = SentenceTransformer(model_name)
             _SENTENCE_MODELS[model_name] = model
         return model
+
+
+# --- Misc helpers --------------------------------------------------------------
 
 
 def stream_text(text: str, *, delay: float = 0.001) -> None:

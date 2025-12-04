@@ -4,6 +4,9 @@ from dotenv import load_dotenv, find_dotenv
 from collections import defaultdict
 from enochian_lm.root_extraction.utils.local_env_refresher import refresh_local_env
 from enochian_lm.root_extraction.pipeline.run_root_extraction import RootExtractionCrew
+from enochian_lm.root_extraction.pipeline.run_residual_semantic_extraction import (
+    RemainderExtractionCrew,
+)
 
 
 # Buffers for streaming
@@ -18,7 +21,7 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "--only-skipped",
+        "--remainders",
         nargs="?",
         const="",
         default=None,
@@ -71,9 +74,11 @@ def main():
     local_remote_mode = None
     remote = True
     while local_remote_mode not in ("1", "2"):
-        local_remote_mode = input("Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? ")
+        local_remote_mode = input(
+            "Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? "
+        )
     if local_remote_mode == "1" or local_remote_mode == "2":
-        if(refresh_local_env()):
+        if refresh_local_env():
             env_local = find_dotenv(".env_local")
             env_remote = find_dotenv(".env_remote")
             load_dotenv(env_local, override=True)
@@ -81,28 +86,37 @@ def main():
             if local_remote_mode == "1":
                 remote = False
         else:
-            print("[Error] Could not load environment file for local LLM connection. Exiting.")
+            print(
+                "[Error] Could not load environment file for local LLM connection. Exiting."
+            )
             return
     else:
         load_dotenv(".env_remote", override=True)
-        
+
     mode = None
     while mode not in ("1", "2"):
-        mode = input("Do you want to eval a specific ngram (1) or evaluate a number of ngrams (2)? ")
+        mode = input(
+            "Do you want to eval a specific ngram (1) or evaluate a number of ngrams (2)? "
+        )
 
     style = None
     while style not in ("1", "2"):
-        style = input("Do you want each ngram to be debated (1) or analyzed in a single pass (2)? ")
-        
+        style = input(
+            "Do you want each ngram to be debated (1) or analyzed in a single pass (2)? "
+        )
+
     if style == "1":
         style = "debate"
     else:
         style = "solo"
 
-    process_only_skipped = args.only_skipped is not None
-    skipped_reason_code = args.only_skipped or None
+    process_remainders = args.remainders is not None
+    skipped_reason_code = args.remainders or None
 
-    crew = RootExtractionCrew(style, remote)
+    if not process_remainders:
+        crew = RootExtractionCrew(style, remote)
+    else:
+        crew = RemainderExtractionCrew(style, remote)
 
     if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip().lower()
@@ -125,18 +139,13 @@ def main():
                 print("Invalid number. Please use a digit.")
         print(f"🔍 Evaluating {GOLD}{max_words}{RESET} ngrams...")
         crew.process_ngrams(
-            max_words=max_words,
-            stream_callback=stream_callback,
-            style=style,
-            process_only_skipped=process_only_skipped,
-            skipped_reason_code=skipped_reason_code,
+            max_words=max_words, stream_callback=stream_callback, style=style
         )
 
     if style == "solo":
-        print("\n\n🎉 The researcher has completed their assigned task(s)!")        
-    else:    
+        print("\n\n🎉 The researcher has completed their assigned task(s)!")
+    else:
         print("\n\n🎉 The research team has completed their assigned task(s)!")
-
 
 
 if __name__ == "__main__":

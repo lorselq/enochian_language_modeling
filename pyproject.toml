@@ -24,7 +24,6 @@ tenacity = "^9.1.2"
 networkx = "^3.5"
 scikit-fuzzy = "^0.5.0"
 marisa-trie = "^1.2.1"
-hyperopt = "^0.2.7"
 yaspin = "^3.1.0"
 pysqlite3-binary = "^0.5.4"
 pydantic = ">=2.8,<3"
@@ -36,6 +35,9 @@ pandas = "^2.3.3"
 PyYAML = "^6.0.2"
 nltk = "^3.9.1"
 spacy = "^3.8.11"
+pytest = "^9.0.1"
+hyperopt = "^0.2.7"
+setuptools = "<81"
 
 [tool.poetry.extras]
 wordnet = ["nltk"]

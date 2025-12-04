@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.analytics_bridge import gather_morph_evidence
 from enochian_lm.analysis.utils.sql import ensure_analysis_tables
 
