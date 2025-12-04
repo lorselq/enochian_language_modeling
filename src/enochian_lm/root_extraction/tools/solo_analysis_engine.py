@@ -37,7 +37,7 @@ def solo_agent_ngram_analysis(
     residual_prompt: str | None = None,
     residual_guidance: dict | None = None,
     query_db: Any | None = None,
-    query_run_id: Any | None = None
+    query_run_id: Any | None = None,
 ):
     joined_defs = []
     evidence_prompt_portion = []
@@ -58,7 +58,7 @@ def solo_agent_ngram_analysis(
                 else ""
             )
             joined_defs.append(line)
-        
+
         if word:
             evidence_prompt_portion.append(
                 json.dumps(
@@ -82,7 +82,9 @@ def solo_agent_ngram_analysis(
                     ensure_ascii=False,
                 )
             )
-    evidence_prompt_text = ",\n    ".join(evidence_prompt_portion) if evidence_prompt_portion else ""
+    evidence_prompt_text = (
+        ",\n    ".join(evidence_prompt_portion) if evidence_prompt_portion else ""
+    )
 
     if root_entry is None:
         root_entry = next(
@@ -124,14 +126,14 @@ def solo_agent_ngram_analysis(
 You are a **disciplined and insightful computational linguist** specializing in the Enochian language—a constructed system with irregular morphology, cryptic derivations, and unknown origin.
 
 ⚠️ DO NOT reference natural language etymologies (e.g., English, Greek, Latin, Hebrew). No speculative outside sources.
-All reasoning must rely exclusively on **internal evidence**—relationships and patterns among the Enochian words themselves. Do not deviate from these words: 
+All reasoning must rely exclusively on **internal evidence**—relationships and patterns among the Enochian words themselves.
 
 Your tone must be confident, scholarly, and analytical.
 
 Be thorough, avoid vague generalizations, and always back claims with observed data.""",
         name="Lexicographer",
         description="",
-        use_remote=use_remote
+        use_remote=use_remote,
     )
 
     if query_db is not None and query_run_id is not None:
@@ -185,15 +187,15 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
           "RESIDUAL_IMPACT": {{
             "coverage_gain_mean": 0.0,
             "residual_drop_mean": 0.0,
-            "n_examples": "number of examples given"
+            "n_examples": 0
           }},
           "EVIDENCE": [
 {indented_evidence}
           ],
           "CONFIDENCE": {{
             "score": 0.0,
-            "drivers": ["one to three short phrases that explain why you are confident in this analysis"],
-            "risks": ["one to three short phrases that explain where your reservations are in this analysis"]
+            "drivers": ["list of one to three short phrases that explain why you are confident in this analysis"],
+            "risks": ["list of one to three short phrases that explain where your reservations are in this analysis"]
           }}
         }}
         """
@@ -378,10 +380,8 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
     print(
         f"==={(len('Now examining the possible root word ') + len(f'<{root.upper()}>')) * '='}==="
     )
-    # time.sleep(2)
 
-    print(f"{GRAY}Starting prompt for research team:", end=" ")
-    # time.sleep(0.7)
+    print(f"{GRAY}Starting prompt for lexicographer:", end=" ")
     stream_text(do_it_all.description)
     print(f"\n{RESET}\n")
 

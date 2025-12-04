@@ -5,7 +5,7 @@ from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
-from enochian_lm.root_extraction.utils.config import get_config_paths
+from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.embeddings import (
     get_fasttext_model,
     get_sentence_transformer,

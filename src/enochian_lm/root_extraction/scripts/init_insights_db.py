@@ -24,7 +24,7 @@ from typing import Dict, Tuple
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 
-INTERPRETATION_DIR = Path(__file__).resolve().parents[2] / "interpretation"
+INTERPRETATION_DIR = Path(__file__).resolve().parents[1] / "interpretation"
 
 # -------------------------
 # Paths
@@ -144,6 +144,36 @@ CREATE TABLE IF NOT EXISTS clusters (
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (run_id, ngram, cluster_index)
 );
+
+CREATE TABLE IF NOT EXISTS root_residual_semantics (
+  run_id         TEXT NOT NULL,
+  residual       TEXT NOT NULL,
+  parent_word    TEXT NOT NULL,
+  group_idx      INTEGER NOT NULL,
+  group_size     INTEGER NOT NULL,
+  sem_count             INTEGER,
+  idx_count             INTEGER,
+  overlap_count         INTEGER,
+  model                 TEXT,
+  proposal              TEXT,
+  critique              TEXT,
+  defense               TEXT,
+  adjudicator_rounds    TEXT,
+  skeptic_rounds        TEXT,
+  linguist_rounds       TEXT,
+  glossator_prompt      TEXT,
+  glossator_def         TEXT,
+  derivational_validity REAL,
+  rebuttal_resilience   REAL,
+  semantic_cohesion     REAL,
+  cohesion              REAL,
+  semantic_coverage     REAL,
+  residual_explained    REAL,
+  residual_ratio        REAL,
+  residual_headline     TEXT,
+  residual_focus_prompt TEXT,
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+);
 """
 
 CLUSTERS_SOLO = """
@@ -171,6 +201,30 @@ CREATE TABLE IF NOT EXISTS clusters (
   residual_focus_prompt TEXT,
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (run_id, ngram, cluster_index)
+);
+
+CREATE TABLE IF NOT EXISTS root_residual_semantics (
+  run_id         TEXT NOT NULL,
+  residual       TEXT NOT NULL,
+  parent_word    TEXT NOT NULL,
+  group_idx      INTEGER NOT NULL,
+  group_size     INTEGER NOT NULL,
+  sem_count             INTEGER,
+  idx_count             INTEGER,
+  overlap_count         INTEGER,
+  model                 TEXT,
+  glossator_prompt      TEXT,
+  glossator_def         TEXT,
+  derivational_validity REAL,
+  rebuttal_resilience   REAL,
+  semantic_cohesion     REAL,
+  cohesion              REAL,
+  semantic_coverage     REAL,
+  residual_explained    REAL,
+  residual_ratio        REAL,
+  residual_headline     TEXT,
+  residual_focus_prompt TEXT,
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
 );
 """
 
@@ -210,6 +264,7 @@ CREATE TABLE IF NOT EXISTS raw_defs (
 CREATE TABLE IF NOT EXISTS residual_details (
   residual_id        INTEGER PRIMARY KEY AUTOINCREMENT,
   cluster_id         INTEGER NOT NULL REFERENCES clusters(cluster_id) ON DELETE CASCADE,
+  residual_span      TEXT,
   normalized         TEXT    NOT NULL,
   definition         TEXT,
   coverage_ratio     REAL,
@@ -570,6 +625,7 @@ def _infer_variant_from_path(path: str | PathLike[str]) -> str:
     path_l = os.fspath(path).lower()
     return "solo" if "solo" in path_l else "debate"
 
+
 def _open(db_path: str | PathLike[str]) -> sqlite3.Connection:
     db_path = os.fspath(db_path)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -578,6 +634,7 @@ def _open(db_path: str | PathLike[str]) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
     return conn
+
 
 def init_db(path: str | PathLike[str]) -> None:
     """Initialize (or migrate) a database at `path`."""
@@ -619,6 +676,19 @@ def init_db(path: str | PathLike[str]) -> None:
             for column, decl in shared_columns.items():
                 _add_column_if_missing(conn, "clusters", column, decl)
 
+            _add_column_if_missing(conn, "residual_details", "residual_span", "TEXT")
+            try:
+                conn.execute(
+                    """
+                    UPDATE residual_details
+                    SET residual_span = COALESCE(residual_span, normalized)
+                    WHERE residual_span IS NULL OR TRIM(residual_span) = ''
+                    """
+                )
+            except sqlite3.OperationalError:
+                # Table may not exist yet; safe to ignore during bootstrap.
+                pass
+
             _add_column_if_missing(
                 conn,
                 "composite_reconstruction",
@@ -633,8 +703,12 @@ def init_db(path: str | PathLike[str]) -> None:
                 for column, decl in debate_columns.items():
                     _add_column_if_missing(conn, "clusters", column, decl)
 
-            _add_column_if_missing(conn, "runs", "phase", "TEXT NOT NULL DEFAULT 'translation'")
-            _add_column_if_missing(conn, "runs", "queue_cycle", "INTEGER NOT NULL DEFAULT 0")
+            _add_column_if_missing(
+                conn, "runs", "phase", "TEXT NOT NULL DEFAULT 'translation'"
+            )
+            _add_column_if_missing(
+                conn, "runs", "queue_cycle", "INTEGER NOT NULL DEFAULT 0"
+            )
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)

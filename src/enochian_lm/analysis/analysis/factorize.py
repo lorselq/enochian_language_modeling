@@ -17,6 +17,8 @@ from typing import Iterable, Sequence
 import numpy as np
 from numpy.typing import NDArray
 from scipy import sparse
+from sklearn.decomposition import TruncatedSVD
+
 from sklearn.feature_extraction.text import HashingVectorizer, TfidfVectorizer
 from sklearn.linear_model import Ridge
 
@@ -165,7 +167,7 @@ def _filter_records(records: Sequence[TokenRecord], vocab: set[str], min_token_m
 
 
 def _vectorize_glosses(
-    records: Sequence[TokenRecord], embed: str, max_features: int | None = None
+    records: Sequence[TokenRecord], embed: str, max_features: int | None = None, svd_dim: int | None = None, seed: int | None = None
 ) -> tuple[NDArray[np.float64], int, str]:
     documents = [record.gloss for record in records]
     if not documents:
@@ -197,8 +199,24 @@ def _vectorize_glosses(
             max_features=feature_limit,
         )
         matrix = vectorizer.fit_transform(documents)
-    dense = matrix.astype(np.float64).toarray()
-    dim = dense.shape[1]
+    if svd_dim is not None:
+        logging.info("Applying TruncatedSVD to reduce gloss vectors to %d dims", svd_dim)
+        if seed is not None:
+            svd = TruncatedSVD(
+                n_components=svd_dim,
+                random_state=seed,
+            )
+        else:
+            svd = TruncatedSVD(
+                n_components=svd_dim
+            )
+        dense = svd.fit_transform(matrix)  # shape: (n_tokens, svd_dim)
+        dim = dense.shape[1]
+        explained = svd.explained_variance_ratio_.sum()
+        logging.info("SVD explained variance ratio = %.3f", explained)
+    else:
+        dense = matrix.astype(np.float64).toarray()
+        dim = dense.shape[1]
     return dense, dim, vectorizer.__class__.__name__
 
 
@@ -327,8 +345,10 @@ def factorize_morphemes(
     min_morph_count: int = 1,
     min_token_morphs: int = 0,
     row_norm: bool = False,
-    metric: str = "mse",
+    metric: str = "cosine",
     limit: int | None = None,
+    svd_dim: int | None = None,
+    seed: int | None = None,
 ) -> dict[str, object]:
     """Factorize morpheme semantics using ridge regression."""
 
@@ -392,8 +412,13 @@ def factorize_morphemes(
         }
 
     gloss_matrix, dim, vectorizer_name = _vectorize_glosses(
-        filtered_records, embed, max_features
+        filtered_records,
+        embed,
+        max_features=max_features,
+        svd_dim=svd_dim,
+        seed=seed,
     )
+
     if dim == 0 or gloss_matrix.size == 0:
         logger.warning("Gloss embedding produced empty matrix; exiting")
         return {
@@ -577,7 +602,7 @@ if __name__ == "__main__":  # pragma: no cover - manual execution helper
     parser.add_argument("--min-morph-count", type=int, default=1)
     parser.add_argument("--min-token-morphs", type=int, default=0)
     parser.add_argument("--row-norm", action="store_true")
-    parser.add_argument("--metric", choices=["mse", "cosine"], default="mse")
+    parser.add_argument("--metric", choices=["mse", "cosine"], default="cosine")
     parser.add_argument("--limit", type=int, default=None)
 
     args = parser.parse_args()
