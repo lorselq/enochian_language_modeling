@@ -2,6 +2,7 @@ import logging
 import math
 import re
 import json
+import os
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 import random
 import statistics as st
@@ -1278,6 +1279,31 @@ class RootExtractionCrew:
         normalized["analytics_summary"] = analytics_summary
         return normalized
 
+    def _resolve_model_name(self, evaluated: dict[str, Any]) -> str:
+        """Return a non-empty model label for persistence.
+
+        The debate/solo engines are expected to include a ``Model`` (or
+        ``Glossator_Model``) entry describing which LLM produced the gloss.
+        Earlier runs occasionally left this empty, which then led to blank
+        ``model`` columns inside ``clusters`` and downstream tables.  To keep
+        receipts consistent, fall back to environment-provided defaults if the
+        engines omit a model string.
+        """
+
+        raw_model = (
+            evaluated.get("Model")
+            or evaluated.get("raw_output", {}).get("Model")
+            or evaluated.get("raw_output", {}).get("Glossator_Model")
+        )
+
+        if raw_model:
+            return str(raw_model)
+
+        env_fallback = os.getenv("REMOTE_MODEL_NAME") or os.getenv(
+            "OPENAI_MODEL_NAME", "<unknown>"
+        )
+        return env_fallback
+
     def process_ngrams(
         self,
         max_words=None,
@@ -1956,8 +1982,7 @@ class RootExtractionCrew:
                                 evaluated["overlap_count"],
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
-                                _to_text(evaluated["Model"])
-                                or _to_text(evaluated["raw_output"].get("Model")),
+                                _to_text(self._resolve_model_name(evaluated)),
                                 # proposal
                                 _to_text(evaluated["raw_output"].get("Proposal")),
                                 # critique
@@ -2035,8 +2060,7 @@ class RootExtractionCrew:
                                 evaluated["overlap_count"],
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
-                                _to_text(evaluated["Model"])
-                                or _to_text(evaluated["raw_output"].get("Model")),
+                                _to_text(self._resolve_model_name(evaluated)),
                                 _to_text(evaluated["Glossator_Prompt"])
                                 or _to_text(
                                     evaluated["raw_output"].get("Glossator_Prompt")

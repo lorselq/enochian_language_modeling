@@ -26,10 +26,14 @@ Modeling, analytics, and the root-extraction workflow live here.
     `translation` package.
   - `scripts/` – helpers like `init_insights_db.py`, migrations, and analytics
     patchers that operate directly on the SQLite insights DB.
-  - `tools/` – FastText training, debate/solo orchestration, and ad-hoc
-    inspection scripts (all wired into the Poetry CLI entry points).
+  - `tools/` – FastText training, debate/solo orchestration, residual engines,
+    and ad-hoc inspection scripts (all wired into the Poetry CLI entry points).
   - `utils/` – shared helpers for configuration, dictionary ingestion,
     embeddings, analytics bridging, and other reusable primitives.
+- `root_extraction/pipeline/` – orchestration layers that tie clustering,
+  debate/solo evaluations, remainder extraction, and persistence into the
+  SQLite insights databases (`run_root_extraction.py` for roots,
+  `run_residual_semantic_extraction.py` for residual fragments).
 - `analysis/` – the `enlm` CLI plus attribution, collocation, factorization, and
   residual analytics. These modules read the same SQLite insights DB that the
   crew writes and populate secondary tables for downstream prompts.
@@ -65,6 +69,8 @@ packaging work.
 
 - `poetry run enochian-analysis` → `enochian_lm.root_extraction.main:main`
   launches the interactive root-extraction crew.
+- `poetry run enochian-remainder-extraction` → `run_residual_semantic_extraction.py`
+  for residual-focused passes that log uncovered fragments and LLM models.
 - `poetry run enochian-build-fasttext` / `enochian-build-ngram-index`
   orchestrate corpus prep (`tools/train_fasttext_model.py` and
   `utils/build_ngram_sidecar.py`).

@@ -2,6 +2,7 @@ import logging
 import math
 import re
 import json
+import os
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 import random
 import statistics as st
@@ -1489,6 +1490,22 @@ class RemainderExtractionCrew:
         normalized["analytics_summary"] = analytics_summary
         return normalized
 
+    def _resolve_model_name(self, evaluated: dict[str, Any]) -> str:
+        """Return a human-readable model label for database inserts."""
+
+        raw_model = (
+            evaluated.get("Model")
+            or evaluated.get("raw_output", {}).get("Model")
+            or evaluated.get("raw_output", {}).get("Glossator_Model")
+        )
+
+        if raw_model:
+            return str(raw_model)
+
+        return os.getenv("REMOTE_MODEL_NAME") or os.getenv(
+            "OPENAI_MODEL_NAME", "<unknown>"
+        )
+
     def process_ngrams(
         self,
         max_words=None,
@@ -2057,9 +2074,7 @@ class RemainderExtractionCrew:
                     )
 
                     # Reuse model and glossator fields we already computed for the cluster
-                    model_text = _to_text(evaluated["Model"]) or _to_text(
-                        evaluated["raw_output"].get("Model")
-                    )
+                    model_text = _to_text(self._resolve_model_name(evaluated))
                     glossator_prompt_text = _to_text(
                         evaluated["Glossator_Prompt"]
                     ) or _to_text(evaluated["raw_output"].get("Glossator_Prompt"))
