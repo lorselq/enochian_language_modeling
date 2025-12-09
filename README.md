@@ -10,22 +10,17 @@ This project does not seek to contest this interpretation. Instead, _Liber Loaga
 
 ## Project Goals
 
-**Current phase**:
+**Current phase**
 
-- Identify plausible root morphemes via examination of semantic clusters within the linguistic corpus.
-- Evaluate whether single-agent analysis or multi-agent debates yields better proposals for candidate root structures.
-- Construct an AI-assisted speculative lexicon through pattern recognition, semantic proximity, and agentic validation.
-- Develop and evaluate computational methods suitable for texts with limited ground-truth data, irregular morphological patterns, and historical ambiguity.
+- Solo-style root analysis is complete; debate-mode passes are ongoing but throttled for cost.
+- Remainder extraction now records per-fragment models/residual prompts so residual clustering has richer provenance.
+- Analytics integration is stable: attribution, collocation, and residual tables feed prompts automatically.
 
-Goals in the current phase are mostly complete, e.g., solo analysis has finished (but requires data wrangling), but analysis via debate is still underway and may take a while due to resource constraints.
+**Upcoming work**
 
-**Future phases**:
-
-- Construct an expanded dictionary of Enochian morphemes and words.
-- Use the expanded dictionary as part of an AI-driven attempt to provide a "blind" translation of the Enochian Keys.
-- Upon successful translation, aim the translation program at Liber Loagaeth to see if translation of any amount cannot be performed.
-
-Goals in the future phases section are covered in more detail later in this document.
+- Finish the remaining debate-mode cycles and merge their accepted glosses.
+- Expand the speculative lexicon with cross-run normalization and residual backfills.
+- Use the enriched dictionary to pilot a blind translation pass over the Enochian Keys, then apply the pipeline to _Liber Loagaeth_.
 
 ## Core Components
 
@@ -63,8 +58,8 @@ A simulated AI team operates in two distinct modes:
 - **Ngram Generation:** Robust n-gram indexing including morphological variants derived from John Dee's irregular spellings.
 - **Embedding Infrastructure:** Functional FastText embedding pipelines producing promising initial semantic analyses.
 - **Dynamic Clustering:** Implementation and testing of multiple clustering methods with automatic parameter tuning, selecting optimal methods based on internal cluster consistency metrics.
-- **Agent Modes:** Both Debate and Solo modes fully implemented; comparative analyses planned as future research.
-- **CLI Enhancements:** Improved terminal interface for smoother operation and enhanced readability.
+- **Agent Modes:** Both Debate and Solo modes implemented; solo results are fully persisted, and debate runs are in progress.
+- **Analytics + Residuals:** Attribution, collocation, and residual clustering outputs are linked into the crew prompts; residual and remainder tables now keep the originating LLM model for auditability.
 
 ### Canonical dictionary location
 
