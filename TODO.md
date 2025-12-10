@@ -78,7 +78,7 @@ Output: Candidate definitions with evidence
             "warnings": []
         }
     ],
-    "evidence": { }  # only if --show-evidence
+    "evidence": { }  
 }
 ```
 
@@ -271,7 +271,6 @@ Output: Candidate definitions with evidence
   - `--variant`: choices=["solo", "debate", "both"], default="both"
   - `--strategy`: choices=["prefer-fewer", "prefer-known", "prefer-balance"], default="prefer-balance"
   - `--llm`: Enable LLM synthesis
-  - `--show-evidence`: Include full evidence in output
   - `--output`: JSON output file (default: stdout)
   - `--pretty`: Pretty-print JSON
   - `--top-k`: Number of candidate definitions (default: 3)
@@ -302,7 +301,6 @@ Output: Candidate definitions with evidence
 **Testing**:
 - Text format renders correctly in terminal (80-char width wrapping)
 - JSON format is valid and pretty-prints with `--pretty`
-- `--show-evidence` adds full evidence payload without breaking schema
 
 **Dependencies**: Task 5.1
 
@@ -414,7 +412,7 @@ Output: Candidate definitions with evidence
 
 - [ ] Test CLI with gold words against real solo/debate DBs
 - [ ] Verify JSON output schema matches specification
-- [ ] Test `--show-evidence`, `--no-llm`, `--strategy` flags
+- [ ] Test `--no-llm`, `--strategy` flags
 - [ ] Test exit codes (success, no evidence, error)
 - [ ] Test `--variant both` side-by-side output
 
