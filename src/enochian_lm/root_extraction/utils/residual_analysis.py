@@ -70,11 +70,16 @@ def exclude_root_segments(
     breakdown: dict[str, Any] | None, root_norm: str, target: str
 ) -> dict[str, Any]:
     """
-    Drop segments that simply echo the candidate root from a breakdown.
+    Drop segments that echo the candidate root AND mark the root's position as uncovered.
 
     This prevents the root n-gram from vacuously explaining 100% of a word's
     meaning during residual analysis. The returned breakdown recomputes
     coverage/residual ratios and uncovered spans after stripping the root.
+
+    Key behavior for residual evaluation:
+    - Segments matching the candidate root are removed
+    - Positions where the candidate root appears as a substring are marked as NOT covered
+      (even if covered by a larger segment like NAZPSAD when evaluating PSAD)
     """
 
     if not breakdown:
@@ -86,10 +91,19 @@ def exclude_root_segments(
         }
 
     normalized_root = str(root_norm or "").strip().lower()
-    target_text = str(target or "")
+    target_text = str(target or "").lower()
     total_len = len(target_text)
     if not normalized_root or total_len == 0:
         return breakdown
+
+    # Find all positions where the candidate root appears in the target
+    # These positions should be marked as "uncovered" (the residual we're evaluating)
+    root_positions: set[int] = set()
+    root_len = len(normalized_root)
+    for start_pos in range(total_len - root_len + 1):
+        if target_text[start_pos:start_pos + root_len] == normalized_root:
+            for i in range(start_pos, start_pos + root_len):
+                root_positions.add(i)
 
     kept_segments: list[dict[str, Any]] = []
     coverage_mask = [False] * total_len
@@ -97,7 +111,10 @@ def exclude_root_segments(
     for segment in breakdown.get("segments") or []:
         canonical = str(segment.get("canonical", "")).strip().lower()
         ngram = str(segment.get("ngram", "")).strip().lower()
-        if canonical == normalized_root or ngram == normalized_root:
+        seg_text = str(segment.get("text", "")).strip().lower()
+
+        # Skip segments that match the candidate root
+        if canonical == normalized_root or ngram == normalized_root or seg_text == normalized_root:
             continue
 
         span = segment.get("span") or [segment.get("start", 0), segment.get("end", 0)]
@@ -106,13 +123,16 @@ def exclude_root_segments(
         start = max(0, min(total_len, start))
         end = max(start, min(total_len, end))
 
+        # Only mark coverage for positions NOT occupied by the candidate root
         for idx in range(start, end):
-            coverage_mask[idx] = True
+            if idx not in root_positions:
+                coverage_mask[idx] = True
 
         kept_segment = dict(segment)
         kept_segment["span"] = [start, end]
         kept_segments.append(kept_segment)
 
+    # Build uncovered spans (positions not covered by kept segments, excluding root positions)
     uncovered: list[dict[str, Any]] = []
     idx = 0
     while idx < total_len:
@@ -199,14 +219,34 @@ def summarize_residuals(
     # Fragment-level histogram (top unresolved pieces)
     top_frags = _top_residue_fragments(details, k=6)
 
+    # Check if the root itself appears as an uncovered fragment (residual candidate scenario)
+    root_is_residual = False
+    root_lower = root.lower()
+    for d in details:
+        for frag in d.uncovered:
+            if frag.lower() == root_lower or root_lower in frag.lower():
+                root_is_residual = True
+                break
+        if root_is_residual:
+            break
+
     # Human-facing prompt
     header = (
         f"ROOT={root.upper()} | N={len(details)} | avg_len={ (total_chars/len(details)) if details else 0:.1f} | "
         f"avg_cov={explained_ratio:.2f} | avg_res={residual_ratio:.2f}\n"
-        "Focus first on fragments that reduce residual the most."
     )
+
+    if root_is_residual:
+        # We ARE the residual - this is a residual candidate evaluation
+        header += f"{root.upper()} is the uncovered fragment; evaluate its compositional contribution to the host word(s)."
+    else:
+        header += "Focus first on fragments that reduce residual the most."
+
     if focus_lines:
         focus_prompt = header + "\n\nPer-word hot spots:\n" + "\n".join(f"- {ln}" for ln in focus_lines)
+    elif root_is_residual:
+        # No other residuals besides the root we're evaluating
+        focus_prompt = header + f"\n\n{root.upper()} is the primary uncovered fragment in these words."
     else:
         focus_prompt = header + "\n\nNo prominent residuals; confirm cohesion."
 
