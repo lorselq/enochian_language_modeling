@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS root_residual_semantics (
   residual_ratio        REAL,
   residual_headline     TEXT,
   residual_focus_prompt TEXT,
-  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 """
 
@@ -219,7 +219,7 @@ CREATE TABLE IF NOT EXISTS root_residual_semantics (
   residual_ratio        REAL,
   residual_headline     TEXT,
   residual_focus_prompt TEXT,
-  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 """
 
@@ -662,12 +662,13 @@ def init_db(path: str | PathLike[str]) -> None:
                 # Table may not exist yet; safe to ignore during bootstrap.
                 pass
 
-            _add_column_if_missing(
-                conn,
-                "composite_reconstruction",
-                "vector_source",
-                "TEXT",
-            )
+            if _table_or_view_exists(conn, "composite_reconstruction"):
+                _add_column_if_missing(
+                    conn,
+                    "composite_reconstruction",
+                    "vector_source",
+                    "TEXT",
+                )
 
             if variant == "debate":
                 debate_columns = {
