@@ -46,7 +46,7 @@ def DB_PATH(file_name: str = "debate_derived_definitions.sqlite3") -> str:
 # -------------------------
 
 
-def _open(db_path: str) -> sqlite3.Connection:
+def _open(db_path: str | PathLike[str]) -> sqlite3.Connection:
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
