@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import textwrap
 from typing import Optional, Any
 
@@ -40,6 +41,25 @@ def _get_field(item, field, default=""):
     if isinstance(item, dict):
         return item.get(field, default)
     return getattr(item, field, default)
+
+
+def _extract_json_from_response(response: str) -> dict:
+    """Extract JSON from LLM response, handling markdown code fences.
+
+    LLMs often wrap JSON in ```json ... ``` blocks. This function strips
+    those wrappers before parsing.
+    """
+    text = response.strip()
+
+    # Remove markdown code fences if present
+    if text.startswith("```"):
+        # Remove opening fence (with optional language tag)
+        text = re.sub(r'^```(?:json)?\s*\n?', '', text)
+        # Remove closing fence
+        text = re.sub(r'\n?```\s*$', '', text)
+
+    # Try to parse the cleaned text
+    return json.loads(text.strip())
 
 
 def solo_analyze_remainder(
@@ -105,9 +125,56 @@ def solo_analyze_remainder(
                 )
             )
 
-    residual_circumstance = "accepted or rejected "
-#    residual_circumstance = "accepted" if has_host else "accepted or rejected (use your best judgment based on the evidence present)"
-    residual_circumstance = residual_circumstance + "(use your best judgment; for supporting bigrams, give no charity, but an increasing amount for trigrams, tetragrams, etc.)" if has_host else residual_circumstance + "(use your best judgment based on the evidence present)"
+    # Determine if we have compositional evidence (donor roots with accepted glosses)
+    has_compositional_evidence = False
+    if residual_guidance and isinstance(residual_guidance, dict):
+        cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
+        for analysis in cooccurring:
+            if isinstance(analysis, dict):
+                eval_status = str(analysis.get("EVALUATION", "")).lower()
+                if "accept" in eval_status:
+                    has_compositional_evidence = True
+                    break
+
+    # Check if any host word is a canon dictionary entry
+    has_dictionary_attestation = False
+    for c in candidates:
+        if _get_field(c, "canon_word", False):
+            has_dictionary_attestation = True
+            break
+        # Also check tier for "Dictionary" marker
+        tier = str(_get_field(c, "tier", "")).lower()
+        if "dictionary" in tier:
+            has_dictionary_attestation = True
+            break
+
+    cluster_size = len(candidates)
+
+    # Build the evaluation circumstance text based on available evidence
+    if has_compositional_evidence and has_dictionary_attestation:
+        # Strongest case: dictionary-attested host word with accepted donor root
+        residual_circumstance = (
+            "STRONGLY FAVORED for acceptance based on dictionary attestation. "
+            "The host word exists in the canonical dictionary and the donor root has an accepted gloss. "
+            "This is pure semantic subtraction - accept unless the proposed meaning is incoherent."
+        )
+    elif has_compositional_evidence and cluster_size <= 2:
+        # Strong compositional evidence: donor root has accepted gloss
+        residual_circumstance = (
+            "accepted or rejected based on compositional evidence. "
+            "Even a single occurrence is acceptable if the donor root's meaning "
+            "clearly combines with the proposed semantics to produce the host word's meaning. "
+            "Focus on whether the subtraction makes semantic sense."
+        )
+    elif has_host:
+        residual_circumstance = (
+            "accepted or rejected (use your best judgment; for supporting bigrams, "
+            "give no charity, but an increasing amount for trigrams, tetragrams, etc.)"
+        )
+    else:
+        residual_circumstance = (
+            "accepted or rejected (use your best judgment based on the evidence present)"
+        )
     
     evidence_prompt_text = (
         ",\n    ".join(evidence_prompt_portion) if evidence_prompt_portion else ""
@@ -153,6 +220,52 @@ def solo_analyze_remainder(
                 pretty = str(residual_guidance)
             residual_bits.append("RESIDUAL GUIDANCE (analytics):\n" + pretty)
         residual_section = "\n\n".join(residual_bits)
+
+    # === COMPOSITIONAL ANALYSIS SECTION ===
+    # Build explicit semantic subtraction equations for each host word
+    compositional_section = ""
+    if residual_guidance and isinstance(residual_guidance, dict):
+        cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
+        # Build a map of donor root -> definition for quick lookup
+        donor_defs: dict[str, str] = {}
+        for analysis in cooccurring:
+            if isinstance(analysis, dict):
+                donor_root = str(analysis.get("ROOT", "")).upper()
+                donor_def = str(analysis.get("DEFINITION", "")).strip()
+                if donor_root and donor_def:
+                    # Truncate long definitions
+                    if len(donor_def) > 100:
+                        donor_def = donor_def[:97] + "..."
+                    donor_defs[donor_root] = donor_def
+
+        # Build subtraction equations for each candidate
+        equations: list[str] = []
+        for c in candidates:
+            word = _get_field(c, "word", "").upper()
+            norm = _get_field(c, "normalized", "").lower()
+            definition = _get_field(c, "enhanced_definition", "") or _get_field(c, "definition", "")
+
+            if not word or not norm or not definition:
+                continue
+
+            # Find which donor root(s) this word contains (besides the residual)
+            for donor_root, donor_def in donor_defs.items():
+                donor_lower = donor_root.lower()
+                if donor_lower in norm and donor_lower != root.lower():
+                    # This word contains both the donor root and the residual
+                    equations.append(
+                        f"  {word} (\"{definition}\") = {donor_root} (\"{donor_def}\") + {root.upper()} (?)\n"
+                        f"    → What semantic contribution would {root.upper()} make to transform \"{donor_def.split('.')[0]}\" into \"{definition}\"?"
+                    )
+
+        if equations:
+            compositional_section = textwrap.dedent(
+                f"""
+                COMPOSITIONAL ANALYSIS
+                For each host word containing {root.upper()}, consider the semantic subtraction:
+
+                """
+            ).strip() + "\n\n" + "\n\n".join(equations)
 
     about_task = textwrap.dedent(
         f"""
@@ -325,6 +438,8 @@ def solo_analyze_remainder(
 
         {residual_section}
 
+        {compositional_section}
+
         {about_task}
 
         TASK
@@ -420,7 +535,7 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
     archivist_recording = "\n".join(archivist)
 
     try:
-        parsed = json.loads(response)
+        parsed = _extract_json_from_response(response)
     except json.JSONDecodeError:
         parsed = {"RAW_TEXT": response}
 
