@@ -12,15 +12,34 @@ This project does not seek to contest this interpretation. Instead, _Liber Loaga
 
 **Current phase**
 
-- Solo-style root analysis is complete; debate-mode passes are ongoing but throttled for cost.
-- Remainder extraction now records per-fragment models/residual prompts so residual clustering has richer provenance.
-- Analytics integration is stable: attribution, collocation, and residual tables feed prompts automatically.
+- ✅ Solo-mode root extraction completed and persisted.
+- ✅ Residual/remainder extraction logs remainders, residual semantics, and now LLM model names for audit trails.
+- 🚧 Debate-mode passes still running (they take time because what could be one pass ends out being easily upwards of ten); remaining clusters need to be adjudicated and merged back into the shared databases.
+- 🚧 Translation CLI in progress 
 
 **Upcoming work**
 
 - Finish the remaining debate-mode cycles and merge their accepted glosses.
 - Expand the speculative lexicon with cross-run normalization and residual backfills.
-- Use the enriched dictionary to pilot a blind translation pass over the Enochian Keys, then apply the pipeline to _Liber Loagaeth_.
+- Use the speculative lexicon to pilot a blind translation pass over the Enochian Keys
+- Identify proper strategy to apply prior work to _Liber Loagaeth_.
+
+## Current Project Status and Next Steps
+
+Status snapshot:
+
+Immediate priorities (ordered):
+
+1. Finish debate-mode queue cycles and append accepted glosses to the insights DBs.
+2. Run `poetry run enlm analyze all --db <db>` after each debate batch to keep residual and attribution priors current.
+3. Perform remainder backfills (`poetry run enlm remainder backfill-remainders`) on legacy runs lacking the new model metadata.
+4. Regenerate derived exports (JSONL/parquet) for downstream translation tests once debate data stabilizes.
+
+Backlog / nice-to-have:
+
+- Harden normalization/versioning into a tracked config artifact so repeated runs record the ruleset hash.
+- Add automated lint/test hooks to CI; today the project relies on local checks.
+- Expand segmentation experiments (lattice/beam search) once lexicon coverage is frozen.
 
 ## Core Components
 
@@ -224,8 +243,9 @@ src/enochian_lm/root_extraction/data/enochian_keys.txt`. The remaining
    ```
 
    Each record includes parallel Enochian, definition, and citation token
-    sequences. Use `--no-lowercase`, `--keep-punctuation`, `--max-windows`, or
-    `--format csv` to tweak the emitted examples.【F:tools/generate_key_windows.py†L1-L234】
+   sequences. Use `--no-lowercase`, `--keep-punctuation`, `--max-windows`, or
+   `--format csv` to tweak the emitted examples.【F:tools/generate_key_windows.py†L1-L234】
+
 5. **Initialize the insights databases.** Seed both the debate and solo SQLite
    files by running `poetry run python
 src/enochian_lm/root_extraction/scripts/init_insights_db.py`. The script
@@ -250,9 +270,9 @@ src/enochian_lm/root_extraction/scripts/init_insights_db.py`. The script
    `collocation_stats`, and the residual command builds
    `residual_cluster_*`—all tables that `RootExtractionCrew` consults through
    `gather_morph_evidence`. Each subcommand invokes
-   `init_insights_db.init_db()` and upgrades the schema if necessary.【F:src/enochian_lm/analysis/factorize.py†L420-L488】【F:src/enochian_lm/analysis/attribution.py†L113-L206】【F:src/enochian_lm/analysis/colloc.py†L1-L200】【F:src/enochian_lm/cli.py†L760-L938】【F:src/enochian_lm/root_extraction/utils/analytics_bridge.py†L218-L320】
+   `init_insights_db.init_db()` and upgrades the schema if necessary.
 
-7. **Optionally export reports or retrofit glosses.**
+8. **Optionally export reports or retrofit glosses.**
 
    - `poetry run enlm report pipeline --db <db> --out artifacts/report` produces
      an HTML/CSV digest of coverage, attribution, residual, and factorization
@@ -261,10 +281,10 @@ src/enochian_lm/root_extraction/scripts/init_insights_db.py`. The script
      analytics notes block to existing definitions so future sessions inherit the
      latest priors.【F:src/enochian_lm/root_extraction/utils/analytics_bridge.py†L218-L320】【F:src/enochian_lm/analysis/README.md†L63-L87】
 
-8. **Rerun `poetry run enochian-analysis`.** The crew reads the refreshed tables
+9. **Rerun `poetry run enochian-analysis`.** The crew reads the refreshed tables
    on startup and surfaces “Analytics priors” inside each prompt, letting the
    agents leverage attribution deltas, strong collocations, and residual hot
-   spots during the next debate/solo cycle.【F:src/enochian_lm/root_extraction/pipeline/run_root_extraction.py†L600-L676】【F:src/enochian_lm/root_extraction/utils/analytics_bridge.py†L218-L320】
+   spots during the next debate/solo cycle.
 
 You can replace steps 6–7 with a single `poetry run enlm analyze all ...` pass if
 you maintain JSONL exports of composite reconstructions and morph vectors; the
