@@ -626,16 +626,6 @@ def _infer_variant_from_path(path: str | PathLike[str]) -> str:
     return "solo" if "solo" in path_l else "debate"
 
 
-def _open(db_path: str | PathLike[str]) -> sqlite3.Connection:
-    db_path = os.fspath(db_path)
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
-    conn.execute("PRAGMA synchronous = NORMAL;")
-    return conn
-
-
 def init_db(path: str | PathLike[str]) -> None:
     """Initialize (or migrate) a database at `path`."""
     variant = _infer_variant_from_path(path)
