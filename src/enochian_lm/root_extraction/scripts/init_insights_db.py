@@ -92,11 +92,6 @@ def _create_index_if_missing(conn: sqlite3.Connection, name: str, ddl: str) -> N
         conn.execute(ddl)
 
 
-def _infer_variant_from_path(path: str) -> str:
-    path_l = path.lower()
-    return "solo" if "solo" in path_l else "debate"
-
-
 def _has_json1(conn: sqlite3.Connection) -> bool:
     try:
         row = conn.execute("SELECT json_valid('{\"a\":1}')").fetchone()
@@ -482,7 +477,7 @@ SELECT
   model,
   glossator_prompt,
   glossator_def,
-  LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS verdict,
+  LOWER(COALESCE(verdict, '')) AS verdict,
   cohesion,
   semantic_coverage,
   best_config,
@@ -520,7 +515,7 @@ SELECT
   linguist_rounds,
   glossator_prompt,
   glossator_def,
-  LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS verdict,
+  LOWER(COALESCE(verdict, '')) AS verdict,
   derivational_validity,
   rebuttal_resilience,
   semantic_cohesion,
@@ -540,6 +535,7 @@ WHERE TRIM(COALESCE(glossator_def, '')) <> ''
 """
 
 _DEF_VIEW_ANCHORS = """
+CREATE VIEW IF NOT EXISTS anchor_candidates AS
 SELECT ngram, COUNT(*) AS uses, AVG(cohesion) AS avg_coh
 FROM clusters
 WHERE TRIM(glossator_def) <> ''
@@ -641,19 +637,6 @@ def init_db(path: str | PathLike[str]) -> None:
             if _table_or_view_exists(conn, "clusters_processed"):
                 conn.execute("DROP VIEW IF EXISTS clusters_processed;")
 
-            if _has_json1(conn):
-                ddl = (
-                    _DEF_VIEW_SOLO_JSON if variant == "solo" else _DEF_VIEW_DEBATE_JSON
-                )
-            else:
-                ddl = (
-                    _DEF_VIEW_SOLO_HEUR if variant == "solo" else _DEF_VIEW_DEBATE_HEUR
-                )
-            conn.executescript(ddl)
-
-            # Add anchor view
-            conn.executescript(_DEF_VIEW_ANCHORS)
-
             # Ensure newly introduced columns exist for older databases
             shared_columns = {
                 "action": "TEXT",
@@ -699,6 +682,19 @@ def init_db(path: str | PathLike[str]) -> None:
             _add_column_if_missing(
                 conn, "runs", "queue_cycle", "INTEGER NOT NULL DEFAULT 0"
             )
+
+            if _has_json1(conn):
+                ddl = (
+                    _DEF_VIEW_SOLO_JSON if variant == "solo" else _DEF_VIEW_DEBATE_JSON
+                )
+            else:
+                ddl = (
+                    _DEF_VIEW_SOLO_HEUR if variant == "solo" else _DEF_VIEW_DEBATE_HEUR
+                )
+            conn.executescript(ddl)
+
+            # Add anchor view
+            conn.executescript(_DEF_VIEW_ANCHORS)
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)
