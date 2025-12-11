@@ -1,23 +1,60 @@
-"""
-Phase 2 Tests: Decomposition & Filtering
-
-Tests for Task 2.1 (generate_decompositions) as specified in TODO.md.
-"""
-
 from __future__ import annotations
+
+"""
+phase 2 Tests: Decomposition & Filtering
+
+tests for Task 2.1 (generate_decompositions) as specified in TODO.md.
+"""
 
 import sys
 from pathlib import Path
 from typing import Iterable
-
+import types
 import numpy as np
 import pytest
+
+
+# Shim external dependency used by candidate_finder without requiring heavy install
+gensim_module = types.ModuleType("gensim")
+gensim_utils = types.ModuleType("gensim.utils")
+gensim_utils.simple_preprocess = lambda text: [str(text)]
+gensim_models = types.ModuleType("gensim.models")
+
+
+class _DummyFastText:  # pragma: no cover - simple import shim
+    def __init__(self, *args, **kwargs):
+        self.wv = self
+
+    def get_vector(self, _token: str):
+        return np.zeros(4)
+
+
+gensim_models.FastText = _DummyFastText
+gensim_module.utils = gensim_utils
+gensim_module.models = gensim_models
+sys.modules.setdefault("gensim", gensim_module)
+sys.modules.setdefault("gensim.utils", gensim_utils)
+sys.modules.setdefault("gensim.models", gensim_models)
+
+sentence_module = types.ModuleType("sentence_transformers")
+
+
+class _DummySentenceTransformer:  # pragma: no cover - simple import shim
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+sentence_module.SentenceTransformer = _DummySentenceTransformer
+sys.modules.setdefault("sentence_transformers", sentence_module)
+
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from translation.decomposition import (
+    Decomposition,
     DecompositionEngine,
+    apply_hard_filters,
     _build_breakdown,
     _build_support_lookup,
     _classify_support,
@@ -83,9 +120,7 @@ def _write_ngram_index(tmp_path: Path, tokens: Iterable[str]) -> Path:
         conn.execute(
             "CREATE TABLE ngrams (ngram TEXT PRIMARY KEY, total_occurrences INTEGER)"
         )
-        conn.execute(
-            "CREATE TABLE ngram_membership (ngram TEXT, canonical TEXT)"
-        )
+        conn.execute("CREATE TABLE ngram_membership (ngram TEXT, canonical TEXT)")
         for token in tokens:
             norm = token.lower()
             conn.execute(
@@ -101,7 +136,9 @@ def _write_ngram_index(tmp_path: Path, tokens: Iterable[str]) -> Path:
 
 
 @pytest.fixture()
-def candidate_finder(tmp_path: Path, monkeypatched_fasttext: None) -> MorphemeCandidateFinder:
+def candidate_finder(
+    tmp_path: Path, monkeypatched_fasttext: None
+) -> MorphemeCandidateFinder:
     tokens = ["NAZ", "PSAD", "NAZP", "SAD", "A"]
     ngram_index = _write_ngram_index(tmp_path, tokens)
     dictionary_entries = [{"canonical": token.upper()} for token in tokens]
@@ -154,7 +191,9 @@ def _dummy_residual_detail() -> ResidualDetail:
 
 
 class TestGenerateDecompositions:
-    def test_multi_morph_word_returns_expected_splits(self, engine: DecompositionEngine):
+    def test_multi_morph_word_returns_expected_splits(
+        self, engine: DecompositionEngine
+    ):
         evidence = WordEvidence(
             word="NAZPSAD",
             variants_queried=["solo"],
@@ -623,3 +662,197 @@ class TestBuildBreakdownFallback:
 
         # Should skip invalid segment, only count the valid one
         assert result["coverage_ratio"] == 3 / 7
+
+
+# ---------------------------------------------------------------------------
+# Task 2.2 Tests: apply_hard_filters
+# ---------------------------------------------------------------------------
+
+
+class TestApplyHardFilters:
+    def _cluster(self, morph: str, *, cluster_id: int = 1) -> ClusterRecord:
+        return ClusterRecord(
+            variant="solo",
+            cluster_id=cluster_id,
+            run_id="r1",
+            ngram=morph,
+            cluster_index=0,
+            glossator_def=None,
+            residual_explained=None,
+            residual_ratio=None,
+            residual_headline=None,
+            residual_focus_prompt=None,
+            semantic_coverage=None,
+            cohesion=None,
+            semantic_cohesion=None,
+            best_config=None,
+            residual_details=[],
+            raw_definitions=[],
+        )
+
+    def _residual(self, morph: str) -> ResidualSemanticRecord:
+        return ResidualSemanticRecord(
+            variant="solo",
+            run_id="r1",
+            residual=morph,
+            parent_word=morph,
+            group_index=0,
+            group_size=1,
+            glossator_def=None,
+            glossator_prompt=None,
+            residual_headline=None,
+            residual_focus_prompt=None,
+            semantic_coverage=None,
+            cohesion=None,
+            semantic_cohesion=None,
+            residual_explained=None,
+            residual_ratio=None,
+            derivational_validity=None,
+            rebuttal_resilience=None,
+            created_at=None,
+        )
+
+    def _hypothesis(self, morph: str, delta: float | None) -> MorphHypothesisRecord:
+        return MorphHypothesisRecord(
+            variant="solo",
+            hyp_id=1,
+            morph=morph,
+            source_word=morph,
+            anchor=None,
+            seed_glosses=[],
+            proposed_gloss=None,
+            rationale=None,
+            delta_cosine=delta,
+            residual_before=None,
+            residual_after=None,
+            created_at=None,
+        )
+
+    def _make_decomposition(
+        self,
+        morphs: list[str],
+        *,
+        beam_score: float = 1.0,
+        coverage_ratio: float = 1.0,
+        residual_ratio: float = 0.0,
+        morph_support: Iterable[tuple[str, str]] | None = None,
+    ) -> Decomposition:
+        return Decomposition(
+            morphs=[m.upper() for m in morphs],
+            beam_score=beam_score,
+            breakdown={
+                "segments": [],
+                "uncovered": [],
+                "coverage_ratio": coverage_ratio,
+                "residual_ratio": residual_ratio,
+            },
+            morph_support={k.upper(): v for k, v in (morph_support or [])},
+        )
+
+    def test_discard_unsupported_morphs(self):
+        evidence = WordEvidence(
+            word="NAZPSAD",
+            variants_queried=["solo"],
+            direct_clusters=[self._cluster("NAZ")],
+            residual_semantics=[self._residual("PSAD")],
+        )
+
+        supported = self._make_decomposition(["NAZ", "PSAD"], residual_ratio=0.0)
+        unsupported = self._make_decomposition(["NAZ", "XYZ"], residual_ratio=0.0)
+
+        filtered = apply_hard_filters([supported, unsupported], evidence)
+
+        assert supported in filtered
+        assert unsupported not in filtered
+
+    def test_prefers_lower_residual_ratio(self):
+        evidence = WordEvidence(
+            word="NAZPSAD",
+            variants_queried=["solo"],
+            direct_clusters=[self._cluster("NAZ")],
+            residual_semantics=[self._residual("PSAD")],
+        )
+
+        strong = self._make_decomposition(["NAZ", "PSAD"], residual_ratio=0.1)
+        weak = self._make_decomposition(["NAZ", "PSAD"], residual_ratio=0.8)
+
+        filtered = apply_hard_filters([weak, strong], evidence)
+
+        assert strong in filtered
+        assert weak not in filtered
+
+    def test_prefers_attested_morphs(self):
+        common_clusters = [self._cluster("COMMON", cluster_id=i) for i in range(4)]
+        rare_cluster = self._cluster("RARE", cluster_id=99)
+
+        evidence = WordEvidence(
+            word="TEST",
+            variants_queried=["solo"],
+            direct_clusters=common_clusters + [rare_cluster],
+        )
+
+        common_decomp = self._make_decomposition(["COMMON"], residual_ratio=0.0)
+        rare_decomp = self._make_decomposition(["RARE"], residual_ratio=0.0)
+
+        filtered = apply_hard_filters([common_decomp, rare_decomp], evidence)
+
+        assert common_decomp in filtered
+        assert rare_decomp not in filtered
+
+    def test_hypothesis_thresholds_respected(self):
+        evidence = WordEvidence(
+            word="DELTAOMEGA",
+            variants_queried=["solo"],
+            morph_hypotheses=[
+                self._hypothesis("DELTA", 0.05),
+                self._hypothesis("OMEGA", 0.6),
+            ],
+        )
+
+        low_confidence = self._make_decomposition(["DELTA"], residual_ratio=0.0)
+        high_confidence = self._make_decomposition(["OMEGA"], residual_ratio=0.0)
+
+        filtered = apply_hard_filters(
+            [low_confidence, high_confidence], evidence, min_support_threshold=0.2
+        )
+
+        assert high_confidence in filtered
+        assert low_confidence not in filtered
+
+    def test_database_backed_filters_handle_missing_rows(
+        self, engine: DecompositionEngine, solo_repo: InsightsRepository
+    ):
+        if "solo" not in solo_repo.variants:
+            pytest.skip("Solo database not available")
+
+        evidence = solo_repo.fetch_word_evidence("A", variants=["solo"])
+        decompositions = engine.generate_decompositions("A", evidence)
+
+        filtered = apply_hard_filters(decompositions, evidence)
+
+        assert isinstance(filtered, list)
+        if (
+            evidence.direct_clusters
+            or evidence.residual_semantics
+            or evidence.morph_hypotheses
+        ):
+            assert len(filtered) <= len(decompositions)
+
+    def test_debate_database_filters_fail_gracefully(
+        self, engine: DecompositionEngine, debate_repo: InsightsRepository
+    ):
+        if "debate" not in debate_repo.variants:
+            pytest.skip("Debate database not available")
+
+        try:
+            evidence = debate_repo.fetch_word_evidence("A", variants=["debate"])
+        except Exception as exc:  # pragma: no cover - defensive skip for thin DBs
+            if "no such table" in str(exc):
+                pytest.skip(f"Debate database missing expected tables: {exc}")
+            raise
+
+        decompositions = engine.generate_decompositions("A", evidence)
+
+        filtered = apply_hard_filters(decompositions, evidence)
+
+        assert isinstance(filtered, list)
