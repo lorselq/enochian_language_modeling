@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, TypedDict, Optional, SupportsFloat, SupportsInt
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
@@ -19,6 +19,17 @@ class ResidualDetail:
     uncovered: List[str] = field(default_factory=list)
     low_confidence: List[str] = field(default_factory=list)
 
+
+@dataclass
+class RawDefinition:
+    source_word: Optional[str]
+    variant: Optional[str]
+    definition: Optional[str]
+    enhanced_def: Optional[str]
+    fasttext: Optional[float]
+    similarity: Optional[float]
+    tier: Optional[str]
+    
 
 @dataclass
 class ClusterRecord:
@@ -37,7 +48,7 @@ class ClusterRecord:
     semantic_cohesion: Optional[float]
     best_config: Optional[str]
     residual_details: List[ResidualDetail] = field(default_factory=list)
-    raw_definitions: List[Dict[str, Optional[str]]] = field(default_factory=list)
+    raw_definitions: List[RawDefinition] = field(default_factory=list)
 
 
 @dataclass
@@ -94,6 +105,15 @@ class WordEvidence:
     fasttext_neighbors: List[FasttextNeighbor] = field(default_factory=list)
 
 
+@dataclass
+class AcceptedMorphInfo(TypedDict):
+    gloss: Optional[str]
+    rationale: Optional[str]
+    delta_cosine: Optional[float]
+    source_word: Optional[str]
+    anchor: Optional[str]
+
+
 class InsightsRepository:
     """Read access to solo/debate insights databases."""
 
@@ -136,7 +156,9 @@ class InsightsRepository:
                 "Missing insights database(s): " + ", ".join(missing)
             )
 
-    def fetch_clusters(self, ngram: str, *, variants: Optional[Iterable[str]] = None) -> List[ClusterRecord]:
+    def fetch_clusters(
+        self, ngram: str, *, variants: Optional[Iterable[str]] = None
+    ) -> List[ClusterRecord]:
         ngram_key = ngram.upper()
         selected = list(variants) if variants else self.variants
         clusters: List[ClusterRecord] = []
@@ -209,21 +231,25 @@ class InsightsRepository:
             for row in raw_rows:
                 row_dict = {key: row[key] for key in row.keys()}
                 cluster_map[int(row_dict["cluster_id"])].raw_definitions.append(
-                    {
-                        "source_word": row_dict.get("source_word"),
-                        "variant": row_dict.get("variant"),
-                        "definition": row_dict.get("definition"),
-                        "enhanced_def": row_dict.get("enhanced_def"),
-                        "fasttext": _safe_float(row_dict.get("fasttext")),
-                        "similarity": _safe_float(row_dict.get("similarity")),
-                        "tier": row_dict.get("tier"),
-                    }
+                    RawDefinition(
+                        source_word=row_dict.get("source_word"),
+                        variant=row_dict.get("variant"),
+                        definition=row_dict.get("definition"),
+                        enhanced_def=row_dict.get("enhanced_def"),
+                        fasttext=_safe_float(row_dict.get("fasttext")),
+                        similarity=_safe_float(row_dict.get("similarity")),
+                        tier=row_dict.get("tier"),
+                    )
                 )
 
         return [cluster_map[cid] for cid in sorted(cluster_map)]
 
     def fetch_word_evidence(
-        self, word: str, variants: Optional[Iterable[str]] = None, *, fasttext_top_k: int = 5
+        self,
+        word: str,
+        variants: Optional[Iterable[str]] = None,
+        *,
+        fasttext_top_k: int = 5,
     ) -> WordEvidence:
         normalized = word.upper()
         active_variants = list(variants) if variants else self.variants
@@ -237,7 +263,9 @@ class InsightsRepository:
 
         fasttext_neighbors: List[FasttextNeighbor] = []
         if not (direct_clusters or residual_semantics or morph_hypotheses):
-            fasttext_neighbors = self._fasttext_neighbors(normalized, top_k=fasttext_top_k)
+            fasttext_neighbors = self._fasttext_neighbors(
+                normalized, top_k=fasttext_top_k
+            )
 
         return WordEvidence(
             word=normalized,
@@ -247,6 +275,52 @@ class InsightsRepository:
             morph_hypotheses=morph_hypotheses,
             fasttext_neighbors=fasttext_neighbors,
         )
+
+    def fetch_accepted_morphs(self, variant: str) -> Dict[str, AcceptedMorphInfo]:
+        """Return accepted morph hypotheses for a single variant.
+
+        For each morph, pick the accepted hypothesis with the highest delta_cosine.
+        """
+
+        self.require_variants([variant])
+        conn = self._connections[variant]
+
+        rows = conn.execute(
+            """
+            SELECT morph, proposed_gloss, rationale, delta_cosine, source_word, anchor
+            FROM morph_hypotheses
+            WHERE accepted = 1
+            ORDER BY morph, hyp_id;
+            """
+        ).fetchall()
+
+        accepted: Dict[str, AcceptedMorphInfo] = {}
+
+        for row in rows:
+            data = {key: row[key] for key in row.keys()}
+            morph = str(data.get("morph"))
+
+            new_record: AcceptedMorphInfo = {
+                "gloss": data.get("proposed_gloss"),
+                "rationale": data.get("rationale"),
+                "delta_cosine": _safe_float(data.get("delta_cosine")),
+                "source_word": data.get("source_word"),
+                "anchor": data.get("anchor"),
+            }
+
+            if morph not in accepted:
+                accepted[morph] = new_record
+                continue
+
+            existing_delta = accepted[morph]["delta_cosine"]
+            new_delta = new_record["delta_cosine"]
+
+            if existing_delta is None or (
+                new_delta is not None and new_delta > existing_delta
+            ):
+                accepted[morph] = new_record
+
+        return accepted
 
     def _fetch_residual_semantics(
         self, residual: str, *, variants: Optional[Iterable[str]] = None
@@ -280,8 +354,12 @@ class InsightsRepository:
                         semantic_cohesion=_safe_float(data.get("semantic_cohesion")),
                         residual_explained=_safe_float(data.get("residual_explained")),
                         residual_ratio=_safe_float(data.get("residual_ratio")),
-                        derivational_validity=_safe_float(data.get("derivational_validity")),
-                        rebuttal_resilience=_safe_float(data.get("rebuttal_resilience")),
+                        derivational_validity=_safe_float(
+                            data.get("derivational_validity")
+                        ),
+                        rebuttal_resilience=_safe_float(
+                            data.get("rebuttal_resilience")
+                        ),
                         created_at=data.get("created_at"),
                     )
                 )
@@ -346,20 +424,22 @@ class InsightsRepository:
         self._fasttext_model = get_fasttext_model(self._fasttext_model_path)
         return self._fasttext_model
 
-
-def _safe_float(value: object) -> Optional[float]:
+def _safe_float(value: SupportsFloat | str | bytes | bytearray | None) -> Optional[float]:
+    if value is None:
+        return None
     try:
-        return float(value) if value is not None else None
+        return float(value)
     except (TypeError, ValueError):
         return None
 
 
-def _safe_int(value: object, default: int = 0) -> int:
+def _safe_int(value: SupportsInt | str | bytes | bytearray | None, default: int = 0) -> int:
+    if value is None:
+        return default
     try:
         return int(value)
     except (TypeError, ValueError):
         return default
-
 
 def _safe_json_array(payload: object) -> List[str]:
     if isinstance(payload, (list, tuple)):
