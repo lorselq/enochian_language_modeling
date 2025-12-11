@@ -6,12 +6,21 @@ This module wraps MorphemeCandidateFinder to produce Decomposition objects
 that can be further filtered and scored in later tasks (2.2 / 2.3).
 """
 
+import logging
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Tuple
-
+from typing import Callable, Dict, List, Tuple, Optional
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
-
 from .repository import WordEvidence
+
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class MorphSupportStats:
+    has_cluster: bool = False
+    has_residual: bool = False
+    hypothesis_max: Optional[float] = None  # max delta_cosine across hypotheses
+    uses: int = 0  # total appearances across evidence
 
 
 @dataclass
@@ -227,3 +236,152 @@ def _build_support_lookup(evidence: WordEvidence) -> Dict[str, str]:
 def _classify_support(morph: str, support_lookup: Dict[str, str]) -> str:
     """Return the provenance label for ``morph`` given a support lookup."""
     return support_lookup.get(morph.upper(), "unknown")
+
+
+def _residual_ratio(decomp: Decomposition) -> float:
+    """Return the residual ratio from a decomposition breakdown.
+
+    Defaults to 1.0 when missing or malformed to keep filtering conservative.
+    """
+    try:
+        value = decomp.breakdown.get("residual_ratio", 1.0)
+        return float(value)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _compile_support_stats(evidence: WordEvidence) -> Dict[str, MorphSupportStats]:
+    """Aggregate per-morph support details for filtering decisions."""
+
+    stats: Dict[str, MorphSupportStats] = {}
+
+    def ensure(key: str) -> MorphSupportStats:
+        key = key.upper()
+        if key not in stats:
+            stats[key] = MorphSupportStats()
+        return stats[key]
+
+    # Clusters
+    for cluster in evidence.direct_clusters:
+        entry = ensure(cluster.ngram)
+        entry.has_cluster = True
+        entry.uses += 1
+
+    # Residual semantics
+    for residual in evidence.residual_semantics:
+        entry = ensure(residual.residual)
+        entry.has_residual = True
+        entry.uses += 1
+
+    # Hypotheses
+    for hypothesis in evidence.morph_hypotheses:
+        entry = ensure(hypothesis.morph)
+        entry.uses += 1
+        delta = hypothesis.delta_cosine
+        if delta is None:
+            continue
+        if entry.hypothesis_max is None or delta > entry.hypothesis_max:
+            entry.hypothesis_max = float(delta)
+
+    return stats
+
+
+def apply_hard_filters(
+    decompositions: List[Decomposition],
+    evidence: WordEvidence,
+    min_support_threshold: float = 0.2,
+) -> List[Decomposition]:
+    """Apply the hard-filtering rules described in task 2.2.
+
+    Filters are applied in order:
+
+    1. Every morph must be supported by clusters, residuals, or sufficiently
+       strong hypotheses (delta_cosine >= min_support_threshold).
+    2. Decompositions with high residual ratios (>0.5) are discarded when a
+       better-covered alternative exists.
+    3. When possible, decompositions that use well-attested morphs (>3 uses)
+       are preferred over those composed entirely of singletons.
+    """
+
+    if not decompositions:
+        return []
+
+    support_stats = _compile_support_stats(evidence)
+
+    def has_support(morph: str) -> bool:
+        stats = support_stats.get(morph.upper())
+        if stats is None:
+            return False
+        if stats.has_cluster or stats.has_residual:
+            return True
+        if stats.hypothesis_max is None:
+            return False
+        return stats.hypothesis_max >= min_support_threshold
+
+    # ------------------------------------------------------------------
+    # Filter 1: every morph must have support.
+    # ------------------------------------------------------------------
+    supported: List[Decomposition] = []
+    for decomp in decompositions:
+        missing = [m for m in decomp.morphs if not has_support(m)]
+        if missing:
+            LOGGER.debug(
+                "Discarding %s due to unsupported morphs: %s",
+                decomp.morphs,
+                missing,
+            )
+            continue
+        supported.append(decomp)
+
+    if not supported:
+        return []
+
+    # ------------------------------------------------------------------
+    # Filter 2: discard high-residual decomps when a better exists.
+    # ------------------------------------------------------------------
+    min_residual = min(_residual_ratio(d) for d in supported)
+    coverage_filtered: List[Decomposition] = []
+    for decomp in supported:
+        ratio = _residual_ratio(decomp)
+        if ratio > 0.5 and min_residual <= 0.5:
+            LOGGER.debug(
+                "Discarding %s due to high residual_ratio %.3f (best=%.3f)",
+                decomp.morphs,
+                ratio,
+                min_residual,
+            )
+            continue
+        coverage_filtered.append(decomp)
+
+    if not coverage_filtered:
+        return []
+
+    # ------------------------------------------------------------------
+    # Filter 3: prefer well-attested morphs (>3 uses) over pure singletons.
+    # ------------------------------------------------------------------
+    def attestation_score(decomp: Decomposition) -> int:
+        score = 0
+        for morph in decomp.morphs:
+            stats = support_stats.get(morph.upper())
+            if stats is not None and stats.uses > 3:
+                score += 1
+        return score
+
+    max_attestation = max(attestation_score(d) for d in coverage_filtered)
+    if max_attestation == 0:
+        # Nobody uses well-attested morphs; let soft scoring handle it.
+        return coverage_filtered
+
+    attested: List[Decomposition] = []
+    for decomp in coverage_filtered:
+        score = attestation_score(decomp)
+        if score == 0:
+            LOGGER.debug(
+                "Discarding %s due to singleton-only morph usage (best score=%d)",
+                decomp.morphs,
+                max_attestation,
+            )
+            continue
+        attested.append(decomp)
+
+    return attested if attested else coverage_filtered
