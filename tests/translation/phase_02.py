@@ -6,6 +6,7 @@ phase 2 Tests: Decomposition & Filtering
 tests for Task 2.1 (generate_decompositions) as specified in TODO.md.
 """
 
+import math
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -66,6 +67,10 @@ from translation.repository import (
     ResidualDetail,
     ResidualSemanticRecord,
     WordEvidence,
+)
+from translation.scoring import (
+    ScoringWeights,
+    score_decomposition,
 )
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_lm.common.sqlite_bootstrap import sqlite3
@@ -856,3 +861,393 @@ class TestApplyHardFilters:
         filtered = apply_hard_filters(decompositions, evidence)
 
         assert isinstance(filtered, list)
+
+# ---------------------------------------------------------------------------
+# Task 2.3 Tests: Soft Scoring
+# ---------------------------------------------------------------------------
+
+
+class TestScoreDecomposition:
+    def _cluster(self, morph: str, *, cohesion: float, coverage: float) -> ClusterRecord:
+        return ClusterRecord(
+            variant="solo",
+            cluster_id=1,
+            run_id="r1",
+            ngram=morph,
+            cluster_index=0,
+            glossator_def=None,
+            residual_explained=None,
+            residual_ratio=None,
+            residual_headline=None,
+            residual_focus_prompt=None,
+            semantic_coverage=coverage,
+            cohesion=cohesion,
+            semantic_cohesion=None,
+            best_config=None,
+            residual_details=[],
+            raw_definitions=[],
+        )
+
+    def _residual(self, morph: str) -> ResidualSemanticRecord:
+        return ResidualSemanticRecord(
+            variant="solo",
+            run_id="r1",
+            residual=morph,
+            parent_word=morph,
+            group_index=0,
+            group_size=1,
+            glossator_def=None,
+            glossator_prompt=None,
+            residual_headline=None,
+            residual_focus_prompt=None,
+            semantic_coverage=None,
+            cohesion=None,
+            semantic_cohesion=None,
+            residual_explained=None,
+            residual_ratio=None,
+            derivational_validity=None,
+            rebuttal_resilience=None,
+            created_at=None,
+        )
+
+    def _hypothesis(self, morph: str) -> MorphHypothesisRecord:
+        return MorphHypothesisRecord(
+            variant="solo",
+            hyp_id=1,
+            morph=morph,
+            source_word=morph,
+            anchor=None,
+            seed_glosses=[],
+            proposed_gloss=None,
+            rationale=None,
+            delta_cosine=0.7,
+            residual_before=None,
+            residual_after=None,
+            created_at=None,
+        )
+
+    def _decomp(
+        self,
+        morphs: Iterable[str],
+        *,
+        beam_score: float,
+        residual_ratio: float,
+    ) -> Decomposition:
+        return Decomposition(
+            morphs=[m.upper() for m in morphs],
+            beam_score=beam_score,
+            breakdown={
+                "segments": [],
+                "uncovered": [],
+                "coverage_ratio": 1.0 - residual_ratio,
+                "residual_ratio": residual_ratio,
+            },
+            morph_support={m.upper(): "cluster" for m in morphs},
+        )
+
+    def test_high_quality_scores_outperform_low_quality(self):
+        """High-quality decompositions should score higher than low-quality ones.
+
+        Tests that the composite score correctly combines:
+        - beam_prior (0.3 weight): beam_score from TF-IDF
+        - avg_cluster_quality (0.25 weight): average of cohesion and semantic_coverage
+        - residual_coverage (0.25 weight): 1 - residual_ratio
+        - acceptance_bonus (0.2 weight): count of evidence sources
+        """
+        evidence = WordEvidence(
+            word="NAZPSAD",
+            variants_queried=["solo"],
+            direct_clusters=[
+                self._cluster("NAZ", cohesion=0.8, coverage=0.8),
+                self._cluster("PSAD", cohesion=0.8, coverage=0.8),
+            ],
+        )
+
+        strong = self._decomp(["NAZ", "PSAD"], beam_score=5.0, residual_ratio=0.0)
+        weak = self._decomp(["NAZ", "PSAD"], beam_score=1.0, residual_ratio=0.5)
+
+        strong_score = score_decomposition(strong, evidence)
+        weak_score = score_decomposition(weak, evidence)
+
+        # Expected: beam_prior(0.3*5.0) + avg_quality(0.25*0.8) + coverage(0.25*1.0) + bonus(0.2*2)
+        expected = 0.3 * 5.0 + 0.25 * 0.8 + 0.25 * 1.0 + 0.2 * 2
+        assert math.isclose(strong_score, expected, rel_tol=1e-6)
+        assert weak_score < strong_score
+
+    def test_weights_normalize_before_scoring(self):
+        """Custom weights should be normalized to sum to 1.0 before scoring.
+
+        This ensures scores remain comparable across different weight configurations.
+        Weights (2.0, 2.0, 0.0, 0.0) should normalize to (0.5, 0.5, 0.0, 0.0).
+        """
+        evidence = WordEvidence(
+            word="TEST",
+            variants_queried=["solo"],
+            direct_clusters=[self._cluster("TEST", cohesion=0.6, coverage=0.6)],
+        )
+
+        decomp = self._decomp(["TEST"], beam_score=2.0, residual_ratio=0.25)
+
+        custom_weights = ScoringWeights(
+            beam_prior=2.0, avg_cluster_quality=2.0, residual_coverage=0.0, acceptance_bonus=0.0
+        )
+
+        score = score_decomposition(decomp, evidence, custom_weights)
+
+        # Weights normalize: (2.0, 2.0, 0.0, 0.0) -> (0.5, 0.5, 0.0, 0.0)
+        normalized_beam = 0.5
+        normalized_cluster = 0.5
+        expected = normalized_beam * 2.0 + normalized_cluster * 0.6
+        assert math.isclose(score, expected, rel_tol=1e-6)
+
+    def test_acceptance_bonus_counts_all_sources(self):
+        """Acceptance bonus should count all evidence types with appropriate weights.
+
+        The acceptance bonus uses weights:
+        - 1.0 for clusters
+        - 0.5 for residual semantics
+        - 0.3 for morph hypotheses
+        """
+        evidence = WordEvidence(
+            word="OMEGA",
+            variants_queried=["solo"],
+            direct_clusters=[self._cluster("OMEGA", cohesion=0.4, coverage=0.5)],
+            residual_semantics=[self._residual("OMEGA")],
+            morph_hypotheses=[self._hypothesis("OMEGA")],
+        )
+
+        decomp = self._decomp(["OMEGA"], beam_score=0.0, residual_ratio=0.0)
+        score = score_decomposition(decomp, evidence)
+
+        # Score components with default weights:
+        # beam_prior: 0.3 * 0.0 = 0.0
+        # avg_cluster_quality: 0.25 * 0.45 = 0.1125 (avg of 0.4 cohesion and 0.5 coverage)
+        # residual_coverage: 0.25 * 1.0 = 0.25
+        # acceptance_bonus: 0.2 * (1.0 + 0.5 + 0.3) = 0.36
+        expected = 0.0 + 0.1125 + 0.25 + 0.36
+        assert math.isclose(score, expected, rel_tol=1e-6)
+
+    def test_solo_database_scoring_handles_empty_tables(self, solo_repo: InsightsRepository):
+        """Scoring should work gracefully even when database tables are empty.
+
+        Tests that score_decomposition handles real database evidence without errors,
+        even when there may be no cluster/residual/hypothesis records.
+        """
+        if "solo" not in solo_repo.variants:
+            pytest.skip("Solo database not available")
+
+        evidence = solo_repo.fetch_word_evidence("A", variants=["solo"])
+        decomp = self._decomp([evidence.word or "A"], beam_score=1.0, residual_ratio=0.0)
+
+        score = score_decomposition(decomp, evidence)
+        assert isinstance(score, float)
+
+    def test_debate_database_scoring_fails_gracefully(self, debate_repo: InsightsRepository):
+        """Scoring should work gracefully with debate database evidence.
+
+        Tests that score_decomposition handles debate database evidence without errors,
+        even when tables may be missing or empty.
+        """
+        if "debate" not in debate_repo.variants:
+            pytest.skip("Debate database not available")
+
+        try:
+            evidence = debate_repo.fetch_word_evidence("A", variants=["debate"])
+        except Exception as exc:  # pragma: no cover - defensive skip for thin DBs
+            if "no such table" in str(exc):
+                pytest.skip(f"Debate database missing expected tables: {exc}")
+            raise
+
+        decomp = self._decomp([evidence.word or "A"], beam_score=1.0, residual_ratio=0.0)
+        score = score_decomposition(decomp, evidence)
+        assert isinstance(score, float)
+
+    def test_missing_cluster_metrics_handled_gracefully(self):
+        """Clusters with missing cohesion/coverage metrics should not break scoring.
+
+        When a cluster has None for cohesion or semantic_coverage, the scoring
+        function should handle it gracefully and use available metrics.
+        """
+        evidence = WordEvidence(
+            word="TEST",
+            variants_queried=["solo"],
+            direct_clusters=[
+                ClusterRecord(
+                    variant="solo",
+                    cluster_id=1,
+                    run_id="r1",
+                    ngram="TEST",
+                    cluster_index=0,
+                    glossator_def=None,
+                    residual_explained=None,
+                    residual_ratio=None,
+                    residual_headline=None,
+                    residual_focus_prompt=None,
+                    semantic_coverage=None,  # Missing coverage
+                    cohesion=0.7,  # Only cohesion available
+                    semantic_cohesion=None,
+                    best_config=None,
+                    residual_details=[],
+                    raw_definitions=[],
+                )
+            ],
+        )
+
+        decomp = self._decomp(["TEST"], beam_score=1.0, residual_ratio=0.0)
+        score = score_decomposition(decomp, evidence)
+
+        # Should use only cohesion (0.7) for cluster quality
+        # Score: 0.3*1.0 + 0.25*0.7 + 0.25*1.0 + 0.2*1.0
+        expected = 0.3 * 1.0 + 0.25 * 0.7 + 0.25 * 1.0 + 0.2 * 1.0
+        assert math.isclose(score, expected, rel_tol=1e-6)
+
+    def test_empty_decomposition_scores_zero(self):
+        """Empty decomposition (no morphs) should score near zero.
+
+        This edge case should not raise an error.
+        """
+        evidence = WordEvidence(word="", variants_queried=["solo"])
+        decomp = self._decomp([], beam_score=0.0, residual_ratio=1.0)
+
+        score = score_decomposition(decomp, evidence)
+
+        # Empty decomposition should have minimal score
+        assert score == 0.0
+
+    def test_multiple_clusters_per_morph_uses_best_quality(self):
+        """When a morph has multiple clusters, the best quality should be used.
+
+        This tests the _average_cluster_quality helper's logic for choosing
+        the highest quality among multiple clusters for the same morph.
+        """
+        evidence = WordEvidence(
+            word="NAZ",
+            variants_queried=["solo"],
+            direct_clusters=[
+                self._cluster("NAZ", cohesion=0.3, coverage=0.4),  # Quality: 0.35
+                self._cluster("NAZ", cohesion=0.8, coverage=0.9),  # Quality: 0.85 (best)
+                self._cluster("NAZ", cohesion=0.5, coverage=0.6),  # Quality: 0.55
+            ],
+        )
+
+        decomp = self._decomp(["NAZ"], beam_score=2.0, residual_ratio=0.1)
+        score = score_decomposition(decomp, evidence)
+
+        # Should use best quality (0.85) not average
+        # Score: 0.3*2.0 + 0.25*0.85 + 0.25*0.9 + 0.2*3.0
+        expected = 0.3 * 2.0 + 0.25 * 0.85 + 0.25 * 0.9 + 0.2 * 3.0
+        assert math.isclose(score, expected, rel_tol=1e-6)
+
+    def test_invalid_beam_score_defaults_to_zero(self):
+        """Non-numeric beam_score values should default to 0.0.
+
+        Tests the _safe_number helper's error handling.
+        """
+        evidence = WordEvidence(
+            word="TEST",
+            variants_queried=["solo"],
+            direct_clusters=[self._cluster("TEST", cohesion=0.5, coverage=0.5)],
+        )
+
+        # Create decomposition with invalid beam_score
+        decomp = Decomposition(
+            morphs=["TEST"],
+            beam_score="invalid",  # type: ignore - intentionally invalid
+            breakdown={
+                "segments": [],
+                "uncovered": [],
+                "coverage_ratio": 1.0,
+                "residual_ratio": 0.0,
+            },
+            morph_support={"TEST": "cluster"},
+        )
+
+        score = score_decomposition(decomp, evidence)
+
+        # Should still compute a score, treating beam_score as 0.0
+        # Score: 0.3*0.0 + 0.25*0.5 + 0.25*1.0 + 0.2*1.0
+        expected = 0.3 * 0.0 + 0.25 * 0.5 + 0.25 * 1.0 + 0.2 * 1.0
+        assert math.isclose(score, expected, rel_tol=1e-6)
+
+
+class TestScoringWeights:
+    """Tests for the ScoringWeights dataclass and its normalization logic."""
+
+    def test_default_weights_sum_to_one(self):
+        """Default weights should already sum to 1.0."""
+        weights = ScoringWeights()
+        total = (
+            weights.beam_prior
+            + weights.avg_cluster_quality
+            + weights.residual_coverage
+            + weights.acceptance_bonus
+        )
+        assert math.isclose(total, 1.0, rel_tol=1e-6)
+
+    def test_normalized_weights_sum_to_one(self):
+        """Normalized weights should always sum to 1.0."""
+        weights = ScoringWeights(
+            beam_prior=10.0,
+            avg_cluster_quality=5.0,
+            residual_coverage=3.0,
+            acceptance_bonus=2.0,
+        )
+        normalized = weights.normalized()
+        total = (
+            normalized.beam_prior
+            + normalized.avg_cluster_quality
+            + normalized.residual_coverage
+            + normalized.acceptance_bonus
+        )
+        assert math.isclose(total, 1.0, rel_tol=1e-6)
+
+    def test_zero_weights_fallback_to_equal(self):
+        """When all weights are zero or negative, should fallback to equal weights.
+
+        This prevents division by zero and keeps the scoring function usable.
+        """
+        zero_weights = ScoringWeights(
+            beam_prior=0.0,
+            avg_cluster_quality=0.0,
+            residual_coverage=0.0,
+            acceptance_bonus=0.0,
+        )
+        normalized = zero_weights.normalized()
+
+        # Should fall back to equal weights (0.25 each)
+        assert math.isclose(normalized.beam_prior, 0.25, rel_tol=1e-6)
+        assert math.isclose(normalized.avg_cluster_quality, 0.25, rel_tol=1e-6)
+        assert math.isclose(normalized.residual_coverage, 0.25, rel_tol=1e-6)
+        assert math.isclose(normalized.acceptance_bonus, 0.25, rel_tol=1e-6)
+
+    def test_negative_weights_fallback_to_equal(self):
+        """Negative weights should also trigger the equal weights fallback."""
+        negative_weights = ScoringWeights(
+            beam_prior=-1.0,
+            avg_cluster_quality=-2.0,
+            residual_coverage=-3.0,
+            acceptance_bonus=-4.0,
+        )
+        normalized = negative_weights.normalized()
+
+        # Should fall back to equal weights (0.25 each)
+        assert math.isclose(normalized.beam_prior, 0.25, rel_tol=1e-6)
+        assert math.isclose(normalized.avg_cluster_quality, 0.25, rel_tol=1e-6)
+        assert math.isclose(normalized.residual_coverage, 0.25, rel_tol=1e-6)
+        assert math.isclose(normalized.acceptance_bonus, 0.25, rel_tol=1e-6)
+
+    def test_proportional_normalization(self):
+        """Normalization should preserve proportions between weights."""
+        weights = ScoringWeights(
+            beam_prior=2.0,  # 2/6 = 1/3
+            avg_cluster_quality=4.0,  # 4/6 = 2/3
+            residual_coverage=0.0,
+            acceptance_bonus=0.0,
+        )
+        normalized = weights.normalized()
+
+        # Proportions should be preserved
+        assert math.isclose(normalized.beam_prior, 1.0 / 3.0, rel_tol=1e-6)
+        assert math.isclose(normalized.avg_cluster_quality, 2.0 / 3.0, rel_tol=1e-6)
+        assert math.isclose(normalized.residual_coverage, 0.0, rel_tol=1e-6)
+        assert math.isclose(normalized.acceptance_bonus, 0.0, rel_tol=1e-6)
