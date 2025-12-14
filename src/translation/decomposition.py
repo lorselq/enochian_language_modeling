@@ -243,11 +243,15 @@ def _residual_ratio(decomp: Decomposition) -> float:
 
     Defaults to 1.0 when missing or malformed to keep filtering conservative.
     """
-    try:
-        value = decomp.breakdown.get("residual_ratio", 1.0)
+    value = decomp.breakdown.get("residual_ratio", 1.0)
+    if isinstance(value, (int, float)):
         return float(value)
-    except (TypeError, ValueError):
-        return 1.0
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 1.0
+    return 1.0
 
 
 def _compile_support_stats(evidence: WordEvidence) -> Dict[str, MorphSupportStats]:
