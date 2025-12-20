@@ -9,16 +9,16 @@ tests for Task 2.1 (generate_decompositions) as specified in TODO.md.
 import math
 import sys
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Iterable
 import types
 import numpy as np
 import pytest
 
-
 # Shim external dependency used by candidate_finder without requiring heavy install
 gensim_module = types.ModuleType("gensim")
 gensim_utils = types.ModuleType("gensim.utils")
-gensim_utils.simple_preprocess = lambda text: [str(text)]
+gensim_utils.simple_preprocess = lambda text: [str(text)]  # type: ignore[attr-defined]
 gensim_models = types.ModuleType("gensim.models")
 
 
@@ -30,9 +30,9 @@ class _DummyFastText:  # pragma: no cover - simple import shim
         return np.zeros(4)
 
 
-gensim_models.FastText = _DummyFastText
-gensim_module.utils = gensim_utils
-gensim_module.models = gensim_models
+gensim_models.FastText = _DummyFastText  # type: ignore[attr-defined]
+gensim_module.utils = gensim_utils  # type: ignore[attr-defined]
+gensim_module.models = gensim_models  # type: ignore[attr-defined]
 sys.modules.setdefault("gensim", gensim_module)
 sys.modules.setdefault("gensim.utils", gensim_utils)
 sys.modules.setdefault("gensim.models", gensim_models)
@@ -45,7 +45,7 @@ class _DummySentenceTransformer:  # pragma: no cover - simple import shim
         pass
 
 
-sentence_module.SentenceTransformer = _DummySentenceTransformer
+sentence_module.SentenceTransformer = _DummySentenceTransformer  # type: ignore[attr-defined]
 sys.modules.setdefault("sentence_transformers", sentence_module)
 
 
@@ -73,6 +73,7 @@ from translation.scoring import (
     score_decomposition,
 )
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
+from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 
 # Database paths (may not exist in the repo but should be assumed available
@@ -146,7 +147,9 @@ def candidate_finder(
 ) -> MorphemeCandidateFinder:
     tokens = ["NAZ", "PSAD", "NAZP", "SAD", "A"]
     ngram_index = _write_ngram_index(tmp_path, tokens)
-    dictionary_entries = [{"canonical": token.upper()} for token in tokens]
+    dictionary_entries: list[EntryRecord] = [
+        {"canonical": token.upper(), "alternates": []} for token in tokens
+    ]
     return MorphemeCandidateFinder(
         ngram_db_path=ngram_index,
         fasttext_model_path=ngram_index,  # path unused due to monkeypatch
@@ -162,14 +165,14 @@ def engine(candidate_finder: MorphemeCandidateFinder) -> DecompositionEngine:
 
 
 @pytest.fixture()
-def solo_repo() -> InsightsRepository:
+def solo_repo() -> Iterator[InsightsRepository]:
     repo = InsightsRepository(solo_path=SOLO_DB_PATH, debate_path=None)
     yield repo
     repo.close()
 
 
 @pytest.fixture()
-def debate_repo() -> InsightsRepository:
+def debate_repo() -> Iterator[InsightsRepository]:
     repo = InsightsRepository(solo_path=None, debate_path=DEBATE_DB_PATH)
     yield repo
     repo.close()
