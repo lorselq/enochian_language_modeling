@@ -90,12 +90,12 @@ Output: Candidate definitions with evidence
 **File**: `src/translation/repository.py`
 **Estimated effort**: 4-6 hours
 
-- [ ] Add method `fetch_word_evidence(word: str, variants: list[str]) -> WordEvidence`
-- [ ] Query direct cluster matches: `clusters` table where `ngram = word`
-- [ ] Query residual semantic matches: `root_residual_semantics` where `residual = word`
-- [ ] Query morph hypothesis matches: `morph_hypotheses` where `morph = word` AND `accepted = 1`
-- [ ] Implement FastText neighbor fallback (top-5) when direct evidence is empty
-- [ ] Return `WordEvidence` dataclass with all evidence consolidated
+- [x] Add method `fetch_word_evidence(word: str, variants: list[str]) -> WordEvidence`
+- [x] Query direct cluster matches: `clusters` table where `ngram = word`
+- [x] Query residual semantic matches: `root_residual_semantics` where `residual = word`
+- [x] Query morph hypothesis matches: `morph_hypotheses` where `morph = word` AND `accepted = 1`
+- [x] Implement FastText neighbor fallback (top-5) when direct evidence is empty
+- [x] Return `WordEvidence` dataclass with all evidence consolidated
 
 **Testing**:
 - Given "NAZ" with accepted clusters → returns `direct_clusters` populated
@@ -109,10 +109,10 @@ Output: Candidate definitions with evidence
 **File**: `src/translation/repository.py`
 **Estimated effort**: 2-3 hours
 
-- [ ] Add method `fetch_accepted_morphs(variant: str) -> dict[str, dict]`
-- [ ] Query `morph_hypotheses WHERE accepted = 1`
-- [ ] Return map: `{morph: {gloss, rationale, delta_cosine, source_word, anchor}}`
-- [ ] Verify field mapping matches `morph_hypotheses` schema from `init_insights_db.py:356-370`
+- [x] Add method `fetch_accepted_morphs(variant: str) -> dict[str, dict]`
+- [x] Query `morph_hypotheses WHERE accepted = 1`
+- [x] Return map: `{morph: {gloss, rationale, delta_cosine, source_word, anchor}}`
+- [x] Verify field mapping matches `morph_hypotheses` schema from `init_insights_db.py:356-370`
 
 **Testing**:
 - Query solo DB with 10 accepted hypotheses → returns 10-item dict
@@ -126,11 +126,11 @@ Output: Candidate definitions with evidence
 **File**: New file `src/translation/decomposition.py`
 **Estimated effort**: 5-7 hours
 
-- [ ] Create wrapper around `MorphemeCandidateFinder` from `candidate_finder.py`
-- [ ] Implement method `generate_decompositions(word: str, evidence: WordEvidence) -> list[Decomposition]`
-- [ ] Use beam-search segmentation (`segment_target()`)
-- [ ] Return all plausible splits with metadata (morphs, beam_score, breakdown, morph_support)
-- [ ] Document `Decomposition` dataclass with full schema
+- [x] Create wrapper around `MorphemeCandidateFinder` from `candidate_finder.py`
+- [x] Implement method `generate_decompositions(word: str, evidence: WordEvidence) -> list[Decomposition]`
+- [x] Use beam-search segmentation (`segment_target()`)
+- [x] Return all plausible splits with metadata (morphs, beam_score, breakdown, morph_support)
+- [x] Document `Decomposition` dataclass with full schema
 
 **Testing**:
 - "NAZPSAD" → returns [["NAZ", "PSAD"], ["NAZP", "SAD"], ...]
@@ -145,11 +145,11 @@ Output: Candidate definitions with evidence
 **File**: `src/translation/decomposition.py`
 **Estimated effort**: 4-5 hours
 
-- [ ] Implement method `apply_hard_filters(decompositions: list[Decomposition], evidence: WordEvidence, min_support_threshold: float = 0.2) -> list[Decomposition]`
-- [ ] **Filter 1**: Each morph must have support (in clusters OR residuals OR hypotheses with delta_cosine >= threshold)
-- [ ] **Filter 2**: Discard if residual_ratio > 0.5 when better alternatives exist
-- [ ] **Filter 3**: Prefer well-attested morphs (>3 uses) over singleton morphs when both cover the word
-- [ ] Log filtering decisions for debugging
+- [x] Implement method `apply_hard_filters(decompositions: list[Decomposition], evidence: WordEvidence, min_support_threshold: float = 0.2) -> list[Decomposition]`
+- [x] **Filter 1**: Each morph must have support (in clusters OR residuals OR hypotheses with delta_cosine >= threshold)
+- [x] **Filter 2**: Discard if residual_ratio > 0.5 when better alternatives exist
+- [x] **Filter 3**: Prefer well-attested morphs (>3 uses) over singleton morphs when both cover the word
+- [x] Log filtering decisions for debugging
 
 **Testing**:
 - Decomposition with all morphs supported → kept
@@ -165,13 +165,13 @@ Output: Candidate definitions with evidence
 **File**: New file `src/translation/scoring.py`
 **Estimated effort**: 5-6 hours
 
-- [ ] Implement method `score_decomposition(decomp: Decomposition, evidence: WordEvidence, weights: ScoringWeights) -> float`
-- [ ] Composite score formula: `score = w1 * beam_prior + w2 * avg_cluster_quality + w3 * residual_coverage + w4 * acceptance_bonus`
-- [ ] **w1 (beam_prior)**: Normalized TF-IDF score from beam search (default: 0.3)
-- [ ] **w2 (avg_cluster_quality)**: Mean of (cohesion + semantic_coverage) / 2 for all morphs (default: 0.25)
-- [ ] **w3 (residual_coverage)**: 1.0 - residual_ratio (default: 0.25)
-- [ ] **w4 (acceptance_bonus)**: Count of accepted clusters + 0.5 * accepted residuals + 0.3 * accepted hypotheses (default: 0.2)
-- [ ] Create `ScoringWeights` dataclass with configurable weights
+- [x] Implement method `score_decomposition(decomp: Decomposition, evidence: WordEvidence, weights: ScoringWeights) -> float`
+- [x] Composite score formula: `score = w1 * beam_prior + w2 * avg_cluster_quality + w3 * residual_coverage + w4 * acceptance_bonus`
+- [x] **w1 (beam_prior)**: Normalized TF-IDF score from beam search (default: 0.3)
+- [x] **w2 (avg_cluster_quality)**: Mean of (cohesion + semantic_coverage) / 2 for all morphs (default: 0.25)
+- [x] **w3 (residual_coverage)**: 1.0 - residual_ratio (default: 0.25)
+- [x] **w4 (acceptance_bonus)**: Count of accepted clusters + 0.5 * accepted residuals + 0.3 * accepted hypotheses (default: 0.2)
+- [x] Create `ScoringWeights` dataclass with configurable weights
 
 **Testing**:
 - High beam_prior (5.0) + good cluster quality (0.8) + full coverage (1.0) + 3 accepted clusters → score ~7.5
