@@ -2,14 +2,18 @@
 
 from .decomposition import DecompositionEngine, Decomposition
 from .scoring import ScoringWeights, score_decomposition
-from .service import InterpretationService
+from .llm_synthesis import SynthesisResult, synthesize_definition
+from .service import InterpretationService, SingleWordTranslationService
 from .strategies import apply_strategy
 
 __all__ = [
     "InterpretationService",
+    "SingleWordTranslationService",
     "DecompositionEngine",
     "Decomposition",
     "ScoringWeights",
     "score_decomposition",
     "apply_strategy",
+    "SynthesisResult",
+    "synthesize_definition",
 ]
