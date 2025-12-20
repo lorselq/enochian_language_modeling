@@ -25,6 +25,9 @@ from translation.llm_synthesis import (
     _resolved_confidence,
     synthesize_definition,
 )
+from translation.decomposition import Decomposition
+from translation.repository import ClusterRecord, RawDefinition, ResidualSemanticRecord, WordEvidence
+from translation.service import SingleWordTranslationService
 
 
 # ---------------------------------------------------------------------------
@@ -127,4 +130,203 @@ def test_synthesize_definition_handles_llm_failure(monkeypatch: pytest.MonkeyPat
     assert result.concatenated_meanings == "rectangular prism"
     assert 0.0 <= result.confidence <= 1.0
     assert "LLM synthesis unavailable" in result.reasoning
+
+
+# ---------------------------------------------------------------------------
+# Service-level LLM toggle tests (Task 4.2)
+# ---------------------------------------------------------------------------
+
+
+class MockDecompositionEngine:
+    """Mock decomposition engine that returns a fixed decomposition."""
+
+    def __init__(self, decomposition: Decomposition):
+        self._decomposition = decomposition
+
+    def generate_decompositions(self, word: str, evidence: WordEvidence):
+        return [self._decomposition]
+
+
+class MockRepository:
+    """Mock repository returning evidence with supported morphs."""
+
+    def __init__(self):
+        self.variants = ["solo"]
+
+    def require_variants(self, variants):
+        pass
+
+    def fetch_word_evidence(self, word: str, variants=None) -> WordEvidence:
+        # Provide clusters and residuals so morphs pass hard filters
+        naz_cluster = ClusterRecord(
+            variant="solo",
+            cluster_id=1,
+            run_id="r1",
+            ngram="NAZ",
+            cluster_index=0,
+            glossator_def="rectangular prism",
+            residual_explained=None,
+            residual_ratio=None,
+            residual_headline=None,
+            residual_focus_prompt=None,
+            semantic_coverage=None,
+            cohesion=None,
+            semantic_cohesion=None,
+            best_config=None,
+            residual_details=[],
+            raw_definitions=[
+                RawDefinition(
+                    source_word="NAZ",
+                    variant="solo",
+                    definition=None,
+                    enhanced_def="rectangular prism",
+                    fasttext=None,
+                    similarity=None,
+                    tier=None,
+                )
+            ],
+        )
+        psad_residual = ResidualSemanticRecord(
+            variant="solo",
+            run_id="r1",
+            residual="PSAD",
+            parent_word="PSAD",
+            group_index=0,
+            group_size=1,
+            glossator_def="sharp",
+            glossator_prompt=None,
+            residual_headline=None,
+            residual_focus_prompt=None,
+            semantic_coverage=None,
+            cohesion=None,
+            semantic_cohesion=None,
+            residual_explained=None,
+            residual_ratio=None,
+            derivational_validity=None,
+            rebuttal_resilience=None,
+            created_at=None,
+        )
+        return WordEvidence(
+            word=word,
+            variants_queried=variants or ["solo"],
+            direct_clusters=[naz_cluster],
+            residual_semantics=[psad_residual],
+        )
+
+    def close(self):
+        pass
+
+
+class MockCandidateFinder:
+    """Mock candidate finder."""
+
+    def close(self):
+        pass
+
+
+class TestSingleWordTranslationServiceLLMToggle:
+    """
+    Task 4.2 Requirements (TODO.md):
+    - --llm flag set → synthesized_definition populated
+    - --no-llm flag set → synthesized_definition is None
+    - LLM fails → gracefully degrade to concatenated_meanings with warning
+    """
+
+    def _make_service(self, llm_enabled: bool, llm_adapter=None):
+        decomp = Decomposition(
+            morphs=["NAZ", "PSAD"],
+            beam_score=2.0,
+            breakdown={
+                "segments": [],
+                "uncovered": [],
+                "coverage_ratio": 1.0,
+                "residual_ratio": 0.0,
+            },
+            morph_support={"NAZ": "cluster", "PSAD": "residual"},
+        )
+
+        service = SingleWordTranslationService(
+            candidate_finder=MockCandidateFinder(),
+            repository=MockRepository(),
+            llm_enabled=llm_enabled,
+            llm_adapter=llm_adapter or synthesize_definition,
+        )
+        service._decomposition_engine = MockDecompositionEngine(decomp)
+        return service
+
+    def test_llm_enabled_populates_synthesized_definition(self):
+        """When llm=True, synthesized_definition should be populated."""
+
+        def mock_adapter(morphs, meanings, context):
+            return SynthesisResult(
+                synthesized_definition="a cutting tool",
+                concatenated_meanings=" + ".join(meanings) if meanings else "",
+                confidence=0.85,
+                reasoning="Synthesized via mock LLM",
+            )
+
+        service = self._make_service(llm_enabled=True, llm_adapter=mock_adapter)
+        result = service.translate_word("NAZPSAD")
+
+        top_candidate = result["candidates"][0]
+        assert top_candidate["synthesized_definition"] == "a cutting tool"
+        assert top_candidate["confidence"] == 0.85
+        assert "mock LLM" in top_candidate["reasoning"]
+
+    def test_llm_disabled_returns_none_synthesized(self):
+        """When llm=False, synthesized_definition should be None."""
+        service = self._make_service(llm_enabled=False)
+        result = service.translate_word("NAZPSAD")
+
+        top_candidate = result["candidates"][0]
+        assert top_candidate["synthesized_definition"] is None
+        assert "LLM disabled" in top_candidate["reasoning"]
+        assert "concatenated_meanings" in top_candidate
+
+    def test_llm_override_at_call_site(self):
+        """The llm parameter to translate_word overrides llm_enabled."""
+
+        def mock_adapter(morphs, meanings, context):
+            return SynthesisResult(
+                synthesized_definition="override synthesis",
+                concatenated_meanings="",
+                confidence=0.9,
+                reasoning="Override worked",
+            )
+
+        # Service defaults to llm_enabled=False, but we override at call site
+        service = self._make_service(llm_enabled=False, llm_adapter=mock_adapter)
+        result = service.translate_word("NAZPSAD", llm=True)
+
+        top_candidate = result["candidates"][0]
+        assert top_candidate["synthesized_definition"] == "override synthesis"
+
+    def test_llm_failure_degrades_gracefully_with_warning(self):
+        """When LLM fails, service should return concatenated meanings with warning."""
+        call_count = 0
+
+        def failing_adapter(morphs, meanings, context):
+            nonlocal call_count
+            call_count += 1
+            return SynthesisResult(
+                synthesized_definition=None,
+                concatenated_meanings=" + ".join(meanings) if meanings else "NAZ + PSAD",
+                confidence=0.35,
+                reasoning="LLM synthesis unavailable; returned concatenated meanings instead.",
+                warnings=["Connection timeout"],
+            )
+
+        service = self._make_service(llm_enabled=True, llm_adapter=failing_adapter)
+        result = service.translate_word("NAZPSAD")
+
+        assert call_count == 1
+        top_candidate = result["candidates"][0]
+        assert top_candidate["synthesized_definition"] is None
+        assert "concatenated_meanings" in top_candidate
+        assert "LLM synthesis unavailable" in top_candidate["reasoning"]
+        assert "Connection timeout" in top_candidate.get("warnings", [])
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
 
