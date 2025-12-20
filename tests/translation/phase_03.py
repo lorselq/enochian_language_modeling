@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 """
-Phase 3 Tests: Strategy & Ranking (Task 3.1)
+Phase 3 Tests: Strategy & Ranking (Tasks 3.1 & 3.2)
 
-Tests for Task 3.1 (apply_strategy) as specified in TODO.md.
+Tests for Task 3.1 (apply_strategy) and Task 3.2 (select_top_k) as specified in TODO.md.
 
 These tests mirror the Phase 01 / Phase 02 style:
 - Add src/ to sys.path for imports
@@ -27,10 +27,11 @@ from translation.repository import (  # noqa: E402
     ClusterRecord,
     InsightsRepository,
     MorphHypothesisRecord,
+    RawDefinition,
     ResidualSemanticRecord,
     WordEvidence,
 )
-from translation.strategies import apply_strategy  # noqa: E402
+from translation.strategies import apply_strategy, select_top_k  # noqa: E402
 
 
 # ------------------------------------------------------------------------------
@@ -239,6 +240,116 @@ class TestApplyStrategy:
 
         assert [score for _, score in ranked] == [2.0, 1.0]
         assert ranked[0][0].morphs == ["A"]
+
+
+# ==============================================================================
+# Task 3.2 Tests: select_top_k
+# ==============================================================================
+
+
+class TestSelectTopK:
+    def test_returns_top_k_sorted_by_score(self):
+        evidence = WordEvidence(word="TEST", variants_queried=["solo"])
+
+        high = _decomp(["HIGH"], beam_score=2.0)
+        mid = _decomp(["MID"], beam_score=1.5)
+        low = _decomp(["LOW"], beam_score=1.0)
+        lower = _decomp(["LOWER"], beam_score=0.5)
+        lowest = _decomp(["LOWEST"], beam_score=0.1)
+
+        ranked = select_top_k(
+            [(mid, 3.0), (high, 5.0), (low, 2.0), (lowest, 0.5), (lower, 1.0)],
+            k=3,
+            evidence=evidence,
+        )
+
+        assert len(ranked) == 3
+        assert [entry["rank"] for entry in ranked] == [1, 2, 3]
+        assert ranked[0]["morphs"] == ["HIGH"]
+        assert ranked[1]["morphs"] == ["MID"]
+        assert ranked[2]["morphs"] == ["LOW"]
+
+    def test_close_scores_emit_warning_for_top_two(self):
+        evidence = WordEvidence(word="WARN", variants_queried=["solo"])
+
+        first = _decomp(["FIRST"])
+        second = _decomp(["SECOND"])
+        third = _decomp(["THIRD"])
+
+        ranked = select_top_k(
+            [(first, 7.8), (second, 7.79), (third, 6.0)],
+            k=3,
+            evidence=evidence,
+        )
+
+        warnings_top = ranked[0]["warnings"]
+        warnings_second = ranked[1]["warnings"]
+        warnings_third = ranked[2]["warnings"]
+
+        assert any("alternate decomposition exists" in w for w in warnings_top)
+        assert any("alternate decomposition exists" in w for w in warnings_second)
+        assert warnings_third == []
+
+    def test_single_candidate_returns_meanings_and_no_warnings(self):
+        cluster = _cluster("NAZ")
+        cluster.glossator_def = "rectangular prism"
+        cluster.raw_definitions = [
+            RawDefinition(
+                source_word="NAZ",
+                variant="solo",
+                definition=None,
+                enhanced_def="fallback cluster meaning",
+                fasttext=None,
+                similarity=None,
+                tier=None,
+            )
+        ]
+
+        residual = _residual("PSAD")
+        residual.glossator_def = "sharp"
+
+        hypothesis = _hypothesis("UNKNOWN")
+        hypothesis.proposed_gloss = "conjectured"
+
+        evidence = WordEvidence(
+            word="NAZPSAD",
+            variants_queried=["solo"],
+            direct_clusters=[cluster],
+            residual_semantics=[residual],
+            morph_hypotheses=[hypothesis],
+        )
+
+        decomp = _decomp(
+            ["NAZ", "PSAD", "UNKNOWN"],
+            support_label="hypothesis",
+        )
+
+        results = select_top_k([(decomp, 4.2)], k=1, evidence=evidence)
+
+        assert len(results) == 1
+        top = results[0]
+        assert top["rank"] == 1
+        assert top["warnings"] == []
+
+        meanings = top["meanings"]
+        naz = next(entry for entry in meanings if entry["morph"] == "NAZ")
+        psad = next(entry for entry in meanings if entry["morph"] == "PSAD")
+        unknown = next(entry for entry in meanings if entry["morph"] == "UNKNOWN")
+
+        assert naz["definition"] == "rectangular prism"
+        assert naz["provenance"] == "cluster"
+
+        assert psad["definition"] == "sharp"
+        assert psad["provenance"] == "residual"
+
+        # No evidence definition, so provenance should fall back to morph_support
+        assert unknown["definition"] == "conjectured"
+        assert unknown["provenance"] == "hypothesis"
+
+    def test_non_integer_k_returns_empty(self):
+        evidence = WordEvidence(word="TEST", variants_queried=["solo"])
+        result = select_top_k([(_decomp(["A"]), 1.0)], k="not-a-number", evidence=evidence)
+        assert result == []
 
 
 class TestApplyStrategyWithDatabases:
