@@ -1,16 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 import numbers
 from pathlib import Path
 from types import TracebackType
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
 
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 
-from .repository import ClusterRecord, InsightsRepository, ResidualDetail
+from .decomposition import Decomposition, DecompositionEngine, apply_hard_filters
+from .llm_synthesis import SynthesisResult, synthesize_definition
+from .repository import (
+    ClusterRecord,
+    InsightsRepository,
+    ResidualDetail,
+    WordEvidence,
+    FasttextNeighbor,
+)
+from .scoring import ScoringWeights, score_decomposition
+from .strategies import apply_strategy, select_top_k
 from .tokenization import expand_sentence_ngrams, tokenize_words
 
 
@@ -254,6 +265,258 @@ class InterpretationService:
         return payload
 
 
+class SingleWordTranslationService:
+    """Single-word translation pipeline with optional LLM synthesis (Tasks 4.1/4.2)."""
+
+    def __init__(
+        self,
+        *,
+        candidate_finder: MorphemeCandidateFinder,
+        repository: InsightsRepository,
+        scoring_weights: ScoringWeights | None = None,
+        active_variants: Optional[Iterable[str]] = None,
+        max_ngram_len: int = 7,
+        llm_enabled: bool = False,
+        llm_use_remote: bool = False,
+        llm_adapter: Callable[[List[str], List[str], Dict[str, object]], SynthesisResult] = synthesize_definition,
+    ) -> None:
+        self.candidate_finder = candidate_finder
+        self.repository = repository
+        self.scoring_weights = scoring_weights or ScoringWeights()
+        self.active_variants = list(active_variants) if active_variants else None
+        self.max_ngram_len = max_ngram_len
+        self.llm_enabled = llm_enabled
+        self.llm_use_remote = llm_use_remote
+        self.llm_adapter = llm_adapter
+        self._decomposition_engine = DecompositionEngine(candidate_finder)
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        variants: Optional[Iterable[str]] = None,
+        max_ngram_len: int = 7,
+        scoring_weights: ScoringWeights | None = None,
+        llm_enabled: bool = False,
+        llm_use_remote: bool = False,
+    ) -> "SingleWordTranslationService":
+        paths = get_config_paths()
+        repository = InsightsRepository(
+            solo_path=Path(paths["solo"]),
+            debate_path=Path(paths["debate"]),
+            fasttext_model_path=Path(paths["model_output"]),
+        )
+        if variants:
+            repository.require_variants(variants)
+        elif not repository.variants:
+            raise FileNotFoundError(
+                "No insights databases found. Run enochian-analysis first."
+            )
+
+        entries = load_dictionary(str(paths["dictionary"]))
+        candidate_finder = MorphemeCandidateFinder(
+            ngram_db_path=paths["ngram_index"],
+            fasttext_model_path=paths["model_output"],
+            dictionary_entries=entries,
+            min_n=1,
+            max_n=max_ngram_len,
+        )
+
+        return cls(
+            candidate_finder=candidate_finder,
+            repository=repository,
+            scoring_weights=scoring_weights,
+            active_variants=list(variants) if variants else None,
+            max_ngram_len=max_ngram_len,
+            llm_enabled=llm_enabled,
+            llm_use_remote=llm_use_remote,
+        )
+
+    def close(self) -> None:
+        self.candidate_finder.close()
+        self.repository.close()
+
+    def __enter__(self) -> "SingleWordTranslationService":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def translate_word(
+        self,
+        word: str,
+        *,
+        variants: Optional[Iterable[str]] = None,
+        strategy: str = "prefer-balance",
+        top_k: int = 3,
+        llm: Optional[bool] = None,
+    ) -> Dict[str, object]:
+        """Run the full single-word pipeline with optional LLM synthesis.
+
+        Steps (Task 4.2):
+        1. Fetch evidence for the target word.
+        2. Generate and hard-filter decompositions.
+        3. Soft-score, apply the chosen reranking strategy, and select top-k.
+        4. Optionally call :func:`synthesize_definition` on the top candidate
+           when ``llm`` (or ``llm_enabled``) is ``True``.
+        """
+        normalized = (word or "").strip().upper()
+        if not normalized:
+            raise ValueError("Word must be a non-empty string.")
+
+        active_variants = list(variants) if variants else self.active_variants
+        if active_variants:
+            self.repository.require_variants(active_variants)
+
+        evidence = self.repository.fetch_word_evidence(
+            normalized, variants=active_variants
+        )
+
+        decompositions = self._decomposition_engine.generate_decompositions(
+            normalized, evidence
+        )
+        filtered = apply_hard_filters(decompositions, evidence)
+
+        ranked: List[tuple[Decomposition, float]] = []
+        for decomp in filtered:
+            score = score_decomposition(
+                decomp, evidence, weights=self.scoring_weights
+            )
+            ranked.append((decomp, score))
+
+        reranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
+        selected = select_top_k(
+            reranked,
+            k=top_k,
+            evidence=evidence,
+        )
+
+        llm_enabled = self.llm_enabled if llm is None else bool(llm)
+        enriched = self._enrich_candidates(
+            selected,
+            evidence=evidence,
+            strategy=strategy,
+            llm_enabled=llm_enabled,
+        )
+
+        return {
+            "word": normalized,
+            "variants_queried": evidence.variants_queried,
+            "strategy": strategy,
+            "llm_enabled": llm_enabled,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "candidates": enriched,
+            "evidence": self._summarize_evidence(evidence),
+        }
+
+    def _enrich_candidates(
+        self,
+        candidates: List[dict[str, object]],
+        *,
+        evidence: WordEvidence,
+        strategy: str,
+        llm_enabled: bool,
+    ) -> List[dict[str, object]]:
+        enriched: List[dict[str, object]] = []
+        for idx, candidate in enumerate(candidates):
+            base = dict(candidate)
+            meanings = base.get("meanings", [])
+            warnings: List[str] = list(base.get("warnings", []))
+
+            coverage_ratio = _safe_ratio(base.get("breakdown"), "coverage_ratio")
+            residual_ratio = _safe_ratio(base.get("breakdown"), "residual_ratio")
+
+            base["concatenated_meanings"] = self._concatenate_meanings(
+                meanings if isinstance(meanings, list) else []
+            )
+
+            if llm_enabled and idx == 0:
+                morph_meanings = [
+                    self._meaning_or_morph(entry) for entry in meanings if isinstance(entry, dict)
+                ]
+                context = {
+                    "word": evidence.word,
+                    "strategy": strategy,
+                    "coverage_ratio": coverage_ratio,
+                    "residual_ratio": residual_ratio,
+                    "score": base.get("score"),
+                    "provenance": meanings if isinstance(meanings, list) else [],
+                    "variants": evidence.variants_queried,
+                    "use_remote": self.llm_use_remote,
+                }
+                synthesis = self.llm_adapter(
+                    list(base.get("morphs", [])),
+                    morph_meanings,
+                    context,
+                )
+                base["synthesized_definition"] = synthesis.synthesized_definition
+                base["concatenated_meanings"] = synthesis.concatenated_meanings
+                base["confidence"] = synthesis.confidence
+                base["reasoning"] = synthesis.reasoning
+                if synthesis.raw_response is not None:
+                    base["raw_llm_response"] = synthesis.raw_response
+                if synthesis.warnings:
+                    warnings.extend(synthesis.warnings)
+            else:
+                base["synthesized_definition"] = None
+                base["confidence"] = self._coverage_confidence(
+                    coverage_ratio=coverage_ratio, residual_ratio=residual_ratio
+                )
+                base["reasoning"] = (
+                    "LLM disabled; using concatenated morph meanings."
+                    if llm_enabled is False
+                    else "LLM not applied to this rank."
+                )
+
+            if warnings:
+                base["warnings"] = warnings
+
+            enriched.append(base)
+
+        return enriched
+
+    @staticmethod
+    def _concatenate_meanings(meanings: Sequence[dict[str, object]]) -> str:
+        parts: List[str] = []
+        for meaning in meanings:
+            if not isinstance(meaning, dict):
+                continue
+            definition = meaning.get("definition")
+            morph = meaning.get("morph")
+            if isinstance(definition, str) and definition.strip():
+                parts.append(definition.strip())
+            elif isinstance(morph, str) and morph.strip():
+                parts.append(morph.strip())
+        return " + ".join(parts)
+
+    @staticmethod
+    def _meaning_or_morph(meaning: dict[str, object]) -> str:
+        definition = meaning.get("definition")
+        if isinstance(definition, str) and definition.strip():
+            return definition.strip()
+        morph = meaning.get("morph")
+        return str(morph) if morph is not None else ""
+
+    @staticmethod
+    def _coverage_confidence(*, coverage_ratio: float, residual_ratio: float) -> float:
+        return max(0.0, min(1.0, 0.35 + 0.5 * coverage_ratio - 0.2 * residual_ratio))
+
+    @staticmethod
+    def _summarize_evidence(evidence: WordEvidence) -> dict[str, object]:
+        return {
+            "variants_queried": list(evidence.variants_queried),
+            "direct_clusters": len(evidence.direct_clusters),
+            "residual_semantics": len(evidence.residual_semantics),
+            "morph_hypotheses": len(evidence.morph_hypotheses),
+            "fasttext_neighbors": [asdict(neighbor) for neighbor in evidence.fasttext_neighbors],
+        }
+
+
 def _cleanup_candidate(candidate: Dict[str, object]) -> Dict[str, object]:
     cleaned: Dict[str, object] = {}
     for key in ("normalized", "composite", "cos_sim", "confidence", "tfidf"):
@@ -345,3 +608,18 @@ def _safe_lower(value: Optional[str]) -> Optional[str]:
         lowered = value.strip().lower()
         return lowered or None
     return None
+
+
+def _safe_ratio(breakdown: object, key: str) -> float:
+    defaults = {
+        "coverage_ratio": 0.0,
+        "residual_ratio": 1.0,
+    }
+    if not isinstance(breakdown, dict):
+        return defaults.get(key, 0.0)
+
+    value = breakdown.get(key, defaults.get(key, 0.0))
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return defaults.get(key, 0.0)
