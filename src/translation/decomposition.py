@@ -8,11 +8,20 @@ that can be further filtered and scored in later tasks (2.2 / 2.3).
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Tuple, Optional
+from typing import Callable, cast, Dict, Iterable, List, Tuple, Optional, TypedDict
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 from .repository import WordEvidence
 
 LOGGER = logging.getLogger(__name__)
+
+
+class CoverageSegment(TypedDict):
+    """Coverage segment from beam search segmentation."""
+    start: int
+    end: int
+    ngram: str
+    canonical: str
+    tfidf: float
 
 
 @dataclass
@@ -103,7 +112,9 @@ class DecompositionEngine:
             # case-insensitive and consistent with the evidence index.
             morphs = [str(m).upper() for m in path]
 
-            breakdown = _build_breakdown(self.candidate_finder, normalized, coverage)
+            breakdown = _build_breakdown(
+                self.candidate_finder, normalized, cast(list[CoverageSegment], coverage)
+            )
 
             morph_support = {
                 morph: _classify_support(morph, support_lookup) for morph in morphs
@@ -124,7 +135,7 @@ class DecompositionEngine:
 def _build_breakdown(
     candidate_finder: MorphemeCandidateFinder,
     word: str,
-    coverage: list[dict[str, float | int | str]],
+    coverage: Iterable[CoverageSegment],
 ) -> Dict[str, object]:
     """Build a coverage breakdown dictionary.
 
@@ -135,19 +146,17 @@ def _build_breakdown(
     2. Otherwise, fall back to a minimal but well-formed coverage summary that
        exposes the keys expected by later scoring steps.
     """
-
-    coverage_list: list[dict[str, float | int | str]] = list(coverage)
-
     # Prefer the candidate-finder's own helper if it exists.
     if hasattr(candidate_finder, "_build_breakdown"):
         build_method: Callable[
-            [str, list[dict[str, float | int | str]]], dict[str, object]
+            [str, list[CoverageSegment]], dict[str, object]
         ] = getattr(candidate_finder, "_build_breakdown")
-        return build_method(word, coverage_list)
+        return build_method(word, list(coverage))
 
     # Fallback: compute simple coverage / residual spans from ``start`` / ``end``
     # fields if available. This is intentionally conservative and is only used
     # when the helper is missing.
+    coverage_list = list(coverage)
     word_len = len(word)
     if word_len == 0:
         return {
