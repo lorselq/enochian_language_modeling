@@ -46,6 +46,11 @@ wordnet = ["nltk"]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::pytest.PytestAssertRewriteWarning",
+]
+
 [tool.poetry.scripts]
 enochian-build-fasttext = "enochian_lm.root_extraction.tools.train_fasttext_model:main"
 enochian-build-ngram-index = "enochian_lm.root_extraction.utils.build_ngram_sidecar:main"
