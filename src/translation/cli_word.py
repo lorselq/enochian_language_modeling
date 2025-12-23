@@ -7,6 +7,8 @@ import textwrap
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
+from dotenv import find_dotenv, load_dotenv
+
 from enochian_lm.common.config import get_config_paths
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,6 +39,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-llm",
         action="store_true",
         help="Disable LLM synthesis (default).",
+    )
+    parser.add_argument(
+        "--llm-mode",
+        choices=["local", "remote"],
+        default="remote",
+        help=(
+            "Choose which LLM backend to use when --llm is enabled. "
+            "'local' loads .env_local; 'remote' loads .env_remote and falls back "
+            "to .env_local if available (default: remote)."
+        ),
     )
 
     parser.add_argument(
@@ -84,12 +96,23 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return 2
 
     llm_enabled = bool(args.llm) if args.llm or args.no_llm else False
+    llm_use_remote = args.llm_mode == "remote"
+    if llm_enabled:
+        try:
+            _configure_llm_env(args.llm_mode)
+        except FileNotFoundError as exc:
+            _emit_error(str(exc))
+            return 2
     top_k = max(1, int(args.top_k)) if args.top_k is not None else 3
 
     try:
         from .service import SingleWordTranslationService
 
-        with SingleWordTranslationService.from_config(variants=variants) as service:
+        with SingleWordTranslationService.from_config(
+            variants=variants,
+            llm_enabled=llm_enabled,
+            llm_use_remote=llm_use_remote,
+        ) as service:
             outputs: List[dict[str, object]] = []
             for variant in variants:
                 result = service.translate_word(
@@ -134,6 +157,27 @@ def _normalize_word(word: str) -> str:
     return normalized
 
 
+def _configure_llm_env(llm_mode: str) -> None:
+    if llm_mode == "local":
+        env_local = find_dotenv(".env_local")
+        if not env_local:
+            raise FileNotFoundError("Missing .env_local for local LLM configuration.")
+        load_dotenv(env_local, override=True)
+        return
+
+    env_remote = find_dotenv(".env_remote")
+    if not env_remote:
+        raise FileNotFoundError("Missing .env_remote for remote LLM configuration.")
+    load_dotenv(env_remote, override=True)
+    env_local = find_dotenv(".env_local")
+    if env_local:
+        load_dotenv(env_local, override=True)
+    else:
+        _emit_error(
+            "Warning: .env_local not found; remote fallback to a local LLM is disabled."
+        )
+
+
 def _resolve_variants(variant: str) -> List[str]:
     if variant == "both":
         return ["solo", "debate"]
@@ -175,6 +219,7 @@ def _build_output_payload(result: dict[str, object], *, variant: str) -> dict[st
         "strategy": result.get("strategy"),
         "timestamp": result.get("timestamp"),
         "llm_enabled": result.get("llm_enabled"),
+        "llm_mode": result.get("llm_mode"),
         "senses": [],
         "evidence": evidence,
     }
@@ -261,11 +306,14 @@ def _format_variant_report(payload: dict[str, object]) -> str:
     variant = payload.get("variant", "")
     strategy = payload.get("strategy", "")
     llm_enabled = payload.get("llm_enabled", False)
+    llm_mode = payload.get("llm_mode")
+    llm_mode_label = llm_mode if llm_mode else "n/a"
 
     lines.append(f"Word: {word}")
     lines.append(f"Variant: {variant}")
     lines.append(f"Strategy: {strategy}")
     lines.append(f"LLM enabled: {llm_enabled}")
+    lines.append(f"LLM mode: {llm_mode_label}")
 
     message = payload.get("message")
     if isinstance(message, str) and message:

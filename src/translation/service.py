@@ -409,6 +409,13 @@ class SingleWordTranslationService:
             "variants_queried": evidence.variants_queried,
             "strategy": strategy,
             "llm_enabled": llm_enabled,
+            "llm_mode": (
+                "remote"
+                if llm_enabled and self.llm_use_remote
+                else "local"
+                if llm_enabled
+                else None
+            ),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "candidates": enriched,
             "evidence": self._summarize_evidence(evidence),
