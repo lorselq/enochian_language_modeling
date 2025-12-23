@@ -175,6 +175,30 @@ course-correct existing glosses without manual table edits.
 > short, ordered checklist that prevents empty attribution/collocation outputs
 > when running `poetry run enlm analyze all`.
 
+## Single-word translation CLI
+
+The translation pipeline includes a dedicated single-word CLI so you can test
+proposed Enochian roots or compounds directly against the stored insights
+databases.
+
+```bash
+poetry run enlm translate-word NAZPSAD
+```
+
+```bash
+poetry run enlm translate-word NAZPSAD --variant both --strategy prefer-known
+```
+
+You can also access the same functionality through the translation-specific
+entry point:
+
+```bash
+poetry run enochian-interpret translate-word NAZPSAD --format json --pretty
+```
+
+See `docs/single_word_translation.md` for architecture details, evidence
+sources, and full output schemas.
+
 ## Future Work and Phased Development
 
 ### Near-Term Development Goals
