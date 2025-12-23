@@ -188,11 +188,11 @@ Output: Candidate definitions with evidence
 **File**: New file `src/translation/strategies.py`
 **Estimated effort**: 4-6 hours
 
-- [ ] Implement `apply_strategy(decompositions: list[tuple[Decomposition, float]], strategy: str, evidence: WordEvidence) -> list[tuple[Decomposition, float]]`
-- [ ] **Strategy: prefer-fewer** - Add `bonus = -0.5 * len(morphs)` to score (favor fewer morphs)
-- [ ] **Strategy: prefer-known** - Add `bonus = 0.3 * (count of morphs with uses > 5)` (favor well-attested morphs)
-- [ ] **Strategy: prefer-balance** - Compute length variance, add `bonus = -0.2 * variance` (favor similar morph lengths)
-- [ ] Return re-ranked list sorted by final score
+- [x] Implement `apply_strategy(decompositions: list[tuple[Decomposition, float]], strategy: str, evidence: WordEvidence) -> list[tuple[Decomposition, float]]`
+- [x] **Strategy: prefer-fewer** - Add `bonus = -0.5 * len(morphs)` to score (favor fewer morphs)
+- [x] **Strategy: prefer-known** - Add `bonus = 0.3 * (count of morphs with uses > 5)` (favor well-attested morphs)
+- [x] **Strategy: prefer-balance** - Compute length variance, add `bonus = -0.2 * variance` (favor similar morph lengths)
+- [x] Return re-ranked list sorted by final score
 
 **Testing**:
 - "prefer-fewer" with [["NAZ", "PSAD"], ["N", "A", "Z", "P", "S", "A", "D"]] → ranks 2-morph higher
@@ -207,10 +207,10 @@ Output: Candidate definitions with evidence
 **File**: `src/translation/strategies.py`
 **Estimated effort**: 2-3 hours
 
-- [ ] Implement `select_top_k(ranked: list[tuple[Decomposition, float]], k: int = 3) -> list[dict]`
-- [ ] Return top-K decompositions with full metadata (rank, morphs, score, meanings, breakdown, warnings)
-- [ ] Include warning "alternate decomposition exists" if delta < 0.05 between top-2 scores
-- [ ] Extract meanings for each morph from evidence bundle
+- [x] Implement `select_top_k(ranked: list[tuple[Decomposition, float]], k: int = 3) -> list[dict]`
+- [x] Return top-K decompositions with full metadata (rank, morphs, score, meanings, breakdown, warnings)
+- [x] Include warning "alternate decomposition exists" if delta < 0.05 between top-2 scores
+- [x] Extract meanings for each morph from evidence bundle
 
 **Testing**:
 - 5 candidates, k=3 → returns 3
@@ -227,11 +227,11 @@ Output: Candidate definitions with evidence
 **File**: New file `src/translation/llm_synthesis.py`
 **Estimated effort**: 6-8 hours
 
-- [ ] Implement `synthesize_definition(morphs: list[str], meanings: list[str], context: dict) -> dict`
-- [ ] Use existing LLM infrastructure from `enochian_lm.root_extraction.tools` (e.g., `solo_analysis_engine.py` patterns)
-- [ ] Build prompt including: morph decomposition, individual meanings, semantic synthesis request, context (coverage_ratio, residual_ratio, provenance)
-- [ ] Handle LLM failures gracefully (return concatenated_meanings as fallback)
-- [ ] Return dict with: `synthesized_definition`, `concatenated_meanings`, `confidence`, `reasoning`
+- [x] Implement `synthesize_definition(morphs: list[str], meanings: list[str], context: dict) -> dict`
+- [x] Use existing LLM infrastructure from `enochian_lm.root_extraction.tools` (e.g., `solo_analysis_engine.py` patterns)
+- [x] Build prompt including: morph decomposition, individual meanings, semantic synthesis request, context (coverage_ratio, residual_ratio, provenance)
+- [x] Handle LLM failures gracefully (return concatenated_meanings as fallback)
+- [x] Return dict with: `synthesized_definition`, `concatenated_meanings`, `confidence`, `reasoning`
 
 **Testing**:
 - Mock LLM response with test inputs → verify output schema
@@ -246,10 +246,10 @@ Output: Candidate definitions with evidence
 **File**: `src/translation/service.py` (new `SingleWordTranslationService`)
 **Estimated effort**: 2-3 hours
 
-- [ ] Add CLI flag: `--llm` (enables synthesis), `--no-llm` (default, skip synthesis)
-- [ ] When enabled, call `llm_synthesis.synthesize_definition()` for top-ranked candidate
-- [ ] When disabled, return concatenated meanings directly
-- [ ] Create `SingleWordTranslationService` class to orchestrate the full pipeline
+- [x] Add CLI flag: `--llm` (enables synthesis), `--no-llm` (default, skip synthesis)
+- [x] When enabled, call `llm_synthesis.synthesize_definition()` for top-ranked candidate
+- [x] When disabled, return concatenated meanings directly
+- [x] Create `SingleWordTranslationService` class to orchestrate the full pipeline
 
 **Testing**:
 - `--llm` flag set → `synthesized_definition` populated
