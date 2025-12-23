@@ -31,6 +31,8 @@ from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
 from enochian_lm.root_extraction.utils.residual_refresh import refresh_residual_details
 from enochian_lm.root_extraction.utils.remainders import backfill_root_remainders
 
+from translation.cli import configure_translate_word_parser, translate_word_from_args
+
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
 from .analysis.factorize import factorize_morphemes
@@ -1437,6 +1439,17 @@ def _run_analyze_all(args: argparse.Namespace) -> None:
     _run_morph_factorize(combined_args)
 
 
+def _run_translate_word(args: argparse.Namespace) -> None:
+    """Translate a single Enochian word using stored insights.
+
+    This delegates to the translation package so the same logic powers both the
+    dedicated translation CLI and the `enlm translate-word` entry point.
+    """
+    exit_code = translate_word_from_args(args)
+    if exit_code != 0:
+        raise SystemExit(exit_code)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="enlm",
@@ -1692,6 +1705,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="If set, apply TruncatedSVD to reduce gloss vectors to specified dimensionality (recommended: 512)",
     )
     morph_factorize.set_defaults(handler=_run_morph_factorize)
+
+    translate_word = subparsers.add_parser(
+        "translate-word",
+        help="Translate a single Enochian word using stored insights",
+    )
+    configure_translate_word_parser(translate_word)
+    translate_word.set_defaults(handler=_run_translate_word)
 
     report = subparsers.add_parser("report", help="Reporting utilities")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
