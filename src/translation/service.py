@@ -7,6 +7,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
 
+import numpy as np
+
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
@@ -379,7 +381,37 @@ class SingleWordTranslationService:
             normalized, variants=active_variants
         )
 
-        decompositions = self._decomposition_engine.generate_decompositions(
+        substring_support: List[str] = []
+        if not (
+            evidence.direct_clusters
+            or evidence.residual_semantics
+            or evidence.morph_hypotheses
+        ):
+            substrings = self._substring_candidates(normalized)
+            if substrings:
+                (
+                    support_clusters,
+                    support_residuals,
+                    support_hypotheses,
+                ) = self.repository.fetch_morph_support(
+                    substrings, variants=active_variants
+                )
+                if support_clusters or support_residuals or support_hypotheses:
+                    substring_support = sorted(
+                        {
+                            item.ngram.upper() for item in support_clusters
+                        }
+                        | {item.residual.upper() for item in support_residuals}
+                        | {item.morph.upper() for item in support_hypotheses}
+                    )
+                    self._merge_support_evidence(
+                        evidence,
+                        support_clusters,
+                        support_residuals,
+                        support_hypotheses,
+                    )
+
+        decompositions, diagnostics = self._decomposition_engine.generate_decompositions(
             normalized, evidence
         )
         if decompositions:
@@ -414,6 +446,10 @@ class SingleWordTranslationService:
             evidence=evidence,
         )
 
+        fallback_morphs: List[dict[str, object]] = []
+        if not selected:
+            fallback_morphs = self._fallback_morph_hints(normalized)
+
         llm_enabled = self.llm_enabled if llm is None else bool(llm)
         enriched = self._enrich_candidates(
             selected,
@@ -437,6 +473,12 @@ class SingleWordTranslationService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "candidates": enriched,
             "evidence": self._summarize_evidence(evidence),
+            "fallback_morphs": fallback_morphs,
+            "diagnostics": {
+                **diagnostics,
+                "substring_support": substring_support,
+                "fasttext": self.repository.fasttext_diagnostics(),
+            },
         }
 
     def _enrich_candidates(
@@ -516,6 +558,82 @@ class SingleWordTranslationService:
             enriched.append(base)
 
         return enriched
+
+    def _fallback_morph_hints(self, word: str) -> List[dict[str, object]]:
+        if not word:
+            return []
+        word_upper = word.upper()
+        min_n = self.candidate_finder.min_n
+        max_n = self.candidate_finder.max_n
+        dictionary = self.candidate_finder.dictionary
+        if not dictionary:
+            return []
+
+        hints: List[dict[str, object]] = []
+        seen: set[str] = set()
+        for start in range(len(word_upper)):
+            for end in range(start + min_n, min(len(word_upper), start + max_n) + 1):
+                slice_text = word_upper[start:end]
+                key = slice_text.lower()
+                if key in seen:
+                    continue
+                entry = dictionary.get(key)
+                if not entry:
+                    continue
+                seen.add(key)
+                definition = (
+                    entry.get("enhanced_definition")
+                    or _first_sense_definition(entry)
+                    or None
+                )
+                coverage_ratio = len(slice_text) / len(word_upper)
+                similarity = self._fasttext_similarity(word_upper, slice_text)
+                hints.append(
+                    {
+                        "morph": slice_text,
+                        "definition": definition,
+                        "coverage_ratio": round(coverage_ratio, 3),
+                        "fasttext_similarity": similarity,
+                        "source": "dictionary_substring",
+                    }
+                )
+
+        hints.sort(
+            key=lambda item: (
+                item.get("coverage_ratio") or 0.0,
+                item.get("fasttext_similarity") or 0.0,
+            ),
+            reverse=True,
+        )
+        return hints
+
+    def _fasttext_similarity(self, word: str, morph: str) -> Optional[float]:
+        model = self.candidate_finder.fasttext_model
+        if not model:
+            return None
+        try:
+            word_vec = model.get_word_vector(word)
+            morph_vec = model.get_word_vector(morph)
+        except Exception:
+            return None
+        word_vec = np.asarray(word_vec, dtype=float)
+        morph_vec = np.asarray(morph_vec, dtype=float)
+        denom = np.linalg.norm(word_vec) * np.linalg.norm(morph_vec)
+        if denom == 0:
+            return None
+        return float(np.dot(word_vec, morph_vec) / denom)
+
+    def _substring_candidates(self, word: str) -> List[str]:
+        if not word:
+            return []
+        min_n = self.candidate_finder.min_n
+        max_n = self.candidate_finder.max_n
+        word_upper = word.upper()
+        candidates: set[str] = set()
+        for start in range(len(word_upper)):
+            for end in range(start + min_n, min(len(word_upper), start + max_n) + 1):
+                candidates.add(word_upper[start:end])
+        return sorted(candidates)
 
     @staticmethod
     def _concatenate_meanings(meanings: Sequence[dict[str, object]]) -> str:
@@ -680,6 +798,19 @@ def _extract_low_confidence_segments(breakdown: Dict[str, object]) -> List[str]:
         ):
             low_conf.append(f"{text.strip()}@{float(confidence):.2f}")
     return low_conf
+
+
+def _first_sense_definition(entry: dict[str, object]) -> Optional[str]:
+    senses = entry.get("senses")
+    if not isinstance(senses, list) or not senses:
+        return None
+    for sense in senses:
+        if not isinstance(sense, dict):
+            continue
+        definition = sense.get("definition")
+        if isinstance(definition, str) and definition.strip():
+            return definition.strip()
+    return None
 
 
 def _safe_lower(value: Optional[str]) -> Optional[str]:
