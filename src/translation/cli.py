@@ -725,6 +725,87 @@ def _format_variant_report(payload: dict[str, object], *, verbose: bool = False)
                     lines.append(
                         _wrap_text(f"FastText vocab sample: {sample}", indent=2)
                     )
+            repository = diagnostics.get("repository")
+            if isinstance(repository, dict):
+                variants_available = repository.get("variants_available")
+                if isinstance(variants_available, list) and variants_available:
+                    available = ", ".join(str(item) for item in variants_available)
+                    lines.append(
+                        _wrap_text(f"Available variants: {available}", indent=2)
+                    )
+                variant_paths = repository.get("variant_paths")
+                if isinstance(variant_paths, dict) and variant_paths:
+                    lines.append(_wrap_text("Variant paths:", indent=2))
+                    for variant_key, info in variant_paths.items():
+                        if not isinstance(info, dict):
+                            continue
+                        path = info.get("path")
+                        exists = info.get("exists")
+                        details = f"{variant_key}: {path}"
+                        if isinstance(exists, bool):
+                            details += f" (exists={exists})"
+                        lines.append(_wrap_text(details, indent=4))
+            word_lookup = diagnostics.get("word_lookup")
+            if isinstance(word_lookup, dict):
+                lookup_word = word_lookup.get("word")
+                lookup_variants = word_lookup.get("variants")
+                counts = word_lookup.get("counts")
+                if lookup_word:
+                    lines.append(
+                        _wrap_text(f"Evidence lookup word: {lookup_word}", indent=2)
+                    )
+                if isinstance(lookup_variants, list) and lookup_variants:
+                    variant_list = ", ".join(str(item) for item in lookup_variants)
+                    lines.append(
+                        _wrap_text(
+                            f"Evidence lookup variants: {variant_list}", indent=2
+                        )
+                    )
+                if isinstance(counts, dict):
+                    lines.append(_wrap_text("Evidence lookup counts:", indent=2))
+                    for label, per_variant in counts.items():
+                        if not isinstance(per_variant, dict):
+                            continue
+                        parts: List[str] = []
+                        for variant_key, count in per_variant.items():
+                            if count is None:
+                                parts.append(f"{variant_key}=n/a")
+                            else:
+                                parts.append(f"{variant_key}={count}")
+                        if parts:
+                            lines.append(
+                                _wrap_text(
+                                    f"{label}: " + ", ".join(parts), indent=4
+                                )
+                            )
+            parse_count = diagnostics.get("parse_count")
+            if isinstance(parse_count, int):
+                lines.append(
+                    _wrap_text(f"Segmentation parses: {parse_count}", indent=2)
+                )
+            decomp_count = diagnostics.get("decomposition_count")
+            if isinstance(decomp_count, int):
+                lines.append(
+                    _wrap_text(f"Decompositions built: {decomp_count}", indent=2)
+                )
+            extra_keys = diagnostics.get("extra_ngram_keys")
+            extra_entries = diagnostics.get("extra_ngram_entries")
+            if isinstance(extra_keys, int) and isinstance(extra_entries, int):
+                lines.append(
+                    _wrap_text(
+                        f"Evidence ngrams: {extra_keys} keys ({extra_entries} entries)",
+                        indent=2,
+                    )
+                )
+            dict_keys = diagnostics.get("dictionary_ngram_keys")
+            dict_entries = diagnostics.get("dictionary_ngram_entries")
+            if isinstance(dict_keys, int) and isinstance(dict_entries, int):
+                lines.append(
+                    _wrap_text(
+                        f"Dictionary ngrams: {dict_keys} keys ({dict_entries} entries)",
+                        indent=2,
+                    )
+                )
             fallback_used = diagnostics.get("fallback_used")
             if isinstance(fallback_used, bool):
                 lines.append(
@@ -740,6 +821,25 @@ def _format_variant_report(payload: dict[str, object], *, verbose: bool = False)
                 lines.append(
                     _wrap_text(f"Substring support: {sample}", indent=2)
                 )
+            decomposition = diagnostics.get("decomposition")
+            if isinstance(decomposition, dict):
+                generated = decomposition.get("generated")
+                filtered = decomposition.get("filtered")
+                selected = decomposition.get("selected")
+                parts: List[str] = []
+                if isinstance(generated, int):
+                    parts.append(f"generated={generated}")
+                if isinstance(filtered, int):
+                    parts.append(f"filtered={filtered}")
+                if isinstance(selected, int):
+                    parts.append(f"selected={selected}")
+                if parts:
+                    lines.append(
+                        _wrap_text(
+                            "Decomposition pipeline: " + ", ".join(parts),
+                            indent=2,
+                        )
+                    )
 
     return "\n".join(lines)
 

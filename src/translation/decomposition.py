@@ -100,6 +100,12 @@ class DecompositionEngine:
         diagnostics: Dict[str, object] = {
             "fallback_used": False,
             "fallback_morphs": [],
+            "parse_count": 0,
+            "decomposition_count": 0,
+            "extra_ngram_keys": 0,
+            "extra_ngram_entries": 0,
+            "dictionary_ngram_keys": 0,
+            "dictionary_ngram_entries": 0,
         }
 
         if not word:
@@ -109,19 +115,29 @@ class DecompositionEngine:
         extra_ngrams = _build_evidence_ngrams(
             normalized, evidence, candidate_finder=self.candidate_finder
         )
+        diagnostics["extra_ngram_keys"] = len(extra_ngrams)
+        diagnostics["extra_ngram_entries"] = sum(
+            len(entries) for entries in extra_ngrams.values()
+        )
         parses = self.candidate_finder.segment_target(
             normalized, extra_ngrams=extra_ngrams
         )
+        diagnostics["parse_count"] = len(parses)
 
         if not parses:
             dictionary_ngrams = _build_dictionary_ngrams(
                 normalized, candidate_finder=self.candidate_finder
+            )
+            diagnostics["dictionary_ngram_keys"] = len(dictionary_ngrams)
+            diagnostics["dictionary_ngram_entries"] = sum(
+                len(entries) for entries in dictionary_ngrams.values()
             )
             if dictionary_ngrams:
                 merged = _merge_ngrams(extra_ngrams, dictionary_ngrams)
                 parses = self.candidate_finder.segment_target(
                     normalized, extra_ngrams=merged
                 )
+                diagnostics["parse_count"] = len(parses)
                 if parses:
                     diagnostics["fallback_used"] = True
                     diagnostics["fallback_morphs"] = sorted(
@@ -158,6 +174,7 @@ class DecompositionEngine:
                 )
             )
 
+        diagnostics["decomposition_count"] = len(decompositions)
         return decompositions, diagnostics
 
 
