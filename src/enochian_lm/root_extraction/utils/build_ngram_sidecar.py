@@ -28,7 +28,7 @@ Usage:
     --dict dictionary.json \
     --subst substitution_map.json \
     --compress sequence_compressions.json \
-    --min_n 1 --max_n 6 \
+    --min_n 1 --max_n 7 \
     --variant_map variant_redirects.json  # optional
 """
 
@@ -304,7 +304,7 @@ def build_sidecar(
     subst_json: Path,
     compress_json: Path,
     min_n: int = 1,
-    max_n: int = 6,
+    max_n: int = 7,
     respect_pauses: bool = True,
     variant_map_path: Path | None = None,
 ) -> None:
