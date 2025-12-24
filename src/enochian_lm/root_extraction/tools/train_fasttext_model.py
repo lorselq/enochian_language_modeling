@@ -8,7 +8,6 @@ from typing import List, Sequence
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from gensim.models import FastText, Word2Vec
-from gensim.utils import simple_preprocess
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import (
     load_dictionary,
@@ -71,7 +70,6 @@ def load_sentences(entries: Sequence[EntryRecord]) -> List[List[str]]:
     Turn entries into short 'sentences' for FastText:
     - canonical token
     - alternate tokens
-    - tokenized definition words (lowercased, basic cleanup)
     """
     sents: List[List[str]] = []
     for e in entries:
@@ -85,11 +83,6 @@ def load_sentences(entries: Sequence[EntryRecord]) -> List[List[str]]:
             val = (a.get("value") or "").strip().lower()
             if val and val != canonical:
                 parts.append(val)
-
-        for s in e.get("senses", []) or []:
-            text = (s.get("definition") or "").strip()
-            if text:
-                parts.extend(simple_preprocess(text, deacc=True, min_len=2))
 
         parts = [p for p in parts if p]
         if parts:
