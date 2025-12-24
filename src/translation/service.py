@@ -15,7 +15,9 @@ from .decomposition import Decomposition, DecompositionEngine, apply_hard_filter
 from .llm_synthesis import SynthesisResult, synthesize_definition
 from .repository import (
     ClusterRecord,
+    MorphHypothesisRecord,
     InsightsRepository,
+    ResidualSemanticRecord,
     ResidualDetail,
     WordEvidence,
     FasttextNeighbor,
@@ -380,6 +382,22 @@ class SingleWordTranslationService:
         decompositions = self._decomposition_engine.generate_decompositions(
             normalized, evidence
         )
+        if decompositions:
+            morphs = {morph for decomp in decompositions for morph in decomp.morphs}
+            if morphs:
+                (
+                    support_clusters,
+                    support_residuals,
+                    support_hypotheses,
+                ) = self.repository.fetch_morph_support(
+                    morphs, variants=active_variants
+                )
+                self._merge_support_evidence(
+                    evidence,
+                    support_clusters,
+                    support_residuals,
+                    support_hypotheses,
+                )
         filtered = apply_hard_filters(decompositions, evidence)
 
         ranked: List[tuple[Decomposition, float]] = []
@@ -524,6 +542,48 @@ class SingleWordTranslationService:
     @staticmethod
     def _coverage_confidence(*, coverage_ratio: float, residual_ratio: float) -> float:
         return max(0.0, min(1.0, 0.35 + 0.5 * coverage_ratio - 0.2 * residual_ratio))
+
+    @staticmethod
+    def _merge_support_evidence(
+        evidence: WordEvidence,
+        clusters: List[ClusterRecord],
+        residuals: List[ResidualSemanticRecord],
+        hypotheses: List[MorphHypothesisRecord],
+    ) -> None:
+        """Merge morph-level support evidence into the primary WordEvidence."""
+        cluster_keys = {
+            (item.variant, item.cluster_id) for item in evidence.direct_clusters
+        }
+        for item in clusters:
+            key = (item.variant, item.cluster_id)
+            if key in cluster_keys:
+                continue
+            evidence.direct_clusters.append(item)
+            cluster_keys.add(key)
+
+        residual_keys = {
+            (item.variant, item.residual, item.parent_word, item.group_index)
+            for item in evidence.residual_semantics
+        }
+        for item in residuals:
+            key = (item.variant, item.residual, item.parent_word, item.group_index)
+            if key in residual_keys:
+                continue
+            evidence.residual_semantics.append(item)
+            residual_keys.add(key)
+
+        hypothesis_keys = {
+            (item.variant, item.hyp_id) for item in evidence.morph_hypotheses
+        }
+        for item in hypotheses:
+            key = (item.variant, item.hyp_id)
+            if key in hypothesis_keys:
+                continue
+            evidence.morph_hypotheses.append(item)
+            hypothesis_keys.add(key)
+
+        if clusters or residuals or hypotheses:
+            evidence.fasttext_neighbors = []
 
     @staticmethod
     def _summarize_evidence(evidence: WordEvidence) -> dict[str, object]:

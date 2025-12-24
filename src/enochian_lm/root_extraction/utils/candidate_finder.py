@@ -153,7 +153,10 @@ class MorphemeCandidateFinder:
         return [w for w, score, _ in matches if score >= self.edit_threshold]
 
     def segment_target(
-        self, target: str
+        self,
+        target: str,
+        *,
+        extra_ngrams: dict[str, list[tuple[str, int, int]]] | None = None,
     ) -> list[
         tuple[list[str], float, dict[str, float], list[dict[str, float | int | str]]]
     ]:
@@ -186,7 +189,10 @@ class MorphemeCandidateFinder:
                 # try next n-grams
                 for n in range(self.min_n, min(self.max_n, len(tgt) - pos) + 1):
                     ng = tgt[pos : pos + n]
-                    for canon, tf, df in self.ngram_index.get(ng, []):
+                    entries = self.ngram_index.get(ng, [])
+                    if extra_ngrams:
+                        entries = entries + extra_ngrams.get(ng, [])
+                    for canon, tf, df in entries:
                         idf = math.log(self.total_docs / (df + 1))
                         tfidf = tf * idf
                         new_path = path + [canon]

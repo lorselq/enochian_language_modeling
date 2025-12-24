@@ -276,6 +276,32 @@ class InsightsRepository:
             fasttext_neighbors=fasttext_neighbors,
         )
 
+    def fetch_morph_support(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Optional[Iterable[str]] = None,
+    ) -> tuple[
+        List[ClusterRecord],
+        List[ResidualSemanticRecord],
+        List[MorphHypothesisRecord],
+    ]:
+        """Fetch evidence records for a collection of morphs."""
+        selected = list(variants) if variants else self.variants
+        unique = {m.upper() for m in morphs if m}
+        clusters: List[ClusterRecord] = []
+        residuals: List[ResidualSemanticRecord] = []
+        hypotheses: List[MorphHypothesisRecord] = []
+        for morph in sorted(unique):
+            clusters.extend(self.fetch_clusters(morph, variants=selected))
+            residuals.extend(
+                self._fetch_residual_semantics(morph, variants=selected)
+            )
+            hypotheses.extend(
+                self._fetch_morph_hypotheses(morph, variants=selected)
+            )
+        return clusters, residuals, hypotheses
+
     def fetch_accepted_morphs(self, variant: str) -> Dict[str, AcceptedMorphInfo]:
         """Return accepted morph hypotheses for a single variant.
 
