@@ -710,6 +710,7 @@ class SingleWordTranslationService:
             "direct_clusters": len(evidence.direct_clusters),
             "residual_semantics": len(evidence.residual_semantics),
             "morph_hypotheses": len(evidence.morph_hypotheses),
+            "attested_definitions": len(evidence.attested_definitions),
             "fasttext_neighbors": [asdict(neighbor) for neighbor in evidence.fasttext_neighbors],
         }
 
