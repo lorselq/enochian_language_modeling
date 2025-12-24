@@ -103,9 +103,13 @@ def synthesize_definition(
         response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
         parsed = _parse_response(response.get("response_text", ""), fallback=concatenated, context=context)
 
-        synthesized = parsed.get("definition")
-        confidence = _resolved_confidence(parsed.get("confidence"), context)
-        reasoning = parsed.get("reasoning") or "Synthesized definition via LLM."
+        synthesized_raw = parsed.get("definition")
+        synthesized: str | None = synthesized_raw if isinstance(synthesized_raw, str) else None
+        confidence_raw = parsed.get("confidence")
+        confidence_val: float | None = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else None
+        confidence = _resolved_confidence(confidence_val, context)
+        reasoning_raw = parsed.get("reasoning")
+        reasoning: str = reasoning_raw if isinstance(reasoning_raw, str) else "Synthesized definition via LLM."
 
         return SynthesisResult(
             synthesized_definition=synthesized,
@@ -133,7 +137,11 @@ def _build_prompt(
     strategy = str(context.get("strategy") or "prefer-balance")
 
     provenance_lines: List[str] = []
-    for item in context.get("provenance", []):
+    provenance_raw = context.get("provenance")
+    provenance_list = provenance_raw if isinstance(provenance_raw, list) else []
+    for item in provenance_list:
+        if not isinstance(item, dict):
+            continue
         morph = item.get("morph")
         source = item.get("provenance")
         if morph:
@@ -248,7 +256,11 @@ def _resolved_confidence(
 
 
 def _safe_float(value: object, *, default: float) -> float:
-    try:
+    if isinstance(value, (int, float)):
         return float(value)
-    except (TypeError, ValueError):
-        return default
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default

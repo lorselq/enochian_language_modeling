@@ -432,32 +432,44 @@ class SingleWordTranslationService:
         enriched: List[dict[str, object]] = []
         for idx, candidate in enumerate(candidates):
             base = dict(candidate)
-            meanings = base.get("meanings", [])
-            warnings: List[str] = list(base.get("warnings", []))
+            meanings_raw = base.get("meanings")
+            meanings: List[dict[str, object]] = (
+                meanings_raw if isinstance(meanings_raw, list) else []
+            )
+            warnings_raw = base.get("warnings")
+            warnings: List[str] = (
+                [str(w) for w in warnings_raw]
+                if isinstance(warnings_raw, (list, tuple))
+                else []
+            )
 
             coverage_ratio = _safe_ratio(base.get("breakdown"), "coverage_ratio")
             residual_ratio = _safe_ratio(base.get("breakdown"), "residual_ratio")
 
-            base["concatenated_meanings"] = self._concatenate_meanings(
-                meanings if isinstance(meanings, list) else []
-            )
+            base["concatenated_meanings"] = self._concatenate_meanings(meanings)
 
             if llm_enabled and idx == 0:
                 morph_meanings = [
                     self._meaning_or_morph(entry) for entry in meanings if isinstance(entry, dict)
                 ]
+                morphs_raw = base.get("morphs")
+                morphs: List[str] = (
+                    [str(m) for m in morphs_raw]
+                    if isinstance(morphs_raw, (list, tuple))
+                    else []
+                )
                 context = {
                     "word": evidence.word,
                     "strategy": strategy,
                     "coverage_ratio": coverage_ratio,
                     "residual_ratio": residual_ratio,
                     "score": base.get("score"),
-                    "provenance": meanings if isinstance(meanings, list) else [],
+                    "provenance": meanings,
                     "variants": evidence.variants_queried,
                     "use_remote": self.llm_use_remote,
                 }
                 synthesis = self.llm_adapter(
-                    list(base.get("morphs", [])),
+                    morphs,
                     morph_meanings,
                     context,
                 )

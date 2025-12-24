@@ -426,7 +426,9 @@ def _build_output_payload(
     documented schema so downstream consumers (text renderer, JSON output, tests)
     can rely on consistent keys.
     """
-    evidence = result.get("evidence") if isinstance(result.get("evidence"), dict) else {}
+    evidence_raw = result.get("evidence")
+    evidence: dict[str, object] = evidence_raw if isinstance(evidence_raw, dict) else {}
+    senses: List[dict[str, object]] = []
     payload: dict[str, object] = {
         "word": result.get("word"),
         "variant": variant,
@@ -435,25 +437,30 @@ def _build_output_payload(
         "timestamp": result.get("timestamp"),
         "llm_enabled": result.get("llm_enabled"),
         "llm_mode": result.get("llm_mode"),
-        "senses": [],
+        "senses": senses,
         "evidence": evidence,
     }
 
-    for candidate in result.get("candidates", []) or []:
+    candidates_raw = result.get("candidates")
+    candidates = candidates_raw if isinstance(candidates_raw, list) else []
+    for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
-        payload["senses"].append(
+        morphs_raw = candidate.get("morphs")
+        meanings_raw = candidate.get("meanings")
+        warnings_raw = candidate.get("warnings")
+        senses.append(
             {
                 "rank": candidate.get("rank"),
                 "variant": variant,
-                "morphs": list(candidate.get("morphs", [])),
+                "morphs": list(morphs_raw) if isinstance(morphs_raw, (list, tuple)) else [],
                 "score": candidate.get("score"),
                 "breakdown": candidate.get("breakdown"),
-                "meanings": list(candidate.get("meanings", [])),
+                "meanings": list(meanings_raw) if isinstance(meanings_raw, (list, tuple)) else [],
                 "synthesized_definition": candidate.get("synthesized_definition"),
                 "concatenated_meanings": candidate.get("concatenated_meanings"),
                 "confidence": candidate.get("confidence"),
-                "warnings": list(candidate.get("warnings", [])),
+                "warnings": list(warnings_raw) if isinstance(warnings_raw, (list, tuple)) else [],
             }
         )
 
@@ -519,10 +526,9 @@ def _render_json(
     JSON output is the canonical machine-readable format for this CLI, so we
     keep serialization centralized to avoid formatting drift.
     """
-    json_kwargs = {"ensure_ascii": False}
     if pretty:
-        json_kwargs["indent"] = 2
-    return json.dumps(payload, **json_kwargs)
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _format_text_report(payload: dict[str, object] | List[dict[str, object]]) -> str:
@@ -576,8 +582,10 @@ def _format_variant_report(payload: dict[str, object]) -> str:
             if not isinstance(sense, dict):
                 continue
             rank = sense.get("rank")
-            morphs = " + ".join(sense.get("morphs", []))
-            lines.append(f"\nRank {rank}: {morphs}")
+            morphs_raw = sense.get("morphs")
+            morphs_list = morphs_raw if isinstance(morphs_raw, list) else []
+            morphs_str = " + ".join(str(m) for m in morphs_list)
+            lines.append(f"\nRank {rank}: {morphs_str}")
             score = sense.get("score")
             if isinstance(score, (int, float)):
                 lines.append(f"Score: {score:.2f}")
@@ -586,8 +594,9 @@ def _format_variant_report(payload: dict[str, object]) -> str:
             if isinstance(provenance_note, str) and provenance_note:
                 lines.append(_wrap_text(f"Note: {provenance_note}", indent=0))
 
-            breakdown = (
-                sense.get("breakdown") if isinstance(sense.get("breakdown"), dict) else {}
+            breakdown_raw = sense.get("breakdown")
+            breakdown: dict[str, object] = (
+                breakdown_raw if isinstance(breakdown_raw, dict) else {}
             )
             coverage = breakdown.get("coverage_ratio")
             residual = breakdown.get("residual_ratio")
