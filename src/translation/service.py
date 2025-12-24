@@ -478,6 +478,15 @@ class SingleWordTranslationService:
                 **diagnostics,
                 "substring_support": substring_support,
                 "fasttext": self.repository.fasttext_diagnostics(),
+                "repository": self.repository.path_diagnostics(),
+                "word_lookup": self.repository.word_lookup_diagnostics(
+                    normalized, variants=active_variants
+                ),
+                "decomposition": {
+                    "generated": len(decompositions),
+                    "filtered": len(filtered),
+                    "selected": len(selected),
+                },
             },
         }
 

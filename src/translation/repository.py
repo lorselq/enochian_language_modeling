@@ -125,6 +125,29 @@ class AcceptedMorphInfo(TypedDict):
     anchor: Optional[str]
 
 
+class VariantPathInfo(TypedDict):
+    path: Optional[str]
+    exists: bool
+
+
+class PathDiagnostics(TypedDict):
+    variants_available: List[str]
+    variant_paths: Dict[str, VariantPathInfo]
+
+
+class WordLookupCounts(TypedDict):
+    clusters: Dict[str, Optional[int]]
+    residual_semantics: Dict[str, Optional[int]]
+    morph_hypotheses: Dict[str, Optional[int]]
+    attested_definitions: Dict[str, Optional[int]]
+
+
+class WordLookupDiagnostics(TypedDict):
+    word: str
+    variants: List[str]
+    counts: WordLookupCounts
+
+
 class InsightsRepository:
     """Read access to solo/debate insights databases."""
 
@@ -136,6 +159,9 @@ class InsightsRepository:
         fasttext_model_path: Optional[Path] = None,
     ):
         paths = {"solo": solo_path, "debate": debate_path}
+        self._paths: Dict[str, Optional[Path]] = {
+            variant: Path(path) if path else None for variant, path in paths.items()
+        }
         self._connections: Dict[str, sqlite3.Connection] = {}
         for variant, path in paths.items():
             if not path:
@@ -153,6 +179,70 @@ class InsightsRepository:
     @property
     def variants(self) -> List[str]:
         return sorted(self._connections.keys())
+
+    def path_diagnostics(self) -> PathDiagnostics:
+        """Return configured variant paths and whether they exist on disk."""
+        details: Dict[str, VariantPathInfo] = {}
+        for variant, path in self._paths.items():
+            if path is None:
+                details[variant] = {"path": None, "exists": False}
+                continue
+            details[variant] = {"path": str(path), "exists": path.exists()}
+        return {
+            "variants_available": self.variants,
+            "variant_paths": details,
+        }
+
+    def word_lookup_diagnostics(
+        self, word: str, *, variants: Optional[Iterable[str]] = None
+    ) -> WordLookupDiagnostics:
+        """Return per-variant evidence match counts for a word."""
+        normalized = word.upper()
+        selected = list(variants) if variants else self.variants
+        breakdown: WordLookupCounts = {
+            "clusters": {},
+            "residual_semantics": {},
+            "morph_hypotheses": {},
+            "attested_definitions": {},
+        }
+        for variant in selected:
+            conn = self._connections.get(variant)
+            if conn is None:
+                for key in breakdown:
+                    breakdown[key][variant] = None
+                continue
+            breakdown["clusters"][variant] = _count_matches(
+                conn,
+                "SELECT COUNT(*) FROM clusters WHERE TRIM(ngram) COLLATE NOCASE = ?",
+                (normalized,),
+            )
+            breakdown["residual_semantics"][variant] = _count_matches(
+                conn,
+                "SELECT COUNT(*) FROM root_residual_semantics WHERE TRIM(residual) COLLATE NOCASE = ?",
+                (normalized,),
+            )
+            breakdown["morph_hypotheses"][variant] = _count_matches(
+                conn,
+                "SELECT COUNT(*) FROM morph_hypotheses WHERE TRIM(morph) COLLATE NOCASE = ? AND accepted = 1",
+                (normalized,),
+            )
+            breakdown["attested_definitions"][variant] = _count_matches(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM raw_defs rd
+                JOIN clusters c ON c.cluster_id = rd.cluster_id
+                WHERE TRIM(rd.source_word) COLLATE NOCASE = ?
+                AND TRIM(COALESCE(rd.definition, '')) <> ''
+                """,
+                (normalized,),
+            )
+
+        return {
+            "word": normalized,
+            "variants": selected,
+            "counts": breakdown,
+        }
 
     def close(self) -> None:
         for conn in self._connections.values():
@@ -224,7 +314,7 @@ class InsightsRepository:
         self, conn: sqlite3.Connection, ngram: str, variant: str
     ) -> List[ClusterRecord]:
         cursor = conn.execute(
-            "SELECT * FROM clusters WHERE ngram COLLATE NOCASE = ? ORDER BY cluster_index ASC;",
+            "SELECT * FROM clusters WHERE TRIM(ngram) COLLATE NOCASE = ? ORDER BY cluster_index ASC;",
             (ngram,),
         )
         cluster_rows = cursor.fetchall()
@@ -418,7 +508,7 @@ class InsightsRepository:
             if conn is None:
                 continue
             rows = conn.execute(
-                "SELECT * FROM root_residual_semantics WHERE residual COLLATE NOCASE = ? ORDER BY group_idx;",
+                "SELECT * FROM root_residual_semantics WHERE TRIM(residual) COLLATE NOCASE = ? ORDER BY group_idx;",
                 (residual,),
             ).fetchall()
             for row in rows:
@@ -461,7 +551,7 @@ class InsightsRepository:
             if conn is None:
                 continue
             rows = conn.execute(
-                "SELECT * FROM morph_hypotheses WHERE morph COLLATE NOCASE = ? AND accepted = 1 ORDER BY hyp_id;",
+                "SELECT * FROM morph_hypotheses WHERE TRIM(morph) COLLATE NOCASE = ? AND accepted = 1 ORDER BY hyp_id;",
                 (morph,),
             ).fetchall()
             for row in rows:
@@ -498,7 +588,7 @@ class InsightsRepository:
                 SELECT rd.source_word, rd.definition, rd.cluster_id, c.ngram
                 FROM raw_defs rd
                 JOIN clusters c ON c.cluster_id = rd.cluster_id
-                WHERE rd.source_word COLLATE NOCASE = ? AND TRIM(COALESCE(rd.definition, '')) <> ''
+                WHERE TRIM(rd.source_word) COLLATE NOCASE = ? AND TRIM(COALESCE(rd.definition, '')) <> ''
                 ORDER BY rd.cluster_id, rd.def_id;
                 """,
                 (word,),
@@ -542,6 +632,7 @@ class InsightsRepository:
         self._fasttext_model = get_fasttext_model(self._fasttext_model_path)
         return self._fasttext_model
 
+
 def _safe_float(value: SupportsFloat | str | bytes | bytearray | None) -> Optional[float]:
     if value is None:
         return None
@@ -571,3 +662,15 @@ def _safe_json_array(payload: object) -> List[str]:
             return [str(item) for item in data]
         return [str(data)]
     return []
+
+
+def _count_matches(conn: sqlite3.Connection, query: str, params: tuple[object, ...]) -> int:
+    cursor = conn.execute(query, params)
+    row = cursor.fetchone()
+    if row is None:
+        return 0
+    value = row[0]
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
