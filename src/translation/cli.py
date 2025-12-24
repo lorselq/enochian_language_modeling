@@ -130,6 +130,11 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         default=3,
         help="Number of candidate definitions to return (default: 3).",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Include diagnostic details such as FastText metadata and reasoning.",
+    )
 
 
 def build_interpret_parser() -> argparse.ArgumentParser:
@@ -300,7 +305,9 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     top_k=top_k,
                     llm=llm_enabled,
                 )
-                outputs.append(_build_output_payload(result, variant=variant))
+                outputs.append(
+                    _build_output_payload(result, variant=variant, verbose=args.verbose)
+                )
     except FileNotFoundError as exc:
         _emit_error(str(exc))
         return 2
@@ -320,7 +327,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
         rendered = _render_json(payload, pretty=args.pretty)
         _emit_output(rendered, output_path=args.output)
     else:
-        rendered = _format_text_report(payload)
+        rendered = _format_text_report(payload, verbose=args.verbose)
         _emit_output(rendered, output_path=args.output)
 
     return exit_code
@@ -418,7 +425,7 @@ def _determine_exit_code(outputs: Sequence[dict[str, object]]) -> int:
 
 
 def _build_output_payload(
-    result: dict[str, object], *, variant: str
+    result: dict[str, object], *, variant: str, verbose: bool = False
 ) -> dict[str, object]:
     """Normalize translation results into a CLI-friendly output payload.
 
@@ -439,6 +446,7 @@ def _build_output_payload(
         "llm_mode": result.get("llm_mode"),
         "senses": senses,
         "evidence": evidence,
+        "fallback_morphs": result.get("fallback_morphs", []),
     }
 
     candidates_raw = result.get("candidates")
@@ -469,6 +477,9 @@ def _build_output_payload(
         payload[
             "message"
         ] = "No direct evidence found. Showing FastText neighbors as heuristic."
+
+    if verbose:
+        payload["diagnostics"] = result.get("diagnostics", {})
 
     return payload
 
@@ -531,19 +542,21 @@ def _render_json(
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _format_text_report(payload: dict[str, object] | List[dict[str, object]]) -> str:
+def _format_text_report(
+    payload: dict[str, object] | List[dict[str, object]], *, verbose: bool = False
+) -> str:
     """Render translation output in a human-readable, wrapped text format.
 
     This format is designed for terminal inspection: short labels, 80-column
     wrapping, and clear grouping by candidate rank.
     """
     if isinstance(payload, list):
-        blocks = [_format_variant_report(item) for item in payload]
+        blocks = [_format_variant_report(item, verbose=verbose) for item in payload]
         return "\n\n".join(blocks)
-    return _format_variant_report(payload)
+    return _format_variant_report(payload, verbose=verbose)
 
 
-def _format_variant_report(payload: dict[str, object]) -> str:
+def _format_variant_report(payload: dict[str, object], *, verbose: bool = False) -> str:
     """Render a single-variant translation payload into a text report.
 
     The output emphasizes the evidence hierarchy: first the high-level summary,
@@ -633,8 +646,33 @@ def _format_variant_report(payload: dict[str, object]) -> str:
             warnings = sense.get("warnings")
             if isinstance(warnings, list) and warnings:
                 lines.append(_wrap_text("Warnings: " + "; ".join(warnings), indent=0))
+            if verbose:
+                reasoning = sense.get("reasoning")
+                if isinstance(reasoning, str) and reasoning:
+                    lines.append(_wrap_text(f"Reasoning: {reasoning}", indent=0))
     else:
         lines.append("No candidate decompositions found.")
+        fallback = payload.get("fallback_morphs")
+        if isinstance(fallback, list) and fallback:
+            lines.append("Fallback morph hints:")
+            for hint in fallback:
+                if not isinstance(hint, dict):
+                    continue
+                morph = hint.get("morph")
+                if not morph:
+                    continue
+                definition = hint.get("definition") or "unknown"
+                coverage = hint.get("coverage_ratio")
+                similarity = hint.get("fasttext_similarity")
+                label = f"{morph}: {definition}"
+                details: List[str] = []
+                if isinstance(coverage, (int, float)):
+                    details.append(f"coverage {float(coverage):.2f}")
+                if isinstance(similarity, (int, float)):
+                    details.append(f"fasttext {float(similarity):.2f}")
+                if details:
+                    label += f" ({', '.join(details)})"
+                lines.append(_wrap_text(label, indent=2, bullet=True))
 
     if isinstance(evidence, dict):
         neighbors = evidence.get("fasttext_neighbors")
@@ -651,6 +689,43 @@ def _format_variant_report(payload: dict[str, object]) -> str:
                 if isinstance(similarity, (int, float)):
                     label += f" ({float(similarity):.2f})"
                 lines.append(_wrap_text(label, indent=2, bullet=True))
+
+    if verbose:
+        diagnostics = payload.get("diagnostics")
+        if isinstance(diagnostics, dict) and diagnostics:
+            lines.append("Diagnostics:")
+            fasttext = diagnostics.get("fasttext")
+            if isinstance(fasttext, dict):
+                model_path = fasttext.get("model_path")
+                loaded = fasttext.get("loaded")
+                vocab_size = fasttext.get("vocab_size")
+                if model_path:
+                    lines.append(_wrap_text(f"FastText model path: {model_path}", indent=2))
+                if isinstance(loaded, bool):
+                    lines.append(_wrap_text(f"FastText loaded: {loaded}", indent=2))
+                if isinstance(vocab_size, int):
+                    lines.append(_wrap_text(f"FastText vocab size: {vocab_size}", indent=2))
+                vocab_sample = fasttext.get("vocab_sample")
+                if isinstance(vocab_sample, list) and vocab_sample:
+                    sample = ", ".join(str(item) for item in vocab_sample)
+                    lines.append(
+                        _wrap_text(f"FastText vocab sample: {sample}", indent=2)
+                    )
+            fallback_used = diagnostics.get("fallback_used")
+            if isinstance(fallback_used, bool):
+                lines.append(
+                    _wrap_text(f"Dictionary fallback used: {fallback_used}", indent=2)
+                )
+            fallback_morphs = diagnostics.get("fallback_morphs")
+            if isinstance(fallback_morphs, list) and fallback_morphs:
+                sample = ", ".join(str(item) for item in fallback_morphs)
+                lines.append(_wrap_text(f"Fallback morphs: {sample}", indent=2))
+            substring_support = diagnostics.get("substring_support")
+            if isinstance(substring_support, list) and substring_support:
+                sample = ", ".join(str(item) for item in substring_support)
+                lines.append(
+                    _wrap_text(f"Substring support: {sample}", indent=2)
+                )
 
     return "\n".join(lines)
 
