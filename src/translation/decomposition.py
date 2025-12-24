@@ -79,8 +79,8 @@ class DecompositionEngine:
 
     def generate_decompositions(
         self, word: str, evidence: WordEvidence
-    ) -> List[Decomposition]:
-        """Return all plausible decompositions for ``word``.
+    ) -> tuple[List[Decomposition], Dict[str, object]]:
+        """Return all plausible decompositions for ``word`` plus diagnostics.
 
         The beam-search is delegated to ``segment_target``. Each returned path
         is wrapped as a :class:`Decomposition` and enriched with:
@@ -97,8 +97,13 @@ class DecompositionEngine:
           responsible for letting competing analyses "fight it out".
         """
 
+        diagnostics: Dict[str, object] = {
+            "fallback_used": False,
+            "fallback_morphs": [],
+        }
+
         if not word:
-            return []
+            return [], diagnostics
 
         normalized = word.upper()
         extra_ngrams = _build_evidence_ngrams(
@@ -107,6 +112,25 @@ class DecompositionEngine:
         parses = self.candidate_finder.segment_target(
             normalized, extra_ngrams=extra_ngrams
         )
+
+        if not parses:
+            dictionary_ngrams = _build_dictionary_ngrams(
+                normalized, candidate_finder=self.candidate_finder
+            )
+            if dictionary_ngrams:
+                merged = _merge_ngrams(extra_ngrams, dictionary_ngrams)
+                parses = self.candidate_finder.segment_target(
+                    normalized, extra_ngrams=merged
+                )
+                if parses:
+                    diagnostics["fallback_used"] = True
+                    diagnostics["fallback_morphs"] = sorted(
+                        {
+                            canon
+                            for entries in dictionary_ngrams.values()
+                            for canon, _, _ in entries
+                        }
+                    )
 
         decompositions: List[Decomposition] = []
 
@@ -134,7 +158,7 @@ class DecompositionEngine:
                 )
             )
 
-        return decompositions
+        return decompositions, diagnostics
 
 
 def _build_breakdown(
@@ -287,6 +311,51 @@ def _build_evidence_ngrams(
         extra.setdefault(key, []).append((normalized, 1, fallback_df))
 
     return extra
+
+
+def _build_dictionary_ngrams(
+    word: str,
+    *,
+    candidate_finder: MorphemeCandidateFinder,
+) -> Dict[str, List[Tuple[str, int, int]]]:
+    """Build extra ngrams for dictionary-backed substrings in ``word``.
+
+    This fallback helps when the ngram index is missing substrings that are
+    present in the dictionary, enabling decomposition suggestions even when
+    direct evidence is absent.
+    """
+    if not word:
+        return {}
+
+    total_docs = max(1, candidate_finder.total_docs)
+    fallback_df = max(1, int(total_docs * 0.5))
+    min_n = candidate_finder.min_n
+    max_n = candidate_finder.max_n
+    word_upper = word.upper()
+    known_words = {w.upper() for w in candidate_finder.known_words}
+
+    extra: Dict[str, List[Tuple[str, int, int]]] = {}
+    for start in range(len(word_upper)):
+        for end in range(start + min_n, min(len(word_upper), start + max_n) + 1):
+            slice_text = word_upper[start:end]
+            if slice_text not in known_words:
+                continue
+            key = slice_text.lower()
+            if key in candidate_finder.ngram_index:
+                continue
+            extra.setdefault(key, []).append((slice_text, 1, fallback_df))
+
+    return extra
+
+
+def _merge_ngrams(
+    left: Dict[str, List[Tuple[str, int, int]]],
+    right: Dict[str, List[Tuple[str, int, int]]],
+) -> Dict[str, List[Tuple[str, int, int]]]:
+    merged: Dict[str, List[Tuple[str, int, int]]] = {**left}
+    for key, entries in right.items():
+        merged.setdefault(key, []).extend(entries)
+    return merged
 
 
 def _classify_support(morph: str, support_lookup: Dict[str, str]) -> str:

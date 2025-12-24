@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, TypedDict, Optional, SupportsFloat, SupportsInt
+from typing import Dict, Iterable, List, Optional, SupportsFloat, SupportsInt, TypedDict
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
@@ -148,6 +148,45 @@ class InsightsRepository:
             conn.close()
         self._connections.clear()
         self._fasttext_model = None
+
+    def fasttext_diagnostics(self, *, sample_size: int = 5) -> Dict[str, object]:
+        info: Dict[str, object] = {
+            "model_path": str(self._fasttext_model_path) if self._fasttext_model_path else None,
+            "loaded": False,
+            "vocab_sample": [],
+            "vocab_size": None,
+        }
+        if not self._fasttext_model_path:
+            return info
+        try:
+            model = self._load_fasttext_model()
+        except Exception as exc:  # pragma: no cover - defensive for CLI diagnostics
+            info["error"] = str(exc)
+            return info
+
+        if model is None:
+            return info
+
+        info["loaded"] = True
+        vocab: List[str] = []
+        vocab_size: Optional[int] = None
+        if hasattr(model, "wv"):
+            wv = model.wv
+            if hasattr(wv, "index_to_key"):
+                vocab = list(wv.index_to_key[:sample_size])
+                vocab_size = len(wv.index_to_key)
+            elif hasattr(wv, "key_to_index"):
+                keys = list(wv.key_to_index.keys())
+                vocab = keys[:sample_size]
+                vocab_size = len(keys)
+        elif hasattr(model, "get_words"):
+            words = list(model.get_words())
+            vocab = words[:sample_size]
+            vocab_size = len(words)
+
+        info["vocab_sample"] = vocab
+        info["vocab_size"] = vocab_size
+        return info
 
     def require_variants(self, expected: Iterable[str]) -> None:
         missing = [v for v in expected if v not in self._connections]
