@@ -101,7 +101,12 @@ class DecompositionEngine:
             return []
 
         normalized = word.upper()
-        parses = self.candidate_finder.segment_target(normalized)
+        extra_ngrams = _build_evidence_ngrams(
+            normalized, evidence, candidate_finder=self.candidate_finder
+        )
+        parses = self.candidate_finder.segment_target(
+            normalized, extra_ngrams=extra_ngrams
+        )
 
         decompositions: List[Decomposition] = []
 
@@ -240,6 +245,48 @@ def _build_support_lookup(evidence: WordEvidence) -> Dict[str, str]:
         support.setdefault(key, "hypothesis")
 
     return support
+
+
+def _build_evidence_ngrams(
+    word: str,
+    evidence: WordEvidence,
+    *,
+    candidate_finder: MorphemeCandidateFinder,
+) -> Dict[str, List[Tuple[str, int, int]]]:
+    """Build an extra ngram index based on evidence-backed morphs.
+
+    This allows the segmentation step to consider morphs that have evidence
+    in the insights databases but do not appear in the ngram index.
+    """
+
+    morphs: set[str] = set()
+    morphs.update(cluster.ngram for cluster in evidence.direct_clusters)
+    morphs.update(residual.residual for residual in evidence.residual_semantics)
+    morphs.update(hypothesis.morph for hypothesis in evidence.morph_hypotheses)
+
+    if not morphs:
+        return {}
+
+    total_docs = max(1, candidate_finder.total_docs)
+    fallback_df = max(1, int(total_docs * 0.5))
+
+    extra: Dict[str, List[Tuple[str, int, int]]] = {}
+    for morph in morphs:
+        if not morph:
+            continue
+        normalized = morph.strip().upper()
+        if not normalized:
+            continue
+        if normalized not in word:
+            continue
+        if not (candidate_finder.min_n <= len(normalized) <= candidate_finder.max_n):
+            continue
+        key = normalized.lower()
+        if key in candidate_finder.ngram_index:
+            continue
+        extra.setdefault(key, []).append((normalized, 1, fallback_df))
+
+    return extra
 
 
 def _classify_support(morph: str, support_lookup: Dict[str, str]) -> str:
