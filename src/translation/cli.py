@@ -416,7 +416,12 @@ def _determine_exit_code(outputs: Sequence[dict[str, object]]) -> int:
         evidence = report.get("evidence")
         if not isinstance(evidence, dict):
             return False
-        keys = ("direct_clusters", "residual_semantics", "morph_hypotheses")
+        keys = (
+            "direct_clusters",
+            "residual_semantics",
+            "morph_hypotheses",
+            "attested_definitions",
+        )
         return any(evidence.get(key, 0) for key in keys)
 
     if all(not has_evidence(report) for report in outputs):
@@ -522,10 +527,16 @@ def _apply_residual_only_adjustment(payload: dict[str, object]) -> None:
 def _no_direct_evidence(evidence: dict[str, object]) -> bool:
     """Return True when no direct evidence exists.
 
-    Direct evidence includes clusters, residual semantics, or accepted morph
-    hypotheses. Without them we fall back to FastText neighbors.
+    Direct evidence includes clusters, residual semantics, accepted morph
+    hypotheses, or attested glossary definitions. Without them we fall back to
+    FastText neighbors.
     """
-    keys = ("direct_clusters", "residual_semantics", "morph_hypotheses")
+    keys = (
+        "direct_clusters",
+        "residual_semantics",
+        "morph_hypotheses",
+        "attested_definitions",
+    )
     return not any(evidence.get(key, 0) for key in keys)
 
 
@@ -585,8 +596,11 @@ def _format_variant_report(payload: dict[str, object], *, verbose: bool = False)
         clusters = evidence.get("direct_clusters", 0)
         residuals = evidence.get("residual_semantics", 0)
         hypotheses = evidence.get("morph_hypotheses", 0)
+        attestations = evidence.get("attested_definitions", 0)
         lines.append(
-            f"Evidence: clusters={clusters}, residuals={residuals}, hypotheses={hypotheses}"
+            "Evidence: "
+            f"clusters={clusters}, residuals={residuals}, hypotheses={hypotheses}, "
+            f"attested={attestations}"
         )
 
     senses = payload.get("senses")

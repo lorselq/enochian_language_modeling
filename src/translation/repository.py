@@ -29,7 +29,17 @@ class RawDefinition:
     fasttext: Optional[float]
     similarity: Optional[float]
     tier: Optional[str]
-    
+    cluster_id: Optional[int] = None
+
+
+@dataclass
+class AttestedDefinition:
+    variant: str
+    source_word: str
+    definition: Optional[str]
+    cluster_id: int
+    root_ngram: str
+
 
 @dataclass
 class ClusterRecord:
@@ -103,6 +113,7 @@ class WordEvidence:
     residual_semantics: List[ResidualSemanticRecord] = field(default_factory=list)
     morph_hypotheses: List[MorphHypothesisRecord] = field(default_factory=list)
     fasttext_neighbors: List[FasttextNeighbor] = field(default_factory=list)
+    attested_definitions: List[AttestedDefinition] = field(default_factory=list)
 
 
 @dataclass
@@ -278,6 +289,7 @@ class InsightsRepository:
                         fasttext=_safe_float(row_dict.get("fasttext")),
                         similarity=_safe_float(row_dict.get("similarity")),
                         tier=row_dict.get("tier"),
+                        cluster_id=_safe_int(row_dict.get("cluster_id")),
                     )
                 )
 
@@ -299,9 +311,17 @@ class InsightsRepository:
         morph_hypotheses = self._fetch_morph_hypotheses(
             normalized, variants=active_variants
         )
+        attested_definitions = self._fetch_attested_definitions(
+            normalized, variants=active_variants
+        )
 
         fasttext_neighbors: List[FasttextNeighbor] = []
-        if not (direct_clusters or residual_semantics or morph_hypotheses):
+        if not (
+            direct_clusters
+            or residual_semantics
+            or morph_hypotheses
+            or attested_definitions
+        ):
             fasttext_neighbors = self._fasttext_neighbors(
                 normalized, top_k=fasttext_top_k
             )
@@ -313,6 +333,7 @@ class InsightsRepository:
             residual_semantics=residual_semantics,
             morph_hypotheses=morph_hypotheses,
             fasttext_neighbors=fasttext_neighbors,
+            attested_definitions=attested_definitions,
         )
 
     def fetch_morph_support(
@@ -459,6 +480,38 @@ class InsightsRepository:
                         residual_before=_safe_float(data.get("residual_before")),
                         residual_after=_safe_float(data.get("residual_after")),
                         created_at=data.get("created_at"),
+                    )
+                )
+        return records
+
+    def _fetch_attested_definitions(
+        self, word: str, *, variants: Optional[Iterable[str]] = None
+    ) -> List[AttestedDefinition]:
+        selected = list(variants) if variants else self.variants
+        records: List[AttestedDefinition] = []
+        for variant in selected:
+            conn = self._connections.get(variant)
+            if conn is None:
+                continue
+            rows = conn.execute(
+                """
+                SELECT rd.source_word, rd.definition, rd.cluster_id, c.ngram
+                FROM raw_defs rd
+                JOIN clusters c ON c.cluster_id = rd.cluster_id
+                WHERE rd.source_word = ? AND TRIM(COALESCE(rd.definition, '')) <> ''
+                ORDER BY rd.cluster_id, rd.def_id;
+                """,
+                (word,),
+            ).fetchall()
+            for row in rows:
+                data = {key: row[key] for key in row.keys()}
+                records.append(
+                    AttestedDefinition(
+                        variant=variant,
+                        source_word=str(data.get("source_word")),
+                        definition=data.get("definition"),
+                        cluster_id=_safe_int(data.get("cluster_id")),
+                        root_ngram=str(data.get("ngram")),
                     )
                 )
         return records

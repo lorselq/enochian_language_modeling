@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Tuple
+import json
+import re
 
 from .decomposition import Decomposition
 from .repository import ClusterRecord, WordEvidence
@@ -178,7 +180,7 @@ def _meaning_from_evidence(
         if cluster.ngram.upper() != morph:
             continue
         definition = _first_non_empty(
-            cluster.glossator_def,
+            _extract_glossator_definition(cluster.glossator_def),
             _first_cluster_raw_definition(cluster),
             cluster.residual_headline,
         )
@@ -189,7 +191,10 @@ def _meaning_from_evidence(
     for residual in evidence.residual_semantics:
         if residual.residual.upper() != morph:
             continue
-        definition = _first_non_empty(residual.glossator_def, residual.residual_headline)
+        definition = _first_non_empty(
+            _extract_glossator_definition(residual.glossator_def),
+            residual.residual_headline,
+        )
         if definition is not None:
             return definition, "residual"
 
@@ -230,6 +235,70 @@ def _first_non_empty(*values: object) -> str | None:
                     return text
         except Exception:
             continue
+    return None
+
+
+def _extract_glossator_definition(payload: object) -> str | None:
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        return _definition_from_glossator_json(payload)
+    if not isinstance(payload, str):
+        return None
+
+    text = payload.strip()
+    if not text:
+        return None
+
+    parsed = _parse_glossator_json(text)
+    if isinstance(parsed, dict):
+        return _definition_from_glossator_json(parsed)
+    return None
+
+
+def _parse_glossator_json(text: str) -> dict | None:
+    for attempt in (_load_json, _load_json_from_code_fence, _load_nested_raw_text):
+        result = attempt(text)
+        if isinstance(result, dict):
+            return result
+    return None
+
+
+def _load_json(text: str) -> dict | None:
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _load_json_from_code_fence(text: str) -> dict | None:
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if not match:
+        return None
+    return _load_json(match.group(1).strip())
+
+
+def _load_nested_raw_text(text: str) -> dict | None:
+    data = _load_json(text)
+    if not isinstance(data, dict):
+        return None
+    raw_text = data.get("RAW_TEXT")
+    if not isinstance(raw_text, str):
+        return None
+    raw_text = raw_text.strip()
+    if not raw_text:
+        return None
+    return _load_json_from_code_fence(raw_text) or _load_json(raw_text)
+
+
+def _definition_from_glossator_json(payload: dict) -> str | None:
+    for key in ("DEFINITION", "Definition", "definition", "gloss", "GLOSS"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     return None
 
 
