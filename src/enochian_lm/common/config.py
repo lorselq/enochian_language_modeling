@@ -20,7 +20,7 @@ def get_config_paths() -> dict[str, Path]:
         "ngram_index": data_dir / "ngram_index.sqlite3",
         "root_word_insights": data_dir / "root_word_insights.json",
         "new_definitions": interpretation_dir / "new_definitions.sqlite3",
-        "debate": interpretation_dir / "revised_debate_derived_definitions.sqlite3",
-        "solo": interpretation_dir / "revised_solo_analysis_derived_definitions.sqlite3",
+        "debate": interpretation_dir / "debate_derived_definitions.sqlite3",
+        "solo": interpretation_dir / "solo_analysis_derived_definitions.sqlite3",
         "preanalysis_trusted": data_dir / "trusted_preanalysis_ngrams.json",
     }
