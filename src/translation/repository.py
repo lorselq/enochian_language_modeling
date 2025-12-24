@@ -224,7 +224,7 @@ class InsightsRepository:
         self, conn: sqlite3.Connection, ngram: str, variant: str
     ) -> List[ClusterRecord]:
         cursor = conn.execute(
-            "SELECT * FROM clusters WHERE ngram = ? ORDER BY cluster_index ASC;",
+            "SELECT * FROM clusters WHERE ngram COLLATE NOCASE = ? ORDER BY cluster_index ASC;",
             (ngram,),
         )
         cluster_rows = cursor.fetchall()
@@ -418,7 +418,7 @@ class InsightsRepository:
             if conn is None:
                 continue
             rows = conn.execute(
-                "SELECT * FROM root_residual_semantics WHERE residual = ? ORDER BY group_idx;",
+                "SELECT * FROM root_residual_semantics WHERE residual COLLATE NOCASE = ? ORDER BY group_idx;",
                 (residual,),
             ).fetchall()
             for row in rows:
@@ -461,7 +461,7 @@ class InsightsRepository:
             if conn is None:
                 continue
             rows = conn.execute(
-                "SELECT * FROM morph_hypotheses WHERE morph = ? AND accepted = 1 ORDER BY hyp_id;",
+                "SELECT * FROM morph_hypotheses WHERE morph COLLATE NOCASE = ? AND accepted = 1 ORDER BY hyp_id;",
                 (morph,),
             ).fetchall()
             for row in rows:
@@ -498,7 +498,7 @@ class InsightsRepository:
                 SELECT rd.source_word, rd.definition, rd.cluster_id, c.ngram
                 FROM raw_defs rd
                 JOIN clusters c ON c.cluster_id = rd.cluster_id
-                WHERE rd.source_word = ? AND TRIM(COALESCE(rd.definition, '')) <> ''
+                WHERE rd.source_word COLLATE NOCASE = ? AND TRIM(COALESCE(rd.definition, '')) <> ''
                 ORDER BY rd.cluster_id, rd.def_id;
                 """,
                 (word,),
