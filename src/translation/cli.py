@@ -135,6 +135,11 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Include diagnostic details such as FastText metadata and reasoning.",
     )
+    parser.add_argument(
+        "--trace-filters",
+        action="store_true",
+        help="Include per-decomposition filter traces in verbose diagnostics.",
+    )
 
 
 def build_interpret_parser() -> argparse.ArgumentParser:
@@ -327,7 +332,11 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
         rendered = _render_json(payload, pretty=args.pretty)
         _emit_output(rendered, output_path=args.output)
     else:
-        rendered = _format_text_report(payload, verbose=args.verbose)
+        rendered = _format_text_report(
+            payload,
+            verbose=args.verbose,
+            trace_filters=args.trace_filters,
+        )
         _emit_output(rendered, output_path=args.output)
 
     return exit_code
@@ -554,7 +563,10 @@ def _render_json(
 
 
 def _format_text_report(
-    payload: dict[str, object] | List[dict[str, object]], *, verbose: bool = False
+    payload: dict[str, object] | List[dict[str, object]],
+    *,
+    verbose: bool = False,
+    trace_filters: bool = False,
 ) -> str:
     """Render translation output in a human-readable, wrapped text format.
 
@@ -562,12 +574,24 @@ def _format_text_report(
     wrapping, and clear grouping by candidate rank.
     """
     if isinstance(payload, list):
-        blocks = [_format_variant_report(item, verbose=verbose) for item in payload]
+        blocks = [
+            _format_variant_report(
+                item,
+                verbose=verbose,
+                trace_filters=trace_filters,
+            )
+            for item in payload
+        ]
         return "\n\n".join(blocks)
-    return _format_variant_report(payload, verbose=verbose)
+    return _format_variant_report(payload, verbose=verbose, trace_filters=trace_filters)
 
 
-def _format_variant_report(payload: dict[str, object], *, verbose: bool = False) -> str:
+def _format_variant_report(
+    payload: dict[str, object],
+    *,
+    verbose: bool = False,
+    trace_filters: bool = False,
+) -> str:
     """Render a single-variant translation payload into a text report.
 
     The output emphasizes the evidence hierarchy: first the high-level summary,
@@ -822,6 +846,7 @@ def _format_variant_report(payload: dict[str, object], *, verbose: bool = False)
                     _wrap_text(f"Substring support: {sample}", indent=2)
                 )
             decomposition = diagnostics.get("decomposition")
+            filtered_count = None
             if isinstance(decomposition, dict):
                 generated = decomposition.get("generated")
                 filtered = decomposition.get("filtered")
@@ -840,6 +865,130 @@ def _format_variant_report(payload: dict[str, object], *, verbose: bool = False)
                             indent=2,
                         )
                     )
+                if isinstance(filtered, int):
+                    filtered_count = filtered
+            hard_filters = diagnostics.get("hard_filters")
+            if isinstance(hard_filters, dict):
+                stage1 = hard_filters.get("stage1_dropped")
+                stage2 = hard_filters.get("stage2_dropped")
+                stage3 = hard_filters.get("stage3_dropped")
+                dropped_parts: List[str] = []
+                if isinstance(stage1, int):
+                    dropped_parts.append(f"filter1={stage1}")
+                if isinstance(stage2, int):
+                    dropped_parts.append(f"filter2={stage2}")
+                if isinstance(stage3, int):
+                    dropped_parts.append(f"filter3={stage3}")
+                if dropped_parts:
+                    lines.append(
+                        _wrap_text(
+                            "Hard filter drops: " + ", ".join(dropped_parts),
+                            indent=2,
+                        )
+                    )
+                min_residual = hard_filters.get("min_residual_ratio")
+                if isinstance(min_residual, (int, float)):
+                    lines.append(
+                        _wrap_text(
+                            f"Hard filter min residual ratio: {float(min_residual):.3f}",
+                            indent=2,
+                        )
+                    )
+                max_attestation = hard_filters.get("max_attestation_score")
+                if isinstance(max_attestation, int):
+                    lines.append(
+                        _wrap_text(
+                            f"Hard filter max attestation score: {max_attestation}",
+                            indent=2,
+                        )
+                    )
+                unsupported = hard_filters.get("unsupported_morphs")
+                if isinstance(unsupported, list) and unsupported:
+                    sample = ", ".join(
+                        f"{item.get('morph')} ({item.get('count')})"
+                        for item in unsupported
+                        if isinstance(item, dict)
+                        and item.get("morph") is not None
+                        and item.get("count") is not None
+                    )
+                    if sample:
+                        lines.append(
+                            _wrap_text(
+                                f"Unsupported morphs (top): {sample}",
+                                indent=2,
+                            )
+                        )
+                traces = hard_filters.get("filter_traces")
+                should_trace = trace_filters or (
+                    isinstance(filtered_count, int) and filtered_count == 0
+                )
+                if (
+                    should_trace
+                    and isinstance(traces, list)
+                    and traces
+                ):
+                    lines.append(_wrap_text("Filter traces:", indent=2))
+                    for trace in traces:
+                        if not isinstance(trace, dict):
+                            continue
+                        morphs_raw = trace.get("morphs")
+                        morphs = (
+                            " + ".join(str(m) for m in morphs_raw)
+                            if isinstance(morphs_raw, list)
+                            else ""
+                        )
+                        if morphs:
+                            lines.append(_wrap_text(f"Decomposition: {morphs}", indent=4))
+                        missing = trace.get("missing_morphs")
+                        if isinstance(missing, list):
+                            missing_label = ", ".join(str(m) for m in missing) or "none"
+                            lines.append(
+                                _wrap_text(f"Missing morphs: {missing_label}", indent=6)
+                            )
+                        support = trace.get("morph_support")
+                        if isinstance(support, dict) and support:
+                            pairs = ", ".join(
+                                f"{key}={value}"
+                                for key, value in support.items()
+                            )
+                            if pairs:
+                                lines.append(
+                                    _wrap_text(f"Support: {pairs}", indent=6)
+                                )
+                        residual = trace.get("residual_ratio")
+                        if isinstance(residual, (int, float)):
+                            lines.append(
+                                _wrap_text(
+                                    f"Residual ratio: {float(residual):.3f}",
+                                    indent=6,
+                                )
+                            )
+                        attestation = trace.get("attestation_score")
+                        if isinstance(attestation, int):
+                            lines.append(
+                                _wrap_text(
+                                    f"Attestation score: {attestation}",
+                                    indent=6,
+                                )
+                            )
+                        segments = trace.get("segments")
+                        if isinstance(segments, list) and segments:
+                            lines.append(_wrap_text("Segments:", indent=6))
+                            for segment in segments:
+                                if not isinstance(segment, dict):
+                                    continue
+                                ngram = segment.get("ngram")
+                                canonical = segment.get("canonical")
+                                label = " / ".join(
+                                    part
+                                    for part in [
+                                        str(ngram) if ngram else "",
+                                        str(canonical) if canonical else "",
+                                    ]
+                                    if part
+                                )
+                                if label:
+                                    lines.append(_wrap_text(label, indent=8, bullet=True))
 
     return "\n".join(lines)
 
