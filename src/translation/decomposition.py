@@ -436,7 +436,7 @@ def apply_hard_filters(
     decompositions: List[Decomposition],
     evidence: WordEvidence,
     min_support_threshold: float = 0.2,
-) -> List[Decomposition]:
+) -> tuple[List[Decomposition], Dict[str, object]]:
     """Apply the hard-filtering rules described in task 2.2.
 
     Filters are applied in order:
@@ -450,9 +450,29 @@ def apply_hard_filters(
     """
 
     if not decompositions:
-        return []
+        return [], {
+            "stage1_dropped": 0,
+            "stage2_dropped": 0,
+            "stage3_dropped": 0,
+            "unsupported_morphs": [],
+            "min_residual_ratio": None,
+            "max_attestation_score": None,
+            "min_support_threshold": min_support_threshold,
+            "filter_traces": [],
+        }
 
     support_stats = _compile_support_stats(evidence)
+    diagnostics: Dict[str, object] = {
+        "stage1_dropped": 0,
+        "stage2_dropped": 0,
+        "stage3_dropped": 0,
+        "unsupported_morphs": [],
+        "min_residual_ratio": None,
+        "max_attestation_score": None,
+        "min_support_threshold": min_support_threshold,
+        "filter_traces": [],
+    }
+    unsupported_counts: Dict[str, int] = {}
 
     def has_support(morph: str) -> bool:
         stats = support_stats.get(morph.upper())
@@ -468,9 +488,21 @@ def apply_hard_filters(
     # Filter 1: every morph must have support.
     # ------------------------------------------------------------------
     supported: List[Decomposition] = []
+    filter_traces: List[Dict[str, object]] = []
     for decomp in decompositions:
         missing = [m for m in decomp.morphs if not has_support(m)]
+        trace: Dict[str, object] = {
+            "morphs": list(decomp.morphs),
+            "missing_morphs": missing,
+            "morph_support": dict(decomp.morph_support),
+            "residual_ratio": _residual_ratio(decomp),
+            "segments": _summarize_segments(decomp.breakdown),
+        }
+        filter_traces.append(trace)
         if missing:
+            diagnostics["stage1_dropped"] = diagnostics["stage1_dropped"] + 1
+            for morph in missing:
+                unsupported_counts[morph] = unsupported_counts.get(morph, 0) + 1
             LOGGER.debug(
                 "Discarding %s due to unsupported morphs: %s",
                 decomp.morphs,
@@ -479,17 +511,31 @@ def apply_hard_filters(
             continue
         supported.append(decomp)
 
+    diagnostics["filter_traces"] = filter_traces
+
+    if unsupported_counts:
+        top_n = 5
+        ranked = sorted(
+            unsupported_counts.items(), key=lambda item: (-item[1], item[0])
+        )
+        diagnostics["unsupported_morphs"] = [
+            {"morph": morph, "count": count}
+            for morph, count in ranked[:top_n]
+        ]
+
     if not supported:
-        return []
+        return [], diagnostics
 
     # ------------------------------------------------------------------
     # Filter 2: discard high-residual decomps when a better exists.
     # ------------------------------------------------------------------
     min_residual = min(_residual_ratio(d) for d in supported)
+    diagnostics["min_residual_ratio"] = min_residual
     coverage_filtered: List[Decomposition] = []
     for decomp in supported:
         ratio = _residual_ratio(decomp)
         if ratio > 0.5 and min_residual <= 0.5:
+            diagnostics["stage2_dropped"] = diagnostics["stage2_dropped"] + 1
             LOGGER.debug(
                 "Discarding %s due to high residual_ratio %.3f (best=%.3f)",
                 decomp.morphs,
@@ -500,7 +546,7 @@ def apply_hard_filters(
         coverage_filtered.append(decomp)
 
     if not coverage_filtered:
-        return []
+        return [], diagnostics
 
     # ------------------------------------------------------------------
     # Filter 3: prefer well-attested morphs (>3 uses) over pure singletons.
@@ -513,15 +559,20 @@ def apply_hard_filters(
                 score += 1
         return score
 
-    max_attestation = max(attestation_score(d) for d in coverage_filtered)
+    attestation_scores = {tuple(d.morphs): attestation_score(d) for d in coverage_filtered}
+    for decomp in coverage_filtered:
+        _update_attestation_trace(filter_traces, decomp, attestation_scores[tuple(decomp.morphs)])
+    max_attestation = max(attestation_scores.values())
+    diagnostics["max_attestation_score"] = max_attestation
     if max_attestation == 0:
         # Nobody uses well-attested morphs; let soft scoring handle it.
-        return coverage_filtered
+        return coverage_filtered, diagnostics
 
     attested: List[Decomposition] = []
     for decomp in coverage_filtered:
-        score = attestation_score(decomp)
+        score = attestation_scores[tuple(decomp.morphs)]
         if score == 0:
+            diagnostics["stage3_dropped"] = diagnostics["stage3_dropped"] + 1
             LOGGER.debug(
                 "Discarding %s due to singleton-only morph usage (best score=%d)",
                 decomp.morphs,
@@ -530,4 +581,41 @@ def apply_hard_filters(
             continue
         attested.append(decomp)
 
-    return attested if attested else coverage_filtered
+    return (attested if attested else coverage_filtered), diagnostics
+
+
+def _summarize_segments(breakdown: Dict[str, object]) -> List[Dict[str, str]]:
+    raw_segments = breakdown.get("segments")
+    segments = raw_segments if isinstance(raw_segments, list) else []
+    summary: List[Dict[str, str]] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        ngram = segment.get("ngram")
+        canonical = segment.get("canonical")
+        if isinstance(ngram, str) or isinstance(canonical, str):
+            summary.append(
+                {
+                    "ngram": ngram if isinstance(ngram, str) else "",
+                    "canonical": canonical if isinstance(canonical, str) else "",
+                }
+            )
+    return summary
+
+
+def _update_attestation_trace(
+    traces: List[Dict[str, object]],
+    target: Decomposition,
+    score: int,
+) -> None:
+    if not traces:
+        return
+    target_key = tuple(target.morphs)
+    updated = False
+    for trace in traces:
+        morphs = trace.get("morphs")
+        if isinstance(morphs, list) and tuple(morphs) == target_key:
+            trace["attestation_score"] = score
+            updated = True
+    if updated:
+        return
