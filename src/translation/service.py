@@ -430,7 +430,7 @@ class SingleWordTranslationService:
                     support_residuals,
                     support_hypotheses,
                 )
-        filtered = apply_hard_filters(decompositions, evidence)
+        filtered, filter_diagnostics = apply_hard_filters(decompositions, evidence)
 
         ranked: List[tuple[Decomposition, float]] = []
         for decomp in filtered:
@@ -482,6 +482,7 @@ class SingleWordTranslationService:
                 "word_lookup": self.repository.word_lookup_diagnostics(
                     normalized, variants=active_variants
                 ),
+                "hard_filters": filter_diagnostics,
                 "decomposition": {
                     "generated": len(decompositions),
                     "filtered": len(filtered),
