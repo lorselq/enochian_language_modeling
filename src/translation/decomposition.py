@@ -28,6 +28,8 @@ class CoverageSegment(TypedDict):
 class MorphSupportStats:
     has_cluster: bool = False
     has_residual: bool = False
+    has_attested: bool = False
+    has_dictionary: bool = False
     hypothesis_max: Optional[float] = None  # max delta_cosine across hypotheses
     uses: int = 0  # total appearances across evidence
 
@@ -78,7 +80,11 @@ class DecompositionEngine:
         self.candidate_finder = candidate_finder
 
     def generate_decompositions(
-        self, word: str, evidence: WordEvidence
+        self,
+        word: str,
+        evidence: WordEvidence,
+        *,
+        force_dictionary: bool = False,
     ) -> tuple[List[Decomposition], Dict[str, object]]:
         """Return all plausible decompositions for ``word`` plus diagnostics.
 
@@ -106,6 +112,7 @@ class DecompositionEngine:
             "extra_ngram_entries": 0,
             "dictionary_ngram_keys": 0,
             "dictionary_ngram_entries": 0,
+            "dictionary_forced": force_dictionary,
         }
 
         if not word:
@@ -119,12 +126,27 @@ class DecompositionEngine:
         diagnostics["extra_ngram_entries"] = sum(
             len(entries) for entries in extra_ngrams.values()
         )
+        dictionary_ngrams: Dict[str, List[Tuple[str, int, int]]] = {}
+        if force_dictionary:
+            dictionary_ngrams = _build_dictionary_ngrams(
+                normalized, candidate_finder=self.candidate_finder
+            )
+            diagnostics["dictionary_ngram_keys"] = len(dictionary_ngrams)
+            diagnostics["dictionary_ngram_entries"] = sum(
+                len(entries) for entries in dictionary_ngrams.values()
+            )
+
+        merged = (
+            _merge_ngrams(extra_ngrams, dictionary_ngrams)
+            if dictionary_ngrams
+            else extra_ngrams
+        )
         parses = self.candidate_finder.segment_target(
-            normalized, extra_ngrams=extra_ngrams
+            normalized, extra_ngrams=merged
         )
         diagnostics["parse_count"] = len(parses)
 
-        if not parses:
+        if not parses and not force_dictionary:
             dictionary_ngrams = _build_dictionary_ngrams(
                 normalized, candidate_finder=self.candidate_finder
             )
@@ -266,6 +288,8 @@ def _build_support_lookup(evidence: WordEvidence) -> Dict[str, str]:
     1. direct clusters (``"cluster"``)
     2. residual semantics (``"residual"``)
     3. morph hypotheses (``"hypothesis"``)
+    4. attested definitions (``"attested"``)
+    5. dictionary matches (``"dictionary"``)
 
     Later sources never overwrite earlier ones for the same morph key.
     """
@@ -284,6 +308,15 @@ def _build_support_lookup(evidence: WordEvidence) -> Dict[str, str]:
     for hypothesis in evidence.morph_hypotheses:
         key = hypothesis.morph.upper()
         support.setdefault(key, "hypothesis")
+
+    for attested in evidence.attested_definitions:
+        key = attested.source_word.upper()
+        support.setdefault(key, "attested")
+        root_key = attested.root_ngram.upper()
+        support.setdefault(root_key, "attested")
+
+    for morph in evidence.dictionary_morphs:
+        support.setdefault(morph.upper(), "dictionary")
 
     return support
 
@@ -304,6 +337,9 @@ def _build_evidence_ngrams(
     morphs.update(cluster.ngram for cluster in evidence.direct_clusters)
     morphs.update(residual.residual for residual in evidence.residual_semantics)
     morphs.update(hypothesis.morph for hypothesis in evidence.morph_hypotheses)
+    morphs.update(attested.source_word for attested in evidence.attested_definitions)
+    morphs.update(attested.root_ngram for attested in evidence.attested_definitions)
+    morphs.update(evidence.dictionary_morphs.keys())
 
     if not morphs:
         return {}
@@ -429,6 +465,21 @@ def _compile_support_stats(evidence: WordEvidence) -> Dict[str, MorphSupportStat
         if entry.hypothesis_max is None or delta > entry.hypothesis_max:
             entry.hypothesis_max = float(delta)
 
+    # Attested definitions
+    for attested in evidence.attested_definitions:
+        entry = ensure(attested.source_word)
+        entry.has_attested = True
+        entry.uses += 1
+        root_entry = ensure(attested.root_ngram)
+        root_entry.has_attested = True
+        root_entry.uses += 1
+
+    # Dictionary matches
+    for morph in evidence.dictionary_morphs:
+        entry = ensure(morph)
+        entry.has_dictionary = True
+        entry.uses += 1
+
     return stats
 
 
@@ -455,6 +506,10 @@ def apply_hard_filters(
             "stage2_dropped": 0,
             "stage3_dropped": 0,
             "unsupported_morphs": [],
+            "dictionary_supported_morphs": [],
+            "attested_supported_morphs": [],
+            "dictionary_supported_count": 0,
+            "attested_supported_count": 0,
             "min_residual_ratio": None,
             "max_attestation_score": None,
             "min_support_threshold": min_support_threshold,
@@ -467,12 +522,18 @@ def apply_hard_filters(
         "stage2_dropped": 0,
         "stage3_dropped": 0,
         "unsupported_morphs": [],
+        "dictionary_supported_morphs": [],
+        "attested_supported_morphs": [],
+        "dictionary_supported_count": 0,
+        "attested_supported_count": 0,
         "min_residual_ratio": None,
         "max_attestation_score": None,
         "min_support_threshold": min_support_threshold,
         "filter_traces": [],
     }
     unsupported_counts: Dict[str, int] = {}
+    dictionary_support_counts: Dict[str, int] = {}
+    attested_support_counts: Dict[str, int] = {}
 
     def has_support(morph: str) -> bool:
         stats = support_stats.get(morph.upper())
@@ -480,9 +541,29 @@ def apply_hard_filters(
             return False
         if stats.has_cluster or stats.has_residual:
             return True
+        if stats.has_attested or stats.has_dictionary:
+            return True
         if stats.hypothesis_max is None:
             return False
         return stats.hypothesis_max >= min_support_threshold
+
+    def is_dictionary_supported_only(morph: str) -> bool:
+        stats = support_stats.get(morph.upper())
+        if stats is None:
+            return False
+        has_primary = stats.has_cluster or stats.has_residual
+        if stats.hypothesis_max is not None:
+            has_primary = has_primary or stats.hypothesis_max >= min_support_threshold
+        return not has_primary and stats.has_dictionary
+
+    def is_attested_supported_only(morph: str) -> bool:
+        stats = support_stats.get(morph.upper())
+        if stats is None:
+            return False
+        has_primary = stats.has_cluster or stats.has_residual
+        if stats.hypothesis_max is not None:
+            has_primary = has_primary or stats.hypothesis_max >= min_support_threshold
+        return not has_primary and stats.has_attested
 
     # ------------------------------------------------------------------
     # Filter 1: every morph must have support.
@@ -509,6 +590,15 @@ def apply_hard_filters(
                 missing,
             )
             continue
+        for morph in decomp.morphs:
+            if is_dictionary_supported_only(morph):
+                dictionary_support_counts[morph] = (
+                    dictionary_support_counts.get(morph, 0) + 1
+                )
+            if is_attested_supported_only(morph):
+                attested_support_counts[morph] = (
+                    attested_support_counts.get(morph, 0) + 1
+                )
         supported.append(decomp)
 
     diagnostics["filter_traces"] = filter_traces
@@ -522,6 +612,30 @@ def apply_hard_filters(
             {"morph": morph, "count": count}
             for morph, count in ranked[:top_n]
         ]
+
+    if dictionary_support_counts:
+        ranked = sorted(
+            dictionary_support_counts.items(), key=lambda item: (-item[1], item[0])
+        )
+        diagnostics["dictionary_supported_morphs"] = [
+            {"morph": morph, "count": count}
+            for morph, count in ranked
+        ]
+        diagnostics["dictionary_supported_count"] = sum(
+            dictionary_support_counts.values()
+        )
+
+    if attested_support_counts:
+        ranked = sorted(
+            attested_support_counts.items(), key=lambda item: (-item[1], item[0])
+        )
+        diagnostics["attested_supported_morphs"] = [
+            {"morph": morph, "count": count}
+            for morph, count in ranked
+        ]
+        diagnostics["attested_supported_count"] = sum(
+            attested_support_counts.values()
+        )
 
     if not supported:
         return [], diagnostics

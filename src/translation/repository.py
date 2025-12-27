@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, SupportsFloat, SupportsInt, TypedDict
+from typing import Dict, Iterable, List, Mapping, Optional, SupportsFloat, SupportsInt, TypedDict
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
@@ -39,6 +39,13 @@ class AttestedDefinition:
     definition: Optional[str]
     cluster_id: int
     root_ngram: str
+
+
+@dataclass
+class DictionaryMorph:
+    morph: str
+    definition: Optional[str]
+    senses: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -114,6 +121,7 @@ class WordEvidence:
     morph_hypotheses: List[MorphHypothesisRecord] = field(default_factory=list)
     fasttext_neighbors: List[FasttextNeighbor] = field(default_factory=list)
     attested_definitions: List[AttestedDefinition] = field(default_factory=list)
+    dictionary_morphs: Dict[str, DictionaryMorph] = field(default_factory=dict)
 
 
 @dataclass
@@ -391,6 +399,9 @@ class InsightsRepository:
         variants: Optional[Iterable[str]] = None,
         *,
         fasttext_top_k: int = 5,
+        dictionary_entries: Optional[Mapping[str, Dict[str, object]]] = None,
+        min_n: Optional[int] = None,
+        max_n: Optional[int] = None,
     ) -> WordEvidence:
         normalized = word.upper()
         active_variants = list(variants) if variants else self.variants
@@ -404,6 +415,12 @@ class InsightsRepository:
         attested_definitions = self._fetch_attested_definitions(
             normalized, variants=active_variants
         )
+        dictionary_morphs = _dictionary_morphs_for_word(
+            normalized,
+            dictionary_entries,
+            min_n=min_n,
+            max_n=max_n,
+        )
 
         fasttext_neighbors: List[FasttextNeighbor] = []
         if not (
@@ -411,6 +428,7 @@ class InsightsRepository:
             or residual_semantics
             or morph_hypotheses
             or attested_definitions
+            or dictionary_morphs
         ):
             fasttext_neighbors = self._fasttext_neighbors(
                 normalized, top_k=fasttext_top_k
@@ -424,6 +442,7 @@ class InsightsRepository:
             morph_hypotheses=morph_hypotheses,
             fasttext_neighbors=fasttext_neighbors,
             attested_definitions=attested_definitions,
+            dictionary_morphs=dictionary_morphs,
         )
 
     def fetch_morph_support(
@@ -649,6 +668,79 @@ def _safe_int(value: SupportsInt | str | bytes | bytearray | None, default: int 
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _dictionary_morphs_for_word(
+    word: str,
+    dictionary_entries: Optional[Mapping[str, Dict[str, object]]],
+    *,
+    min_n: Optional[int] = None,
+    max_n: Optional[int] = None,
+) -> Dict[str, DictionaryMorph]:
+    if not word or not dictionary_entries:
+        return {}
+
+    word_upper = word.upper()
+    word_len = len(word_upper)
+    if word_len == 0:
+        return {}
+
+    min_len = max(1, int(min_n) if min_n is not None else 1)
+    max_len = (
+        max(min_len, int(max_n)) if max_n is not None else word_len
+    )
+    max_len = min(max_len, word_len)
+
+    morphs: Dict[str, DictionaryMorph] = {}
+    for start in range(word_len):
+        for end in range(start + min_len, min(word_len, start + max_len) + 1):
+            slice_text = word_upper[start:end]
+            entry = dictionary_entries.get(slice_text.lower())
+            if not entry:
+                continue
+            if slice_text in morphs:
+                continue
+            definition = _dictionary_entry_definition(entry)
+            senses = _dictionary_entry_senses(entry)
+            morphs[slice_text] = DictionaryMorph(
+                morph=slice_text,
+                definition=definition,
+                senses=senses,
+            )
+    return morphs
+
+
+def _dictionary_entry_definition(entry: Mapping[str, object]) -> Optional[str]:
+    enhanced = entry.get("enhanced_definition")
+    if isinstance(enhanced, str) and enhanced.strip():
+        return enhanced.strip()
+    senses = entry.get("senses")
+    if isinstance(senses, list):
+        for sense in senses:
+            if not isinstance(sense, Mapping):
+                continue
+            definition = sense.get("definition")
+            if isinstance(definition, str) and definition.strip():
+                return definition.strip()
+    definition = entry.get("definition")
+    if isinstance(definition, str) and definition.strip():
+        return definition.strip()
+    return None
+
+
+def _dictionary_entry_senses(entry: Mapping[str, object]) -> List[str]:
+    senses = entry.get("senses")
+    if not isinstance(senses, list):
+        return []
+    definitions: List[str] = []
+    for sense in senses:
+        if not isinstance(sense, Mapping):
+            continue
+        definition = sense.get("definition")
+        if isinstance(definition, str) and definition.strip():
+            definitions.append(definition.strip())
+    return definitions
+
 
 def _safe_json_array(payload: object) -> List[str]:
     if isinstance(payload, (list, tuple)):
