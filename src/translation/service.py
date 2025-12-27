@@ -359,6 +359,7 @@ class SingleWordTranslationService:
         strategy: str = "prefer-balance",
         top_k: int = 3,
         llm: Optional[bool] = None,
+        fallback_top_n: int = 5,
     ) -> Dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
 
@@ -378,7 +379,11 @@ class SingleWordTranslationService:
             self.repository.require_variants(active_variants)
 
         evidence = self.repository.fetch_word_evidence(
-            normalized, variants=active_variants
+            normalized,
+            variants=active_variants,
+            dictionary_entries=self.candidate_finder.dictionary,
+            min_n=self.candidate_finder.min_n,
+            max_n=self.candidate_finder.max_n,
         )
 
         substring_support: List[str] = []
@@ -412,7 +417,8 @@ class SingleWordTranslationService:
                     )
 
         decompositions, diagnostics = self._decomposition_engine.generate_decompositions(
-            normalized, evidence
+            normalized,
+            evidence,
         )
         if decompositions:
             morphs = {morph for decomp in decompositions for morph in decomp.morphs}
@@ -431,6 +437,64 @@ class SingleWordTranslationService:
                     support_hypotheses,
                 )
         filtered, filter_diagnostics = apply_hard_filters(decompositions, evidence)
+        fallback_decompositions: List[Decomposition] = []
+        fallback_used = False
+        fallback_mode: str | None = None
+        fallback_min_coverage: float | None = None
+
+        if not filtered:
+            fallback_decompositions, fallback_diag = (
+                self._decomposition_engine.generate_decompositions(
+                    normalized,
+                    evidence,
+                    force_dictionary=True,
+                )
+            )
+            diagnostics["dictionary_fallback"] = fallback_diag
+            if fallback_decompositions:
+                fallback_used = True
+                fallback_mode = "dictionary"
+                fallback_morphs = {
+                    morph for decomp in fallback_decompositions for morph in decomp.morphs
+                }
+                if fallback_morphs:
+                    (
+                        support_clusters,
+                        support_residuals,
+                        support_hypotheses,
+                    ) = self.repository.fetch_morph_support(
+                        fallback_morphs, variants=active_variants
+                    )
+                    self._merge_support_evidence(
+                        evidence,
+                        support_clusters,
+                        support_residuals,
+                        support_hypotheses,
+                    )
+                filtered, filter_diagnostics = apply_hard_filters(
+                    fallback_decompositions, evidence
+                )
+
+        if not filtered:
+            relaxed_source = (
+                fallback_decompositions if fallback_decompositions else decompositions
+            )
+            relaxed, relaxed_min_coverage = _relaxed_fallback(
+                relaxed_source,
+                top_n=fallback_top_n,
+            )
+            if relaxed:
+                fallback_used = True
+                if fallback_mode is None:
+                    fallback_mode = "relaxed"
+                else:
+                    fallback_mode = f"{fallback_mode}+relaxed"
+                fallback_min_coverage = relaxed_min_coverage
+                filtered = relaxed
+                filter_diagnostics["relaxed_fallback"] = {
+                    "top_n": fallback_top_n,
+                    "min_coverage_ratio": relaxed_min_coverage,
+                }
 
         ranked: List[tuple[Decomposition, float]] = []
         for decomp in filtered:
@@ -487,6 +551,10 @@ class SingleWordTranslationService:
                     "generated": len(decompositions),
                     "filtered": len(filtered),
                     "selected": len(selected),
+                    "fallback_generated": len(fallback_decompositions),
+                    "fallback_used": fallback_used,
+                    "fallback_mode": fallback_mode,
+                    "fallback_min_coverage_ratio": fallback_min_coverage,
                 },
             },
         }
@@ -721,6 +789,7 @@ class SingleWordTranslationService:
             "residual_semantics": len(evidence.residual_semantics),
             "morph_hypotheses": len(evidence.morph_hypotheses),
             "attested_definitions": len(evidence.attested_definitions),
+            "dictionary_morphs": len(evidence.dictionary_morphs),
             "fasttext_neighbors": [asdict(neighbor) for neighbor in evidence.fasttext_neighbors],
         }
 
@@ -844,3 +913,28 @@ def _safe_ratio(breakdown: object, key: str) -> float:
         return float(value)
     except (TypeError, ValueError):
         return defaults.get(key, 0.0)
+
+
+def _relaxed_fallback(
+    decompositions: Sequence[Decomposition],
+    *,
+    top_n: int,
+) -> tuple[List[Decomposition], float | None]:
+    if not decompositions:
+        return [], None
+
+    try:
+        limit = int(top_n)
+    except (TypeError, ValueError):
+        limit = 0
+    if limit <= 0:
+        limit = len(decompositions)
+
+    scored: List[tuple[Decomposition, float]] = [
+        (decomp, _safe_ratio(decomp.breakdown, "coverage_ratio"))
+        for decomp in decompositions
+    ]
+    max_coverage = max(score for _, score in scored)
+    coverage_filtered = [decomp for decomp, score in scored if score >= max_coverage]
+    coverage_filtered.sort(key=lambda decomp: float(decomp.beam_score), reverse=True)
+    return coverage_filtered[:limit], max_coverage

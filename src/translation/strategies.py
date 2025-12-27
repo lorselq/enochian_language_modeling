@@ -84,6 +84,13 @@ def _compile_support_counts(evidence: WordEvidence) -> Dict[str, int]:
     for hypothesis in evidence.morph_hypotheses:
         bump(hypothesis.morph)
 
+    for attested in evidence.attested_definitions:
+        bump(attested.source_word)
+        bump(attested.root_ngram)
+
+    for morph in evidence.dictionary_morphs:
+        bump(morph)
+
     return counts
 
 
@@ -206,6 +213,21 @@ def _meaning_from_evidence(
         definition = _first_non_empty(hypothesis.proposed_gloss, seed_glosses, hypothesis.anchor)
         if definition is not None:
             return definition, "hypothesis"
+
+    # 4) attested definitions
+    for attested in evidence.attested_definitions:
+        if attested.source_word.upper() != morph:
+            continue
+        definition = _first_non_empty(attested.definition)
+        if definition is not None:
+            return definition, "attested"
+
+    # 5) dictionary entries
+    entry = evidence.dictionary_morphs.get(morph)
+    if entry is not None:
+        definition = _first_non_empty(entry.definition, ", ".join(entry.senses))
+        if definition is not None:
+            return definition, "dictionary"
 
     return None, "unknown"
 
