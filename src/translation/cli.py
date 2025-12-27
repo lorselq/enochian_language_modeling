@@ -131,6 +131,16 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         help="Number of candidate definitions to return (default: 3).",
     )
     parser.add_argument(
+        "--fallback-top-n",
+        type=int,
+        default=5,
+        help=(
+            "When hard filters remove all candidates, keep the top-N "
+            "fallback decompositions that meet the minimum coverage ratio "
+            "(default: 5)."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Include diagnostic details such as FastText metadata and reasoning.",
@@ -294,6 +304,11 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
             _emit_error(str(exc))
             return 2
     top_k = max(1, int(args.top_k)) if args.top_k is not None else 3
+    fallback_top_n = (
+        max(1, int(args.fallback_top_n))
+        if args.fallback_top_n is not None
+        else 5
+    )
 
     try:
         with SingleWordTranslationService.from_config(
@@ -309,6 +324,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     strategy=args.strategy,
                     top_k=top_k,
                     llm=llm_enabled,
+                    fallback_top_n=fallback_top_n,
                 )
                 outputs.append(
                     _build_output_payload(result, variant=variant, verbose=args.verbose)
@@ -545,6 +561,7 @@ def _no_direct_evidence(evidence: dict[str, object]) -> bool:
         "residual_semantics",
         "morph_hypotheses",
         "attested_definitions",
+        "dictionary_morphs",
     )
     return not any(evidence.get(key, 0) for key in keys)
 
@@ -621,10 +638,11 @@ def _format_variant_report(
         residuals = evidence.get("residual_semantics", 0)
         hypotheses = evidence.get("morph_hypotheses", 0)
         attestations = evidence.get("attested_definitions", 0)
+        dictionary_morphs = evidence.get("dictionary_morphs", 0)
         lines.append(
             "Evidence: "
             f"clusters={clusters}, residuals={residuals}, hypotheses={hypotheses}, "
-            f"attested={attestations}"
+            f"attested={attestations}, dictionary={dictionary_morphs}"
         )
 
     senses = payload.get("senses")
@@ -915,6 +933,38 @@ def _format_variant_report(
                         lines.append(
                             _wrap_text(
                                 f"Unsupported morphs (top): {sample}",
+                                indent=2,
+                            )
+                        )
+                dictionary_supported = hard_filters.get("dictionary_supported_morphs")
+                if isinstance(dictionary_supported, list) and dictionary_supported:
+                    sample = ", ".join(
+                        f"{item.get('morph')} ({item.get('count')})"
+                        for item in dictionary_supported
+                        if isinstance(item, dict)
+                        and item.get("morph") is not None
+                        and item.get("count") is not None
+                    )
+                    if sample:
+                        lines.append(
+                            _wrap_text(
+                                f"Dictionary-supported morphs: {sample}",
+                                indent=2,
+                            )
+                        )
+                attested_supported = hard_filters.get("attested_supported_morphs")
+                if isinstance(attested_supported, list) and attested_supported:
+                    sample = ", ".join(
+                        f"{item.get('morph')} ({item.get('count')})"
+                        for item in attested_supported
+                        if isinstance(item, dict)
+                        and item.get("morph") is not None
+                        and item.get("count") is not None
+                    )
+                    if sample:
+                        lines.append(
+                            _wrap_text(
+                                f"Attested-supported morphs: {sample}",
                                 indent=2,
                             )
                         )
