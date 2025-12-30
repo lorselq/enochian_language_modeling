@@ -2,7 +2,8 @@
   "artifact": {
     "kind": "square",
     "name": "Leaf 6b",
-    "title": "pvrcha ges maxgem adroth vaxox ahó ['purchá ges'm'á xgem adrôth vá xox ahô']",
+    "title": "purchá ges'm'á xgem adrôth vá xox ahô",
+    "normalized_title": "purcha ges maxgem adroth vaxox aho",
     "meta": {
       "width": 49,
       "height": 49,

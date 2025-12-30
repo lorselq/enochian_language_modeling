@@ -3,6 +3,7 @@
     "kind": "square",
     "name": "Leaf 4a",
     "title": "Zvbla ox arnogan Algers aclo",
+    "normalized_title": "zubla ox arnogan algers aclo",
     "meta": {
       "width": 49,
       "height": 49,
@@ -13,7 +14,12 @@
       "lacuna_token": "[LACUNA]",
       "intentionally_empty": "[NULL]",
       "orientation_marker": "^[degrees-clockwise]",
-      "contains": ["diacritics", "periods", "commas", "uncertainty_marker"],
+      "contains": [
+        "diacritics",
+        "periods",
+        "commas",
+        "uncertainty_marker"
+      ],
       "notes": "first uncertainty instance"
     }
   },

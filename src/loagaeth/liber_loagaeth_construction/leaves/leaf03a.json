@@ -3,6 +3,7 @@
     "kind": "square",
     "name": "Leaf 3a",
     "title": "pandobna ox adroh azimcholdrux",
+    "normalized_title": "pandobna ox adroh azimcholdrux",
     "meta": {
       "width": 49,
       "height": 49,
@@ -13,8 +14,13 @@
       "lacuna_token": "[LACUNA]",
       "intentionally_empty": "[NULL]",
       "orientation_marker": "^[degrees-clockwise]",
-      "contains": ["diacritics", "periods", "commas", "capitals"],
-      "notes": "unlike 2a and 2b, periods do not occur at the end of rows"
+      "contains": [
+        "diacritics",
+        "periods",
+        "commas",
+        "capitals"
+      ],
+      "notes": ""
     }
   },
   "grid_lines": [

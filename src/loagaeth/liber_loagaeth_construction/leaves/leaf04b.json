@@ -3,6 +3,7 @@
     "kind": "square",
     "name": "Leaf 4b",
     "title": "Danfal gest Axamph acrosta",
+    "normalized_title": "danfal gest axamph acrosta",
     "meta": {
       "width": 49,
       "height": 49,
@@ -13,8 +14,13 @@
       "lacuna_token": "[LACUNA]",
       "intentionally_empty": "[NULL]",
       "orientation_marker": "^[degrees-clockwise]",
-      "contains": ["diacritics", "periods", "commas", "uncertainty_marker"],
-      "notes": ""
+      "contains": [
+        "diacritics",
+        "periods",
+        "commas",
+        "uncertainty_marker"
+      ],
+      "notes": "Interesting similarity between 'acrosta' and 'acrostic', which is a poetic form where either side of a poem is read downwards to form words or phrases."
     }
   },
   "grid_lines": [

@@ -2,7 +2,8 @@
   "artifact": {
     "kind": "square",
     "name": "Leaf ",
-    "title": "algebadreth ['á lgé ba~dré th']",
+    "title": "á lgé ba~dré th",
+    "normalized_title": "algebadreth",
     "meta": {
       "width": 49,
       "height": 49,

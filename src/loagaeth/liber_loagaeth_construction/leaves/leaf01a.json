@@ -2,8 +2,9 @@
   "artifact": {
     "kind": "prose",
     "name": "Leaf 1a",
-    "title": "zv-resch od adaph",
-    "meta": {
+    "title": "zu-resch od adaph",
+    "normalized_title": "zu-resch od adaph",
+     "meta": {
       "blocks": "49",
       "ms_id": "Sloane 3189",
       "ragged": false,
