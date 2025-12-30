@@ -2,8 +2,8 @@
   "artifact": {
     "kind": "square",
     "name": "Leaf ",
-    "title": "",
-    "normalized_title": "",
+    "title": "bãcãp l áffos",
+    "normalized_title": "bacap laffos",
     "meta": {
       "width": 49,
       "height": 49,
@@ -20,7 +20,7 @@
         "commas",
         "uncertainty_marker"
       ],
-      "notes": ""
+      "notes": "The title on Joseph Peterson's site has (sic) mwritten next to the title"
     }
   },
   "grid_lines": [

@@ -1438,7 +1438,7 @@
     "normalized": "af",
     "canon_word": true,
     "definition": "(the Enochian word for the digits 19)",
-    "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+    "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
     "key_citations": [
       {
         "location": "5.17",
@@ -1449,7 +1449,7 @@
       {
         "sense_id": 1,
         "definition": "(the Enochian word for the digits 19)",
-        "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
         "key_citations": [
           {
             "location": "5.17",
@@ -4741,7 +4741,7 @@
     "normalized": "balit",
     "canon_word": true,
     "definition": "the just",
-    "commentary": "commentary:I have BAL marked as a prefix right now, but this may need to be revised to BALT as a rootword pending further investigation",
+    "commentary": "I have BAL marked as a prefix right now, but this may need to be revised to BALT as a rootword pending further investigation",
     "key_citations": [
       {
         "location": "16.10",
@@ -4752,7 +4752,7 @@
       {
         "sense_id": 1,
         "definition": "the just",
-        "commentary": "commentary:I have BAL marked as a prefix right now, but this may need to be revised to BALT as a rootword pending further investigation",
+        "commentary": "I have BAL marked as a prefix right now, but this may need to be revised to BALT as a rootword pending further investigation",
         "key_citations": [
           {
             "location": "16.10",
@@ -22803,7 +22803,7 @@
     "normalized": "mapm",
     "canon_word": true,
     "definition": "(the Enochian word for the digits 9639)",
-    "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+    "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
     "key_citations": [
       {
         "location": "4.15",
@@ -22814,7 +22814,7 @@
       {
         "sense_id": 1,
         "definition": "(the Enochian word for the digits 9639)",
-        "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
         "key_citations": [
           {
             "location": "4.15",
@@ -23359,7 +23359,7 @@
       {
         "sense_id": 2,
         "definition": "(the Enochian word for the digits 3663)",
-        "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
         "key_citations": [
           {
             "location": "4.15",
@@ -24744,12 +24744,12 @@
     "normalized": "naz",
     "canon_word": true,
     "definition": "(something shaped like a rectangular prism)",
-    "commentary": "commentary:",
+    "commentary": "",
     "senses": [
       {
         "sense_id": 1,
         "definition": "(something shaped like a rectangular prism)",
-        "commentary": "commentary:",
+        "commentary": "",
         "parts_of_speech": [
           "PHRASE",
           "NOUN"

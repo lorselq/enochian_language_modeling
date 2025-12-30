@@ -1460,7 +1460,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--db",
         default=(
             "src/enochian_lm/root_extraction/interpretation/"
-            "revised_solo_analysis_derived_definitions.sqlite3"
+            "solo_analysis_derived_definitions.sqlite3"
         ),
         help="Database path",
     )
