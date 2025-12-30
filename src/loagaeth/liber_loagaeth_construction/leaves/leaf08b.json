@@ -2,7 +2,8 @@
   "artifact": {
     "kind": "square",
     "name": "Leaf ",
-    "title": "Oylzongs ['ôylzõngs']",
+    "title": "ôylzõngs",
+    "normalized_title": "oylzongs",
     "meta": {
       "width": 49,
       "height": 49,

@@ -3,6 +3,7 @@
     "kind": "square",
     "name": "Leaf 2b",
     "title": "zvrebth aho dan lanfal cramza",
+    "normalized_title": "zurebth aho dan lanfal cramza",
     "meta": {
       "width": 49,
       "height": 49,
@@ -13,8 +14,13 @@
       "lacuna_token": "[LACUNA]",
       "intentionally_empty": "[NULL]",
       "orientation_marker": "^[degrees-clockwise]",
-      "contains": ["diacritics", "periods", "commas", "capitals"],
-      "notes": "periods occur at end of rows sometimes"
+      "contains": [
+        "diacritics",
+        "periods",
+        "commas",
+        "capitals"
+      ],
+      "notes": "periods occur at end of letters sometimes"
     }
   },
   "grid_lines": [

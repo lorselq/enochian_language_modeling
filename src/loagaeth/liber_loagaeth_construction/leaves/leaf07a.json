@@ -2,7 +2,8 @@
   "artifact": {
     "kind": "square",
     "name": "Leaf 7a",
-    "title": "Dam lethgath onzar avoxalgeth ['dam lé thgath onzá r auoxá lgeth']",
+    "title": "dam lé thgath onzá r auoxá lgeth",
+    "normalized_title": "dam lethgath onzar avoxalgeth",
     "meta": {
       "width": 49,
       "height": 49,

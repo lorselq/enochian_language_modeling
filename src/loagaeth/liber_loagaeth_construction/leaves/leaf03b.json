@@ -3,6 +3,7 @@
     "kind": "square",
     "name": "Leaf 3b",
     "title": "dlod Alged zvrem",
+    "normalized_title": "dlod alged zurem",
     "meta": {
       "width": 49,
       "height": 49,
@@ -13,7 +14,12 @@
       "lacuna_token": "[LACUNA]",
       "intentionally_empty": "[NULL]",
       "orientation_marker": "^[degrees-clockwise]",
-      "contains": ["diacritics", "periods", "commas", "apostrophes"],
+      "contains": [
+        "diacritics",
+        "periods",
+        "commas",
+        "apostrophes"
+      ],
       "notes": "first instance of apostrophes"
     }
   },
