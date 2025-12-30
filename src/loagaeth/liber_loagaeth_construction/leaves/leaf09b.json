@@ -16,7 +16,8 @@
       "orientation_marker": "^[degrees-clockwise]",
       "contains": [
         "uncertainty_marker",
-        "sic_marker"
+        "sic_marker",
+        "double_letters"
       ],
       "notes": ""
     }
