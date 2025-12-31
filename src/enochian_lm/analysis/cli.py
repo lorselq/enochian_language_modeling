@@ -1456,12 +1456,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Enochian language modeling CLI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    default_db = str(get_config_paths()["solo"])
     parser.add_argument(
         "--db",
-        default=(
-            "src/enochian_lm/root_extraction/interpretation/"
-            "solo_analysis_derived_definitions.sqlite3"
-        ),
+        default=default_db,
         help="Database path",
     )
     parser.add_argument("--seed", type=int, default=93, help="Global seed")
@@ -1838,14 +1836,15 @@ def main(argv: list[str] | None = None) -> int:
 
     db_path = Path(args.db).expanduser().resolve()
     args.db_path = db_path
-    init_insights_db.init_db(str(db_path))
+    if args.command != "translate-word":
+        init_insights_db.init_db(str(db_path))
 
-    conn = connect_sqlite(str(db_path))
-    try:
-        ensure_analysis_tables(conn)
-        conn.commit()
-    finally:
-        conn.close()
+        conn = connect_sqlite(str(db_path))
+        try:
+            ensure_analysis_tables(conn)
+            conn.commit()
+        finally:
+            conn.close()
 
     try:
         args.handler(args)
