@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+from enum import Enum
 import numbers
 from pathlib import Path
 from types import TracebackType
@@ -24,7 +25,7 @@ from .repository import (
     WordEvidence,
     FasttextNeighbor,
 )
-from .scoring import ScoringWeights, score_decomposition
+from .scoring import ScoringWeights, score_decomposition, score_decomposition_unweighted
 from .strategies import apply_strategy, select_top_k
 from .tokenization import expand_sentence_ngrams, tokenize_words
 
@@ -272,6 +273,11 @@ class InterpretationService:
 class SingleWordTranslationService:
     """Single-word translation pipeline with optional LLM synthesis (Tasks 4.1/4.2)."""
 
+    class EvidenceMode(str, Enum):
+        ALL = "all"
+        CLUSTERS_ONLY = "clusters-only"
+        RESIDUALS_ONLY = "residuals-only"
+
     def __init__(
         self,
         *,
@@ -360,6 +366,8 @@ class SingleWordTranslationService:
         top_k: int = 3,
         llm: Optional[bool] = None,
         fallback_top_n: int = 5,
+        evidence_mode: EvidenceMode = EvidenceMode.ALL,
+        weight_enabled: bool = True,
     ) -> Dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
 
@@ -385,36 +393,31 @@ class SingleWordTranslationService:
             min_n=self.candidate_finder.min_n,
             max_n=self.candidate_finder.max_n,
         )
-
         substring_support: List[str] = []
-        if not (
-            evidence.direct_clusters
-            or evidence.residual_semantics
-            or evidence.morph_hypotheses
-        ):
-            substrings = self._substring_candidates(normalized)
-            if substrings:
-                (
+        substrings = self._substring_candidates(normalized)
+        if substrings:
+            (
+                support_clusters,
+                support_residuals,
+                support_hypotheses,
+            ) = self.repository.fetch_morph_support(
+                substrings, variants=active_variants
+            )
+            if support_clusters or support_residuals or support_hypotheses:
+                substring_support = sorted(
+                    {
+                        item.ngram.upper() for item in support_clusters
+                    }
+                    | {item.residual.upper() for item in support_residuals}
+                    | {item.morph.upper() for item in support_hypotheses}
+                )
+                self._merge_support_evidence(
+                    evidence,
                     support_clusters,
                     support_residuals,
                     support_hypotheses,
-                ) = self.repository.fetch_morph_support(
-                    substrings, variants=active_variants
                 )
-                if support_clusters or support_residuals or support_hypotheses:
-                    substring_support = sorted(
-                        {
-                            item.ngram.upper() for item in support_clusters
-                        }
-                        | {item.residual.upper() for item in support_residuals}
-                        | {item.morph.upper() for item in support_hypotheses}
-                    )
-                    self._merge_support_evidence(
-                        evidence,
-                        support_clusters,
-                        support_residuals,
-                        support_hypotheses,
-                    )
+        self._apply_evidence_mode(evidence, mode=evidence_mode)
 
         decompositions, diagnostics = self._decomposition_engine.generate_decompositions(
             normalized,
@@ -436,6 +439,7 @@ class SingleWordTranslationService:
                     support_residuals,
                     support_hypotheses,
                 )
+                self._apply_evidence_mode(evidence, mode=evidence_mode)
         filtered, filter_diagnostics = apply_hard_filters(decompositions, evidence)
         fallback_decompositions: List[Decomposition] = []
         fallback_used = False
@@ -471,6 +475,7 @@ class SingleWordTranslationService:
                         support_residuals,
                         support_hypotheses,
                     )
+                    self._apply_evidence_mode(evidence, mode=evidence_mode)
                 filtered, filter_diagnostics = apply_hard_filters(
                     fallback_decompositions, evidence
                 )
@@ -498,9 +503,12 @@ class SingleWordTranslationService:
 
         ranked: List[tuple[Decomposition, float]] = []
         for decomp in filtered:
-            score = score_decomposition(
-                decomp, evidence, weights=self.scoring_weights
-            )
+            if weight_enabled:
+                score = score_decomposition(
+                    decomp, evidence, weights=self.scoring_weights
+                )
+            else:
+                score = score_decomposition_unweighted(decomp, evidence)
             ranked.append((decomp, score))
 
         reranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
@@ -526,6 +534,8 @@ class SingleWordTranslationService:
             "word": normalized,
             "variants_queried": evidence.variants_queried,
             "strategy": strategy,
+            "evidence_mode": evidence_mode.value,
+            "weighting_enabled": weight_enabled,
             "llm_enabled": llm_enabled,
             "llm_mode": (
                 "remote"
@@ -546,6 +556,10 @@ class SingleWordTranslationService:
                 "word_lookup": self.repository.word_lookup_diagnostics(
                     normalized, variants=active_variants
                 ),
+                "scoring_weights": (
+                    asdict(self.scoring_weights.normalized()) if weight_enabled else None
+                ),
+                "weighting_enabled": weight_enabled,
                 "hard_filters": filter_diagnostics,
                 "decomposition": {
                     "generated": len(decompositions),
@@ -780,6 +794,29 @@ class SingleWordTranslationService:
 
         if clusters or residuals or hypotheses:
             evidence.fasttext_neighbors = []
+
+    @staticmethod
+    def _apply_evidence_mode(
+        evidence: WordEvidence,
+        *,
+        mode: "SingleWordTranslationService.EvidenceMode",
+    ) -> None:
+        if mode == SingleWordTranslationService.EvidenceMode.ALL:
+            return
+        if mode == SingleWordTranslationService.EvidenceMode.CLUSTERS_ONLY:
+            evidence.residual_semantics = []
+            evidence.morph_hypotheses = []
+            evidence.attested_definitions = []
+            evidence.dictionary_morphs = {}
+            evidence.fasttext_neighbors = []
+            return
+        if mode == SingleWordTranslationService.EvidenceMode.RESIDUALS_ONLY:
+            evidence.direct_clusters = []
+            evidence.morph_hypotheses = []
+            evidence.attested_definitions = []
+            evidence.dictionary_morphs = {}
+            evidence.fasttext_neighbors = []
+            return
 
     @staticmethod
     def _summarize_evidence(evidence: WordEvidence) -> dict[str, object]:
