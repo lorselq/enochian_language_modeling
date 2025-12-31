@@ -146,6 +146,7 @@ def _decomp(
     upper = [m.upper() for m in morphs]
     return Decomposition(
         morphs=upper,
+        canonicals=upper,
         beam_score=beam_score,
         breakdown={
             "segments": [],
@@ -168,7 +169,7 @@ class TestApplyStrategy:
     - Implement apply_strategy(decompositions, strategy, evidence)
     - prefer-fewer: bonus = -0.5 * len(morphs)
     - prefer-known: bonus = 0.3 * (count of morphs with uses > 5)
-    - prefer-balance: bonus = -0.2 * variance(lengths)
+    - prefer-balance: bonus = 0.5 * chunkiness - 0.2 * variance(lengths)
     - return list sorted by final score (descending)
     """
 
@@ -219,15 +220,15 @@ class TestApplyStrategy:
         assert ranked[0][0].morphs == ["KNOWN"]
         assert ranked[0][1] > ranked[1][1]
 
-    def test_prefer_balance_penalizes_high_variance(self):
+    def test_prefer_balance_rewards_chunkier_segments(self):
         evidence = WordEvidence(word="TESTWORD", variants_queried=["solo"])
 
-        balanced = _decomp(["NAZ", "PSAD"], beam_score=2.0)   # lengths 3 and 4
-        lopsided = _decomp(["NAZPSAD", "D"], beam_score=2.0)  # lengths 7 and 1
+        chunky = _decomp(["NAZP", "SAD"], beam_score=2.0)   # lengths 4 and 3
+        confetti = _decomp(["N", "A", "Z", "P", "S", "A", "D"], beam_score=2.0)
 
-        ranked = apply_strategy([(balanced, 2.0), (lopsided, 2.0)], "prefer-balance", evidence)
+        ranked = apply_strategy([(chunky, 2.0), (confetti, 2.0)], "prefer-balance", evidence)
 
-        assert ranked[0][0].morphs == ["NAZ", "PSAD"]
+        assert ranked[0][0].morphs == ["NAZP", "SAD"]
         assert ranked[0][1] > ranked[1][1]
 
     def test_unknown_strategy_falls_back_to_base_score_sort(self):
@@ -268,6 +269,21 @@ class TestSelectTopK:
         assert ranked[0]["morphs"] == ["HIGH"]
         assert ranked[1]["morphs"] == ["MID"]
         assert ranked[2]["morphs"] == ["LOW"]
+
+    def test_dedupes_identical_morph_sequences(self):
+        evidence = WordEvidence(word="TEST", variants_queried=["solo"])
+
+        base = _decomp(["NAZ", "PSAD"], beam_score=2.0)
+        dup = _decomp(["NAZ", "PSAD"], beam_score=1.0)
+        other = _decomp(["NAZP", "SAD"], beam_score=1.5)
+
+        ranked = select_top_k(
+            [(dup, 1.0), (base, 2.0), (other, 1.5)],
+            k=3,
+            evidence=evidence,
+        )
+
+        assert [item["morphs"] for item in ranked] == [["NAZ", "PSAD"], ["NAZP", "SAD"]]
 
     def test_close_scores_emit_warning_for_top_two(self):
         evidence = WordEvidence(word="WARN", variants_queried=["solo"])
