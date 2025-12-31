@@ -85,6 +85,27 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         default="prefer-balance",
         help="Reranking strategy to apply (default: prefer-balance).",
     )
+    parser.add_argument(
+        "--evidence-mode",
+        choices=["all", "clusters-only", "residuals-only"],
+        default="all",
+        help=(
+            "Evidence sources to use when scoring/filtering decompositions "
+            "(default: all)."
+        ),
+    )
+    parser.add_argument(
+        "--weight",
+        type=_parse_bool,
+        default=True,
+        help="Enable weighted scoring (default: true).",
+    )
+    parser.add_argument(
+        "--no-weight",
+        dest="weight",
+        action="store_false",
+        help="Disable weighted scoring.",
+    )
 
     llm_group = parser.add_mutually_exclusive_group()
     llm_group.add_argument(
@@ -325,6 +346,8 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     top_k=top_k,
                     llm=llm_enabled,
                     fallback_top_n=fallback_top_n,
+                    evidence_mode=_resolve_evidence_mode(args.evidence_mode),
+                    weight_enabled=bool(args.weight),
                 )
                 outputs.append(
                     _build_output_payload(result, variant=variant, verbose=args.verbose)
@@ -371,6 +394,24 @@ def _normalize_word(word: str) -> str:
     if not normalized.isalpha():
         raise ValueError("Word must contain only alphabetic characters (A-Z).")
     return normalized
+
+
+def _resolve_evidence_mode(
+    raw_mode: str,
+) -> SingleWordTranslationService.EvidenceMode:
+    try:
+        return SingleWordTranslationService.EvidenceMode(raw_mode)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported evidence mode: {raw_mode}") from exc
+
+
+def _parse_bool(value: str) -> bool:
+    raw = value.strip().lower()
+    if raw in {"1", "true", "yes", "y", "on"}:
+        return True
+    if raw in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError("Expected a boolean value (true/false).")
 
 
 def _configure_llm_env(llm_mode: str) -> None:
@@ -471,6 +512,8 @@ def _build_output_payload(
         "variant": variant,
         "variants_queried": result.get("variants_queried", []),
         "strategy": result.get("strategy"),
+        "evidence_mode": result.get("evidence_mode"),
+        "weighting_enabled": result.get("weighting_enabled"),
         "timestamp": result.get("timestamp"),
         "llm_enabled": result.get("llm_enabled"),
         "llm_mode": result.get("llm_mode"),
@@ -620,11 +663,17 @@ def _format_variant_report(
     strategy = payload.get("strategy", "")
     llm_enabled = payload.get("llm_enabled", False)
     llm_mode = payload.get("llm_mode")
+    evidence_mode = payload.get("evidence_mode")
+    weighting_enabled = payload.get("weighting_enabled")
     llm_mode_label = llm_mode if llm_mode else "n/a"
 
     lines.append(f"Word: {word}")
     lines.append(f"Variant: {variant}")
     lines.append(f"Strategy: {strategy}")
+    if isinstance(evidence_mode, str) and evidence_mode:
+        lines.append(f"Evidence mode: {evidence_mode}")
+    if isinstance(weighting_enabled, bool):
+        lines.append(f"Weighted scoring: {weighting_enabled}")
     lines.append(f"LLM enabled: {llm_enabled}")
     lines.append(f"LLM mode: {llm_mode_label}")
 
