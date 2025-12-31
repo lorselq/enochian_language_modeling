@@ -3,6 +3,7 @@ from __future__ import annotations
 """Soft scoring utilities for decomposition candidates (task 2.3)."""
 
 from dataclasses import dataclass
+import math
 from typing import Any, Dict, Iterable, List
 
 from .decomposition import Decomposition
@@ -146,11 +147,16 @@ def _average_cluster_quality(
     """Compute average cluster quality across morphs using cohesion / coverage.
 
     For each morph, the best available cluster quality is used. If no cluster
-    exists for a morph, its contribution is 0.0.
+    exists for a morph, its contribution is 0.0. The average is weighted by
+    morph length to avoid overvaluing many tiny morphs.
     """
 
     morph_list = [m.upper() for m in morphs]
     if not morph_list:
+        return 0.0
+
+    total_len = sum(len(morph) for morph in morph_list)
+    if total_len <= 0:
         return 0.0
 
     morph_set = set(morph_list)
@@ -178,9 +184,9 @@ def _average_cluster_quality(
 
     total_quality = 0.0
     for morph in morph_list:
-        total_quality += best_scores.get(morph, 0.0)
+        total_quality += len(morph) * best_scores.get(morph, 0.0)
 
-    return total_quality / float(len(morph_list))
+    return total_quality / float(total_len)
 
 
 def _acceptance_bonus(
@@ -191,14 +197,8 @@ def _acceptance_bonus(
 ) -> float:
     """Calculate acceptance bonus for a set of morphs.
 
-    Current implementation counts *all* evidence aligned to the morphs:
-
-        bonus = 1.0 * clusters
-              + 0.5 * residuals
-              + 0.3 * hypotheses
-
-    You can later refine this to only count "accepted" evidence once that
-    signal is explicit in the schema.
+    Evidence is compressed, length-weighted, and normalized to reduce the
+    incentive to split a supported morph into many sub-morphs.
     """
 
     cluster_counts: Dict[str, int] = {}
@@ -216,11 +216,23 @@ def _acceptance_bonus(
         key = hypothesis.morph.upper()
         hypothesis_counts[key] = hypothesis_counts.get(key, 0) + 1
 
-    bonus = 0.0
-    for morph in morphs:
-        key = morph.upper()
-        bonus += cluster_counts.get(key, 0)
-        bonus += 0.5 * residual_counts.get(key, 0)
-        bonus += 0.3 * hypothesis_counts.get(key, 0)
+    morph_list = [m.upper() for m in morphs]
+    total_len = sum(len(morph) for morph in morph_list)
+    if total_len <= 0:
+        return 0.0
 
-    return bonus
+    bonus = 0.0
+    for morph in morph_list:
+        key = morph.upper()
+        raw = (
+            cluster_counts.get(key, 0)
+            + 0.5 * residual_counts.get(key, 0)
+            + 0.3 * hypothesis_counts.get(key, 0)
+        )
+        if raw <= 0:
+            continue
+        compressed = math.log1p(raw)
+        bonus += len(morph) * compressed
+
+    normalized = bonus / float(total_len)
+    return min(1.5, normalized)
