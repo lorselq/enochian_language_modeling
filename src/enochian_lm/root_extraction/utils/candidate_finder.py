@@ -15,6 +15,7 @@ DEFAULT_MIN_CANDIDATE_COS_SIM = 0.15
 DEFAULT_MIN_OVERLAP_RATIO = 0.1
 DEFAULT_MAX_CANDIDATES = 15
 DEFAULT_MULTI_SEGMENT_BONUS = 0.25
+DEFAULT_LENGTH_BONUS = 0.1
 
 # --- Logging setup ---
 logging.basicConfig(
@@ -50,6 +51,7 @@ class MorphemeCandidateFinder:
         min_overlap_ratio: float = DEFAULT_MIN_OVERLAP_RATIO,
         max_candidates: int = DEFAULT_MAX_CANDIDATES,
         multi_segment_bonus: float = DEFAULT_MULTI_SEGMENT_BONUS,
+        length_bonus: float = DEFAULT_LENGTH_BONUS,
     ):
         # Connect to ngram SQLite index
         self.conn = sqlite3.connect(str(ngram_db_path))
@@ -79,6 +81,7 @@ class MorphemeCandidateFinder:
         self.min_overlap_ratio = min_overlap_ratio
         self.max_candidates = max_candidates
         self.multi_segment_bonus = multi_segment_bonus
+        self.length_bonus = length_bonus
 
         # Load the ngram → [(canonical, tf, df), ...] map
         self._load_ngram_index()
@@ -195,6 +198,8 @@ class MorphemeCandidateFinder:
                     for canon, tf, df in entries:
                         idf = math.log(self.total_docs / (df + 1))
                         tfidf = tf * idf
+                        length_multiplier = 1.0 + self.length_bonus * max(0, n - 1)
+                        tfidf *= length_multiplier
                         new_path = path + [canon]
                         new_score = score + tfidf
                         new_scores = {**ngram_scores, ng: tfidf}
