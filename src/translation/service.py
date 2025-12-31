@@ -13,6 +13,7 @@ import numpy as np
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
+from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 
 from .decomposition import Decomposition, DecompositionEngine, apply_hard_filters
 from .llm_synthesis import SynthesisResult, synthesize_definition
@@ -458,16 +459,16 @@ class SingleWordTranslationService:
             if fallback_decompositions:
                 fallback_used = True
                 fallback_mode = "dictionary"
-                fallback_morphs = {
+                decomp_morphs = {
                     morph for decomp in fallback_decompositions for morph in decomp.morphs
                 }
-                if fallback_morphs:
+                if decomp_morphs:
                     (
                         support_clusters,
                         support_residuals,
                         support_hypotheses,
                     ) = self.repository.fetch_morph_support(
-                        fallback_morphs, variants=active_variants
+                        decomp_morphs, variants=active_variants
                     )
                     self._merge_support_evidence(
                         evidence,
@@ -917,7 +918,7 @@ def _extract_low_confidence_segments(breakdown: Dict[str, object]) -> List[str]:
     return low_conf
 
 
-def _first_sense_definition(entry: dict[str, object]) -> Optional[str]:
+def _first_sense_definition(entry: EntryRecord) -> Optional[str]:
     senses = entry.get("senses")
     if not isinstance(senses, list) or not senses:
         return None

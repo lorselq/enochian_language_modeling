@@ -832,10 +832,10 @@ def _format_variant_report(
                             continue
                         path = info.get("path")
                         exists = info.get("exists")
-                        details = f"{variant_key}: {path}"
+                        path_info = f"{variant_key}: {path}"
                         if isinstance(exists, bool):
-                            details += f" (exists={exists})"
-                        lines.append(_wrap_text(details, indent=4))
+                            path_info += f" (exists={exists})"
+                        lines.append(_wrap_text(path_info, indent=4))
             word_lookup = diagnostics.get("word_lookup")
             if isinstance(word_lookup, dict):
                 lookup_word = word_lookup.get("word")

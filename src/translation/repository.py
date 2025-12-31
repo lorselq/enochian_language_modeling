@@ -7,6 +7,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, SupportsFloat, Suppo
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
+from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 
 
 @dataclass
@@ -399,7 +400,7 @@ class InsightsRepository:
         variants: Optional[Iterable[str]] = None,
         *,
         fasttext_top_k: int = 5,
-        dictionary_entries: Optional[Mapping[str, Dict[str, object]]] = None,
+        dictionary_entries: Optional[Mapping[str, EntryRecord]] = None,
         min_n: Optional[int] = None,
         max_n: Optional[int] = None,
     ) -> WordEvidence:
@@ -672,7 +673,7 @@ def _safe_int(value: SupportsInt | str | bytes | bytearray | None, default: int 
 
 def _dictionary_morphs_for_word(
     word: str,
-    dictionary_entries: Optional[Mapping[str, Dict[str, object]]],
+    dictionary_entries: Optional[Mapping[str, EntryRecord]],
     *,
     min_n: Optional[int] = None,
     max_n: Optional[int] = None,

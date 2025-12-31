@@ -70,8 +70,8 @@ class Decomposition:
     morphs: List[str]
     canonicals: List[str]
     beam_score: float
+    breakdown: Dict[str, object] = field(default_factory=dict)
     beam_score_normalized: Optional[float] = None
-    breakdown: Dict[str, object]
     morph_support: Dict[str, str] = field(default_factory=dict)
 
 
@@ -628,7 +628,7 @@ def apply_hard_filters(
         }
         filter_traces.append(trace)
         if missing:
-            diagnostics["stage1_dropped"] = diagnostics["stage1_dropped"] + 1
+            diagnostics["stage1_dropped"] = cast(int, diagnostics["stage1_dropped"]) + 1
             for morph in missing:
                 unsupported_counts[morph] = unsupported_counts.get(morph, 0) + 1
             LOGGER.debug(
@@ -696,7 +696,7 @@ def apply_hard_filters(
     for decomp in supported:
         ratio = _residual_ratio(decomp)
         if ratio > 0.5 and min_residual <= 0.5:
-            diagnostics["stage2_dropped"] = diagnostics["stage2_dropped"] + 1
+            diagnostics["stage2_dropped"] = cast(int, diagnostics["stage2_dropped"]) + 1
             LOGGER.debug(
                 "Discarding %s due to high residual_ratio %.3f (best=%.3f)",
                 decomp.morphs,
@@ -733,7 +733,7 @@ def apply_hard_filters(
     for decomp in coverage_filtered:
         score = attestation_scores[tuple(decomp.morphs)]
         if score == 0:
-            diagnostics["stage3_dropped"] = diagnostics["stage3_dropped"] + 1
+            diagnostics["stage3_dropped"] = cast(int, diagnostics["stage3_dropped"]) + 1
             LOGGER.debug(
                 "Discarding %s due to singleton-only morph usage (best score=%d)",
                 decomp.morphs,
