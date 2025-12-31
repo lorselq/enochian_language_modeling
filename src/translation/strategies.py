@@ -132,10 +132,12 @@ def select_top_k(
         if tie_warning and idx <= 2:
             warnings.append(tie_warning)
 
+        canonicals = list(decomp.canonicals) if decomp.canonicals else []
         results.append(
             {
                 "rank": idx,
                 "morphs": list(decomp.morphs),
+                "canonicals": canonicals,
                 "score": score,
                 "breakdown": decomp.breakdown,
                 "meanings": _extract_meanings(decomp=decomp, evidence=evidence),
@@ -156,9 +158,18 @@ def _extract_meanings(
     }
 
     meanings: List[dict[str, object]] = []
-    for morph in decomp.morphs:
+    for idx, morph in enumerate(decomp.morphs):
         key = (morph or "").upper()
-        definition, provenance = _meaning_from_evidence(morph=key, evidence=evidence)
+        canonical = (
+            decomp.canonicals[idx].upper()
+            if idx < len(decomp.canonicals)
+            else None
+        )
+        definition, provenance = _meaning_from_evidence(
+            morph=key,
+            evidence=evidence,
+            canonical=canonical,
+        )
 
         if provenance == "unknown":
             provenance = support_lookup.get(key, "unknown")
@@ -166,6 +177,7 @@ def _extract_meanings(
         meanings.append(
             {
                 "morph": key,
+                "canonical": canonical,
                 "definition": definition,
                 "provenance": provenance,
             }
@@ -178,6 +190,7 @@ def _meaning_from_evidence(
     *,
     morph: str,
     evidence: WordEvidence | None,
+    canonical: str | None,
 ) -> tuple[str | None, str]:
     if evidence is None:
         return None, "unknown"
@@ -228,6 +241,15 @@ def _meaning_from_evidence(
         definition = _first_non_empty(entry.definition, ", ".join(entry.senses))
         if definition is not None:
             return definition, "dictionary"
+
+    if canonical and canonical != morph:
+        canonical_def, canonical_prov = _meaning_from_evidence(
+            morph=canonical,
+            evidence=evidence,
+            canonical=None,
+        )
+        if canonical_def is not None:
+            return canonical_def, f"canonical_{canonical_prov}"
 
     return None, "unknown"
 

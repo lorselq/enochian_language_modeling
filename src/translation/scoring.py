@@ -68,7 +68,12 @@ def score_decomposition(
 
     active = (weights or ScoringWeights()).normalized()
 
-    beam_prior = _safe_number(decomp.beam_score, default=0.0)
+    beam_raw = (
+        decomp.beam_score_normalized
+        if decomp.beam_score_normalized is not None
+        else decomp.beam_score
+    )
+    beam_prior = _safe_number(beam_raw, default=0.0)
     avg_cluster_quality = _average_cluster_quality(
         decomp.morphs,
         evidence.direct_clusters,
@@ -90,6 +95,40 @@ def score_decomposition(
         + active.residual_coverage * residual_coverage
         + active.acceptance_bonus * acceptance
     )
+
+
+def score_decomposition_unweighted(
+    decomp: Decomposition,
+    evidence: WordEvidence,
+) -> float:
+    """Return an unweighted composite score for ``decomp``.
+
+    This sums the raw component scores without applying the normalized
+    ScoringWeights multipliers.
+    """
+
+    beam_raw = (
+        decomp.beam_score_normalized
+        if decomp.beam_score_normalized is not None
+        else decomp.beam_score
+    )
+    beam_prior = _safe_number(beam_raw, default=0.0)
+    avg_cluster_quality = _average_cluster_quality(
+        decomp.morphs,
+        evidence.direct_clusters,
+    )
+
+    residual_ratio = _safe_number(decomp.breakdown.get("residual_ratio"), default=1.0)
+    residual_coverage = max(0.0, min(1.0, 1.0 - residual_ratio))
+
+    acceptance = _acceptance_bonus(
+        decomp.morphs,
+        evidence.direct_clusters,
+        evidence.residual_semantics,
+        evidence.morph_hypotheses,
+    )
+
+    return beam_prior + avg_cluster_quality + residual_coverage + acceptance
 
 
 def _safe_number(value: Any, default: float = 0.0) -> float:

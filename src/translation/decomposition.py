@@ -43,8 +43,14 @@ class Decomposition:
     morphs:
         Ordered list of morph strings representing the segmentation path.
         All morphs are normalized to uppercase.
+    canonicals:
+        Ordered list of canonical dictionary entries corresponding to each morph
+        slice. These are auxiliary and may be shorter/longer than ``morphs``
+        when coverage data is incomplete.
     beam_score:
         Aggregate TF–IDF / beam-search score returned by ``segment_target``.
+    beam_score_normalized:
+        Beam score normalized to [0, 1] within the current candidate set.
     breakdown:
         Coverage metadata describing how much of the surface form is explained.
         At minimum this includes:
@@ -62,7 +68,9 @@ class Decomposition:
     """
 
     morphs: List[str]
+    canonicals: List[str]
     beam_score: float
+    beam_score_normalized: Optional[float] = None
     breakdown: Dict[str, object]
     morph_support: Dict[str, str] = field(default_factory=dict)
 
@@ -175,12 +183,12 @@ class DecompositionEngine:
         support_lookup = _build_support_lookup(evidence)
 
         for path, score, _ngram_scores, coverage in parses:
-            # Normalize morphs so that lookups and downstream comparisons are
-            # case-insensitive and consistent with the evidence index.
-            morphs = [str(m).upper() for m in path]
-
+            segments = cast(list[CoverageSegment], coverage)
+            morphs, canonicals = _segment_tokens(
+                normalized, segments, path
+            )
             breakdown = _build_breakdown(
-                self.candidate_finder, normalized, cast(list[CoverageSegment], coverage)
+                self.candidate_finder, normalized, segments
             )
 
             morph_support = {
@@ -190,12 +198,14 @@ class DecompositionEngine:
             decompositions.append(
                 Decomposition(
                     morphs=morphs,
+                    canonicals=canonicals,
                     beam_score=float(score),
                     breakdown=breakdown,
                     morph_support=morph_support,
                 )
             )
 
+        _normalize_beam_scores(decompositions)
         diagnostics["decomposition_count"] = len(decompositions)
         return decompositions, diagnostics
 
@@ -278,6 +288,43 @@ def _build_breakdown(
         "coverage_ratio": coverage_ratio,
         "residual_ratio": 1.0 - coverage_ratio,
     }
+
+
+def _segment_tokens(
+    word: str,
+    coverage: List[CoverageSegment],
+    canonicals: Iterable[str],
+) -> tuple[List[str], List[str]]:
+    """Return morph slices (ngrams) and canonicals for a segmentation."""
+    ngrams: List[str] = []
+    canon_list: List[str] = [str(c).upper() for c in canonicals]
+
+    if coverage:
+        for segment in coverage:
+            ngram = segment.get("ngram")
+            if isinstance(ngram, str) and ngram:
+                ngrams.append(ngram.upper())
+
+    if not ngrams:
+        ngrams = [str(word).upper()] if word else []
+
+    return ngrams, canon_list
+
+
+def _normalize_beam_scores(decompositions: List[Decomposition]) -> None:
+    if not decompositions:
+        return
+    scores = [float(decomp.beam_score) for decomp in decompositions]
+    min_score = min(scores)
+    max_score = max(scores)
+    if max_score == min_score:
+        normalized = 1.0
+        for decomp in decompositions:
+            decomp.beam_score_normalized = normalized
+        return
+    span = max_score - min_score
+    for decomp in decompositions:
+        decomp.beam_score_normalized = (float(decomp.beam_score) - min_score) / span
 
 
 def _build_support_lookup(evidence: WordEvidence) -> Dict[str, str]:
