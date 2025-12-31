@@ -936,8 +936,10 @@ class TestScoreDecomposition:
         beam_score: float,
         residual_ratio: float,
     ) -> Decomposition:
+        upper = [m.upper() for m in morphs]
         return Decomposition(
-            morphs=[m.upper() for m in morphs],
+            morphs=upper,
+            canonicals=upper,
             beam_score=beam_score,
             breakdown={
                 "segments": [],
@@ -945,7 +947,7 @@ class TestScoreDecomposition:
                 "coverage_ratio": 1.0 - residual_ratio,
                 "residual_ratio": residual_ratio,
             },
-            morph_support={m.upper(): "cluster" for m in morphs},
+            morph_support={m.upper(): "cluster" for m in upper},
         )
 
     def test_high_quality_scores_outperform_low_quality(self):
@@ -955,7 +957,7 @@ class TestScoreDecomposition:
         - beam_prior (0.3 weight): beam_score from TF-IDF
         - avg_cluster_quality (0.25 weight): average of cohesion and semantic_coverage
         - residual_coverage (0.25 weight): 1 - residual_ratio
-        - acceptance_bonus (0.2 weight): count of evidence sources
+        - acceptance_bonus (0.2 weight): compressed, length-weighted acceptance
         """
         evidence = WordEvidence(
             word="NAZPSAD",
@@ -972,8 +974,10 @@ class TestScoreDecomposition:
         strong_score = score_decomposition(strong, evidence)
         weak_score = score_decomposition(weak, evidence)
 
-        # Expected: beam_prior(0.3*5.0) + avg_quality(0.25*0.8) + coverage(0.25*1.0) + bonus(0.2*2)
-        expected = 0.3 * 5.0 + 0.25 * 0.8 + 0.25 * 1.0 + 0.2 * 2
+        # Expected: beam_prior(0.3*5.0) + avg_quality(0.25*0.8) + coverage(0.25*1.0)
+        # + acceptance_bonus(0.2*log1p(1.0))
+        acceptance = math.log1p(1.0)
+        expected = 0.3 * 5.0 + 0.25 * 0.8 + 0.25 * 1.0 + 0.2 * acceptance
         assert math.isclose(strong_score, expected, rel_tol=1e-6)
         assert weak_score < strong_score
 
@@ -1006,10 +1010,8 @@ class TestScoreDecomposition:
     def test_acceptance_bonus_counts_all_sources(self):
         """Acceptance bonus should count all evidence types with appropriate weights.
 
-        The acceptance bonus uses weights:
-        - 1.0 for clusters
-        - 0.5 for residual semantics
-        - 0.3 for morph hypotheses
+        The acceptance bonus compresses the sum of evidence weights and applies
+        length-weighted normalization.
         """
         evidence = WordEvidence(
             word="OMEGA",
@@ -1026,8 +1028,26 @@ class TestScoreDecomposition:
         # beam_prior: 0.3 * 0.0 = 0.0
         # avg_cluster_quality: 0.25 * 0.45 = 0.1125 (avg of 0.4 cohesion and 0.5 coverage)
         # residual_coverage: 0.25 * 1.0 = 0.25
-        # acceptance_bonus: 0.2 * (1.0 + 0.5 + 0.3) = 0.36
-        expected = 0.0 + 0.1125 + 0.25 + 0.36
+        # acceptance_bonus: 0.2 * log1p(1.0 + 0.5 + 0.3)
+        acceptance = math.log1p(1.0 + 0.5 + 0.3)
+        expected = 0.0 + 0.1125 + 0.25 + 0.2 * acceptance
+        assert math.isclose(score, expected, rel_tol=1e-6)
+
+    def test_avg_cluster_quality_is_length_weighted(self):
+        evidence = WordEvidence(
+            word="TEST",
+            variants_queried=["solo"],
+            direct_clusters=[
+                self._cluster("A", cohesion=1.0, coverage=1.0),
+            ],
+        )
+
+        decomp = self._decomp(["A", "LONG"], beam_score=0.0, residual_ratio=0.0)
+        score = score_decomposition(decomp, evidence)
+
+        avg_quality = 0.2  # length-weighted: (1*1 + 4*0) / 5
+        acceptance = math.log1p(1.0) / 5.0  # only "A" is supported, weighted average
+        expected = 0.3 * 0.0 + 0.25 * avg_quality + 0.25 * 1.0 + 0.2 * acceptance
         assert math.isclose(score, expected, rel_tol=1e-6)
 
     def test_solo_database_scoring_handles_empty_tables(self, solo_repo: InsightsRepository):
@@ -1100,8 +1120,8 @@ class TestScoreDecomposition:
         score = score_decomposition(decomp, evidence)
 
         # Should use only cohesion (0.7) for cluster quality
-        # Score: 0.3*1.0 + 0.25*0.7 + 0.25*1.0 + 0.2*1.0
-        expected = 0.3 * 1.0 + 0.25 * 0.7 + 0.25 * 1.0 + 0.2 * 1.0
+        # Score: 0.3*1.0 + 0.25*0.7 + 0.25*1.0 + 0.2*log1p(1.0)
+        expected = 0.3 * 1.0 + 0.25 * 0.7 + 0.25 * 1.0 + 0.2 * math.log1p(1.0)
         assert math.isclose(score, expected, rel_tol=1e-6)
 
     def test_empty_decomposition_scores_zero(self):
@@ -1137,8 +1157,8 @@ class TestScoreDecomposition:
         score = score_decomposition(decomp, evidence)
 
         # Should use best quality (0.85) not average
-        # Score: 0.3*2.0 + 0.25*0.85 + 0.25*0.9 + 0.2*3.0
-        expected = 0.3 * 2.0 + 0.25 * 0.85 + 0.25 * 0.9 + 0.2 * 3.0
+        # Score: 0.3*2.0 + 0.25*0.85 + 0.25*0.9 + 0.2*log1p(3.0)
+        expected = 0.3 * 2.0 + 0.25 * 0.85 + 0.25 * 0.9 + 0.2 * math.log1p(3.0)
         assert math.isclose(score, expected, rel_tol=1e-6)
 
     def test_invalid_beam_score_defaults_to_zero(self):

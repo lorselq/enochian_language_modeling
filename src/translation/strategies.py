@@ -59,7 +59,12 @@ def _strategy_bonus(
         return 0.3 * attested
 
     if strategy == "prefer-balance":
-        return -0.2 * _length_variance(decomp.morphs)
+        lengths = [len(morph or "") for morph in decomp.morphs]
+        total_len = sum(lengths)
+        chunkiness = 0.0
+        if total_len > 0:
+            chunkiness = sum(length ** 2 for length in lengths) / float(total_len ** 2)
+        return 0.5 * chunkiness - 0.2 * _length_variance(decomp.morphs)
 
     return 0.0
 
@@ -120,14 +125,23 @@ def select_top_k(
         reverse=True,
     )
 
+    seen: set[tuple[str, ...]] = set()
+    deduped: List[Tuple[Decomposition, float]] = []
+    for decomp, score in ordered:
+        key = tuple(decomp.morphs)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((decomp, score))
+
     tie_warning: str | None = None
-    if len(ordered) >= 2:
-        delta = abs(ordered[0][1] - ordered[1][1])
+    if len(deduped) >= 2:
+        delta = abs(deduped[0][1] - deduped[1][1])
         if delta < 0.05:
             tie_warning = "alternate decomposition exists"
 
     results: List[dict[str, object]] = []
-    for idx, (decomp, score) in enumerate(ordered[:top_k], start=1):
+    for idx, (decomp, score) in enumerate(deduped[:top_k], start=1):
         warnings: List[str] = []
         if tie_warning and idx <= 2:
             warnings.append(tie_warning)

@@ -144,7 +144,7 @@ class MockDecompositionEngine:
         self._decomposition = decomposition
 
     def generate_decompositions(self, word: str, evidence: WordEvidence):
-        return [self._decomposition]
+        return [self._decomposition], {"decomposition_count": 1}
 
 
 class MockRepository:
@@ -156,7 +156,7 @@ class MockRepository:
     def require_variants(self, variants):
         pass
 
-    def fetch_word_evidence(self, word: str, variants=None) -> WordEvidence:
+    def fetch_word_evidence(self, word: str, variants=None, **_kwargs) -> WordEvidence:
         # Provide clusters and residuals so morphs pass hard filters
         naz_cluster = ClusterRecord(
             variant="solo",
@@ -213,12 +213,28 @@ class MockRepository:
             residual_semantics=[psad_residual],
         )
 
+    def fetch_morph_support(self, morphs, variants=None):
+        return [], [], []
+
     def close(self):
         pass
+
+    def fasttext_diagnostics(self):
+        return {}
+
+    def path_diagnostics(self):
+        return {}
+
+    def word_lookup_diagnostics(self, word: str, variants=None):
+        return {}
 
 
 class MockCandidateFinder:
     """Mock candidate finder."""
+
+    dictionary: list[dict[str, object]] = []
+    min_n = 1
+    max_n = 7
 
     def close(self):
         pass
@@ -235,6 +251,7 @@ class TestSingleWordTranslationServiceLLMToggle:
     def _make_service(self, llm_enabled: bool, llm_adapter=None):
         decomp = Decomposition(
             morphs=["NAZ", "PSAD"],
+            canonicals=["NAZ", "PSAD"],
             beam_score=2.0,
             breakdown={
                 "segments": [],
@@ -327,6 +344,236 @@ class TestSingleWordTranslationServiceLLMToggle:
         assert "Connection timeout" in top_candidate.get("warnings", [])
 
 
+class MockRankingRepository:
+    variants = ["solo"]
+
+    def require_variants(self, variants):
+        pass
+
+    def fetch_word_evidence(self, word: str, variants=None, **_kwargs) -> WordEvidence:
+        clusters = []
+        residuals = []
+        if word == "NAZPSAD":
+            clusters = [
+                ClusterRecord(
+                    variant="solo",
+                    cluster_id=1,
+                    run_id="r1",
+                    ngram="NAZ",
+                    cluster_index=0,
+                    glossator_def="rectangular prism",
+                    residual_explained=None,
+                    residual_ratio=None,
+                    residual_headline=None,
+                    residual_focus_prompt=None,
+                    semantic_coverage=0.9,
+                    cohesion=0.9,
+                    semantic_cohesion=None,
+                    best_config=None,
+                    residual_details=[],
+                    raw_definitions=[],
+                ),
+                ClusterRecord(
+                    variant="solo",
+                    cluster_id=2,
+                    run_id="r1",
+                    ngram="PSAD",
+                    cluster_index=0,
+                    glossator_def="sharp",
+                    residual_explained=None,
+                    residual_ratio=None,
+                    residual_headline=None,
+                    residual_focus_prompt=None,
+                    semantic_coverage=0.8,
+                    cohesion=0.8,
+                    semantic_cohesion=None,
+                    best_config=None,
+                    residual_details=[],
+                    raw_definitions=[],
+                ),
+            ]
+        if word == "DEBUHEKA":
+            clusters = [
+                ClusterRecord(
+                    variant="solo",
+                    cluster_id=3,
+                    run_id="r1",
+                    ngram="DEB",
+                    cluster_index=0,
+                    glossator_def="gate",
+                    residual_explained=None,
+                    residual_ratio=None,
+                    residual_headline=None,
+                    residual_focus_prompt=None,
+                    semantic_coverage=0.7,
+                    cohesion=0.7,
+                    semantic_cohesion=None,
+                    best_config=None,
+                    residual_details=[],
+                    raw_definitions=[],
+                )
+            ]
+
+        return WordEvidence(
+            word=word,
+            variants_queried=variants or ["solo"],
+            direct_clusters=clusters,
+            residual_semantics=residuals,
+        )
+
+    def fetch_morph_support(self, morphs, variants=None):
+        return [], [], []
+
+    def close(self):
+        pass
+
+    def fasttext_diagnostics(self):
+        return {}
+
+    def path_diagnostics(self):
+        return {}
+
+    def word_lookup_diagnostics(self, word: str, variants=None):
+        return {}
+
+
+class MockRankingDecompositionEngine:
+    def __init__(self, decompositions: dict[str, list[Decomposition]]):
+        self._decompositions = decompositions
+
+    def generate_decompositions(self, word: str, evidence: WordEvidence, **_kwargs):
+        decomps = self._decompositions.get(word, [])
+        return decomps, {"decomposition_count": len(decomps)}
+
+
+class TestSingleWordTranslationServiceRanking:
+    def test_translate_word_prefers_naz_in_top_three(self):
+        nazpsad_decomps = [
+            Decomposition(
+                morphs=["NAZ", "PSAD"],
+                canonicals=["NAZ", "PSAD"],
+                beam_score=1.0,
+                breakdown={
+                    "segments": [],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={"NAZ": "cluster", "PSAD": "cluster"},
+            ),
+            Decomposition(
+                morphs=["NAZ", "PS", "AD"],
+                canonicals=["NAZ", "PS", "AD"],
+                beam_score=1.0,
+                breakdown={
+                    "segments": [],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={"NAZ": "cluster", "PS": "unknown", "AD": "unknown"},
+            ),
+            Decomposition(
+                morphs=["NAZ", "P", "S", "AD"],
+                canonicals=["NAZ", "P", "S", "AD"],
+                beam_score=1.0,
+                breakdown={
+                    "segments": [],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={
+                    "NAZ": "cluster",
+                    "P": "unknown",
+                    "S": "unknown",
+                    "AD": "unknown",
+                },
+            ),
+            Decomposition(
+                morphs=["NA", "ZPS", "AD"],
+                canonicals=["NA", "ZPS", "AD"],
+                beam_score=1.0,
+                breakdown={
+                    "segments": [],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={"NA": "unknown", "ZPS": "unknown", "AD": "unknown"},
+            ),
+            Decomposition(
+                morphs=["N", "A", "Z", "P", "S", "A", "D"],
+                canonicals=["N", "A", "Z", "P", "S", "A", "D"],
+                beam_score=1.0,
+                breakdown={
+                    "segments": [],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={
+                    "N": "unknown",
+                    "A": "unknown",
+                    "Z": "unknown",
+                    "P": "unknown",
+                    "S": "unknown",
+                    "D": "unknown",
+                },
+            ),
+        ]
+        debuheka_decomps = [
+            Decomposition(
+                morphs=["DEB", "UHEKA"],
+                canonicals=["DEB", "UHEKA"],
+                beam_score=1.0,
+                breakdown={
+                    "segments": [],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={"DEB": "cluster", "UHEKA": "unknown"},
+            ),
+            Decomposition(
+                morphs=["D", "E", "B", "U", "H", "E", "K", "A"],
+                canonicals=["D", "E", "B", "U", "H", "E", "K", "A"],
+                beam_score=1.0,
+                breakdown={
+                    "segments": [],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={
+                    "D": "unknown",
+                    "E": "unknown",
+                    "B": "unknown",
+                    "U": "unknown",
+                    "H": "unknown",
+                    "K": "unknown",
+                    "A": "unknown",
+                },
+            ),
+        ]
+
+        service = SingleWordTranslationService(
+            candidate_finder=MockCandidateFinder(),
+            repository=MockRankingRepository(),
+            llm_enabled=False,
+        )
+        service._decomposition_engine = MockRankingDecompositionEngine(
+            {"NAZPSAD": nazpsad_decomps, "DEBUHEKA": debuheka_decomps}
+        )
+
+        naz_result = service.translate_word("NAZPSAD", strategy="prefer-balance", top_k=3)
+        naz_top = naz_result["candidates"][:3]
+        assert any("NAZ" in candidate["morphs"] for candidate in naz_top)
+
+        deb_result = service.translate_word("DEBUHEKA", strategy="prefer-balance", top_k=3)
+        deb_top = deb_result["candidates"][:3]
+        assert any("DEB" in candidate["morphs"] for candidate in deb_top)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-
