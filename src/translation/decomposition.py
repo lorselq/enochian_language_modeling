@@ -94,6 +94,8 @@ class DecompositionEngine:
         evidence: WordEvidence,
         *,
         force_dictionary: bool = False,
+        allow_whole_word: bool = True,
+        n_best: int | None = None,
     ) -> tuple[List[Decomposition], Dict[str, object]]:
         """Return all plausible decompositions for ``word`` plus diagnostics.
 
@@ -150,7 +152,9 @@ class DecompositionEngine:
             if dictionary_ngrams
             else extra_ngrams
         )
-        parses = self.candidate_finder.segment_target(normalized, extra_ngrams=merged)
+        parses = self.candidate_finder.segment_target(
+            normalized, extra_ngrams=merged, n_best=n_best
+        )
         diagnostics["parse_count"] = len(parses)
 
         if not parses and not force_dictionary:
@@ -164,7 +168,7 @@ class DecompositionEngine:
             if dictionary_ngrams:
                 merged = _merge_ngrams(extra_ngrams, dictionary_ngrams)
                 parses = self.candidate_finder.segment_target(
-                    normalized, extra_ngrams=merged
+                    normalized, extra_ngrams=merged, n_best=n_best
                 )
                 diagnostics["parse_count"] = len(parses)
                 if parses:
@@ -183,8 +187,15 @@ class DecompositionEngine:
 
         for path, score, _ngram_scores, coverage in parses:
             segments = cast(list[CoverageSegment], coverage)
-            morphs, canonicals = _segment_tokens(normalized, segments, path)
-            breakdown = _build_breakdown(self.candidate_finder, normalized, segments)
+            morphs, canonicals = _segment_tokens(
+                normalized, segments, path
+            )
+            if not allow_whole_word and len(normalized) > 1:
+                if len(morphs) == 1 and morphs[0] == normalized:
+                    continue
+            breakdown = _build_breakdown(
+                self.candidate_finder, normalized, segments
+            )
 
             morph_support = {
                 morph: _classify_support(morph, support_lookup) for morph in morphs
