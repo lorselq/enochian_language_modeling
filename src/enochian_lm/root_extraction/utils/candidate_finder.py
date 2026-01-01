@@ -3,7 +3,7 @@ import math
 import json
 import numpy as np
 import logging
-from typing import Sequence
+from typing import Sequence, TypedDict
 from pathlib import Path
 from functools import lru_cache
 from gensim.utils import simple_preprocess
@@ -15,13 +15,37 @@ DEFAULT_MIN_CANDIDATE_COS_SIM = 0.15
 DEFAULT_MIN_OVERLAP_RATIO = 0.1
 DEFAULT_MAX_CANDIDATES = 15
 DEFAULT_MULTI_SEGMENT_BONUS = 0.25
-DEFAULT_LENGTH_BONUS = 0.1
+DEFAULT_LENGTH_BONUS = 0.2
+DEFAULT_SEGMENT_PENALTY = 0.35
+DEFAULT_SINGLE_CHAR_PENALTY = 2.5
+DEFAULT_EDGE_BONUS = 0.6
+DEFAULT_ALLOWED_SINGLETONS = {"i", "l"}
 
 # --- Logging setup ---
 logging.basicConfig(
     format="%(asctime)s %(levelname)s:%(message)s", level=logging.WARNING
 )
 logger = logging.getLogger(__name__)
+
+
+class CoverageSegment(TypedDict):
+    start: int
+    end: int
+    ngram: str
+    canonical: str
+    tfidf: float
+    raw_tfidf: float
+    length_bonus: float
+    edge_bonus: float
+    segment_penalty: float
+    singleton_penalty: float
+
+
+class SegmentScore(TypedDict):
+    ngram: str
+    score: float
+    start: int
+    end: int
 
 
 class MorphemeCandidateFinder:
@@ -52,6 +76,11 @@ class MorphemeCandidateFinder:
         max_candidates: int = DEFAULT_MAX_CANDIDATES,
         multi_segment_bonus: float = DEFAULT_MULTI_SEGMENT_BONUS,
         length_bonus: float = DEFAULT_LENGTH_BONUS,
+        segment_penalty: float = DEFAULT_SEGMENT_PENALTY,
+        single_char_penalty: float = DEFAULT_SINGLE_CHAR_PENALTY,
+        edge_bonus: float = DEFAULT_EDGE_BONUS,
+        allowed_singletons: set[str] | None = None,
+        n_best: int | None = None,
     ):
         # Connect to ngram SQLite index
         self.conn = sqlite3.connect(str(ngram_db_path))
@@ -67,6 +96,7 @@ class MorphemeCandidateFinder:
             if entry.get("canonical")
         }
         self.known_words = set(self.dictionary.keys())
+        self.known_words_lower = {word.lower() for word in self.known_words}
         self.total_docs = len(self.known_words)
 
         # Scoring and thresholds
@@ -82,6 +112,15 @@ class MorphemeCandidateFinder:
         self.max_candidates = max_candidates
         self.multi_segment_bonus = multi_segment_bonus
         self.length_bonus = length_bonus
+        self.segment_penalty = segment_penalty
+        self.single_char_penalty = single_char_penalty
+        self.edge_bonus = edge_bonus
+        self.allowed_singletons = (
+            {token.lower() for token in allowed_singletons}
+            if allowed_singletons
+            else set(DEFAULT_ALLOWED_SINGLETONS)
+        )
+        self.n_best = n_best
 
         # Load the ngram → [(canonical, tf, df), ...] map
         self._load_ngram_index()
@@ -160,12 +199,19 @@ class MorphemeCandidateFinder:
         target: str,
         *,
         extra_ngrams: dict[str, list[tuple[str, int, int]]] | None = None,
+        min_n: int | None = None,
+        n_best: int | None = None,
     ) -> list[
-        tuple[list[str], float, dict[str, float], list[dict[str, float | int | str]]]
+        tuple[
+            list[str],
+            float,
+            list["SegmentScore"],
+            list["CoverageSegment"],
+        ]
     ]:
         """
         Beam-search segmentation over target string.
-        Returns list of (path, cumulative_tfidf, {ngram: tfidf}, coverage_segments).
+        Returns list of (path, cumulative_tfidf, ngram_scores, coverage_segments).
 
         Each coverage segment captures the positional slice that a canonical word
         explains inside ``target``. We retain positional metadata so downstream
@@ -176,12 +222,13 @@ class MorphemeCandidateFinder:
                 int,
                 list[str],
                 float,
-                dict[str, float],
-                list[dict[str, float | int | str]],
+                list["SegmentScore"],
+                list["CoverageSegment"],
             ]
-        ] = [(0, [], 0.0, {}, [])]
+        ] = [(0, [], 0.0, [], [])]
         tgt = target.lower()
         final = []
+        min_len = min_n if min_n is not None else self.min_n
 
         while beams:
             new_beams = []
@@ -190,25 +237,56 @@ class MorphemeCandidateFinder:
                     final.append((path, score, ngram_scores, coverage))
                     continue
                 # try next n-grams
-                for n in range(self.min_n, min(self.max_n, len(tgt) - pos) + 1):
+                for n in range(min_len, min(self.max_n, len(tgt) - pos) + 1):
                     ng = tgt[pos : pos + n]
                     entries = self.ngram_index.get(ng, [])
                     if extra_ngrams:
                         entries = entries + extra_ngrams.get(ng, [])
                     for canon, tf, df in entries:
-                        idf = math.log(self.total_docs / (df + 1))
-                        tfidf = tf * idf
-                        length_multiplier = 1.0 + self.length_bonus * max(0, n - 1)
-                        tfidf *= length_multiplier
+                        total_docs = max(1, self.total_docs)
+                        idf = math.log(total_docs / (df + 1))
+                        tf_weight = math.log1p(tf)
+                        raw_tfidf = tf_weight * idf
+                        length_bonus = self.length_bonus * max(0, n - 1)
+                        edge_bonus = 0.0
+                        if pos == 0:
+                            edge_bonus += self.edge_bonus
+                        if pos + n == len(tgt):
+                            edge_bonus += self.edge_bonus
+                        singleton_penalty = (
+                            0.0
+                            if n > 1 or ng in self.allowed_singletons
+                            else self.single_char_penalty
+                        )
+                        segment_penalty = self.segment_penalty
+                        tfidf = (
+                            raw_tfidf
+                            + length_bonus
+                            + edge_bonus
+                            - segment_penalty
+                            - singleton_penalty
+                        )
                         new_path = path + [canon]
                         new_score = score + tfidf
-                        new_scores = {**ngram_scores, ng: tfidf}
-                        new_segment = {
+                        new_scores: list[SegmentScore] = ngram_scores + [
+                            {
+                                "ngram": ng,
+                                "score": tfidf,
+                                "start": pos,
+                                "end": pos + n,
+                            }
+                        ]
+                        new_segment: CoverageSegment = {
                             "start": pos,
                             "end": pos + n,
                             "ngram": ng,
                             "canonical": canon,
                             "tfidf": tfidf,
+                            "raw_tfidf": raw_tfidf,
+                            "length_bonus": length_bonus,
+                            "edge_bonus": edge_bonus,
+                            "segment_penalty": segment_penalty,
+                            "singleton_penalty": singleton_penalty,
                         }
                         new_beams.append(
                             (
@@ -223,20 +301,30 @@ class MorphemeCandidateFinder:
             beams = sorted(new_beams, key=lambda b: b[2], reverse=True)[
                 : self.beam_width
             ]
-        return final
+        final_sorted = sorted(final, key=lambda item: item[1], reverse=True)
+        limit = n_best if n_best is not None else self.n_best
+        if limit is None or limit <= 0:
+            return final_sorted
+        return final_sorted[:limit]
 
     def score_parse(
         self,
         path: list[str],
-        ngram_scores: dict[str, float],
+        ngram_scores: list["SegmentScore"] | dict[str, float],
         target: str,
+        coverage: list["CoverageSegment"] | None = None,
     ) -> dict:
         """
         Compute composite score and return explanation.
         Composite = α·sum(tfidf) + β·cos_sim + γ·confidence
         """
         # 1. TFIDF component
-        tfidf_total = sum(ngram_scores.values())
+        if coverage:
+            tfidf_total = sum(float(seg.get("tfidf", 0.0)) for seg in coverage)
+        elif isinstance(ngram_scores, dict):
+            tfidf_total = sum(float(value) for value in ngram_scores.values())
+        else:
+            tfidf_total = sum(float(seg.get("score", 0.0)) for seg in ngram_scores)
 
         # 2. Semantic similarity
         tokens = simple_preprocess(target, deacc=True, min_len=1)
@@ -261,17 +349,24 @@ class MorphemeCandidateFinder:
         )
 
         # 3. Confidence weight
-        entry = self.dictionary.get(path[-1])
-        senses = entry.get("senses") if entry else None
-        if senses:
-            conf = max((s.get("confidence", 0.0) for s in senses), default=1.0)
-        elif entry:
-            conf = max(
-                (a.get("confidence", 1.0) for a in entry.get("alternates", [])),
-                default=1.0,
-            )
+        confs: list[float] = []
+        weights: list[float] = []
+        if coverage:
+            for seg in coverage:
+                canonical = str(seg.get("canonical", ""))
+                confs.append(self._segment_confidence(canonical))
+                start = int(seg.get("start", 0))
+                end = int(seg.get("end", start))
+                weights.append(max(1.0, float(max(0, end - start))))
         else:
-            conf = 1.0
+            for canon in path:
+                confs.append(self._segment_confidence(canon))
+                weights.append(1.0)
+        total_weight = sum(weights) if weights else 0.0
+        if confs and total_weight > 0:
+            conf = float(sum(c * w for c, w in zip(confs, weights)) / total_weight)
+        else:
+            conf = 0.0
 
         alpha, beta, gamma = self.weights
         composite = alpha * tfidf_total + beta * cos_sim + gamma * conf
@@ -308,7 +403,7 @@ class MorphemeCandidateFinder:
         return 0.0
 
     def _build_breakdown(
-        self, target: str, coverage: list[dict[str, float | int | str]]
+        self, target: str, coverage: list[CoverageSegment]
     ) -> dict:
         """Compute explained vs residual spans for a given segmentation path."""
 
@@ -333,6 +428,7 @@ class MorphemeCandidateFinder:
                 and canonical.lower() == target.lower()
                 and start <= 0
                 and end >= len(target)
+                and target.lower() not in self.known_words_lower
             ):
                 return {
                     "segments": [],
@@ -415,7 +511,7 @@ class MorphemeCandidateFinder:
         # 2) Score each path and force a normalized value
         scored = []
         for path, _, ngram_scores, coverage in parses:
-            c = self.score_parse(path, ngram_scores, target)
+            c = self.score_parse(path, ngram_scores, target, coverage=coverage)
             # Ensure every candidate has a 'normalized'
             if not c.get("normalized"):
                 # Take the last element of the segmentation path as the candidate token
@@ -532,7 +628,7 @@ class MorphemeCandidateFinder:
         parses = self.segment_target(target)
         scored: list[dict] = []
         for path, _, ngram_scores, coverage in parses:
-            composite = self.score_parse(path, ngram_scores, target)
+            composite = self.score_parse(path, ngram_scores, target, coverage=coverage)
             breakdown = self._build_breakdown(target, coverage)
             if not self._passes_overlap(target, breakdown):
                 continue
