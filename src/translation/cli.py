@@ -171,6 +171,22 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Include per-decomposition filter traces in verbose diagnostics.",
     )
+    parser.add_argument(
+        "--allow-whole-word",
+        dest="allow_whole_word",
+        action="store_true",
+        default=True,
+        help="Allow whole-word decompositions (default: true).",
+    )
+    parser.add_argument(
+        "--no-whole-word",
+        dest="allow_whole_word",
+        action="store_false",
+        help=(
+            "Disallow whole-word decompositions except for single-letter words "
+            "(e.g., A, I)."
+        ),
+    )
 
 
 def build_interpret_parser() -> argparse.ArgumentParser:
@@ -348,6 +364,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     fallback_top_n=fallback_top_n,
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
+                    allow_whole_word=bool(args.allow_whole_word),
                 )
                 outputs.append(
                     _build_output_payload(result, variant=variant, verbose=args.verbose)

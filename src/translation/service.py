@@ -6,7 +6,7 @@ from enum import Enum
 import numbers
 from pathlib import Path
 from types import TracebackType
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, TypeVar
 
 import numpy as np
 
@@ -29,6 +29,8 @@ from .repository import (
 from .scoring import ScoringWeights, score_decomposition, score_decomposition_unweighted
 from .strategies import apply_strategy, select_top_k
 from .tokenization import expand_sentence_ngrams, tokenize_words
+
+T = TypeVar("T")
 
 
 class InterpretationService:
@@ -71,7 +73,7 @@ class InterpretationService:
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=paths["model_output"],
             dictionary_entries=entries,
-            min_n=1,
+            min_n=2,
             max_n=max_ngram_len,
         )
         return cls(
@@ -117,6 +119,13 @@ class InterpretationService:
                 ngram_text, variants=active_variants
             )
             candidate_breakdowns = self.candidate_finder.find_candidates(ngram_text)
+            if (
+                self.candidate_finder.min_n > 1
+                and not _has_segment_coverage(candidate_breakdowns)
+            ):
+                candidate_breakdowns = self._with_min_n(
+                    1, self.candidate_finder.find_candidates, ngram_text
+                )
 
             candidate_lookup: Dict[str, Dict[str, object]] = {}
             unique_candidates: List[Dict[str, object]] = []
@@ -270,6 +279,20 @@ class InterpretationService:
 
         return payload
 
+    def _with_min_n(
+        self,
+        min_n: int,
+        func: Callable[..., T],
+        *args: object,
+        **kwargs: object,
+    ) -> T:
+        previous = self.candidate_finder.min_n
+        self.candidate_finder.min_n = min_n
+        try:
+            return func(*args, **kwargs)
+        finally:
+            self.candidate_finder.min_n = previous
+
 
 class SingleWordTranslationService:
     """Single-word translation pipeline with optional LLM synthesis (Tasks 4.1/4.2)."""
@@ -329,7 +352,7 @@ class SingleWordTranslationService:
             ngram_db_path=paths["ngram_index"],
             fasttext_model_path=paths["model_output"],
             dictionary_entries=entries,
-            min_n=1,
+            min_n=2,
             max_n=max_ngram_len,
         )
 
@@ -369,6 +392,7 @@ class SingleWordTranslationService:
         fallback_top_n: int = 5,
         evidence_mode: EvidenceMode = EvidenceMode.ALL,
         weight_enabled: bool = True,
+        allow_whole_word: bool = True,
     ) -> Dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
 
@@ -420,10 +444,28 @@ class SingleWordTranslationService:
                 )
         self._apply_evidence_mode(evidence, mode=evidence_mode)
 
+        n_best = max(top_k * 5, self.candidate_finder.beam_width)
         decompositions, diagnostics = self._decomposition_engine.generate_decompositions(
             normalized,
             evidence,
+            allow_whole_word=allow_whole_word,
+            n_best=n_best,
         )
+        if not decompositions and self.candidate_finder.min_n > 1:
+            fallback_decomps, fallback_diag = self._with_min_n(
+                1,
+                self._decomposition_engine.generate_decompositions,
+                normalized,
+                evidence,
+                allow_whole_word=allow_whole_word,
+                n_best=n_best,
+            )
+            diagnostics["min_n_fallback"] = {
+                "used": bool(fallback_decomps),
+                "min_n": 1,
+            }
+            if fallback_decomps:
+                decompositions = fallback_decomps
         if decompositions:
             morphs = {morph for decomp in decompositions for morph in decomp.morphs}
             if morphs:
@@ -453,6 +495,8 @@ class SingleWordTranslationService:
                     normalized,
                     evidence,
                     force_dictionary=True,
+                    allow_whole_word=allow_whole_word,
+                    n_best=n_best,
                 )
             )
             diagnostics["dictionary_fallback"] = fallback_diag
@@ -601,7 +645,7 @@ class SingleWordTranslationService:
 
             base["concatenated_meanings"] = self._concatenate_meanings(meanings)
 
-            if llm_enabled and idx == 0:
+            if llm_enabled:
                 morph_meanings = [
                     self._meaning_or_morph(entry) for entry in meanings if isinstance(entry, dict)
                 ]
@@ -641,8 +685,6 @@ class SingleWordTranslationService:
                 )
                 base["reasoning"] = (
                     "LLM disabled; using concatenated morph meanings."
-                    if llm_enabled is False
-                    else "LLM not applied to this rank."
                 )
 
             if warnings:
@@ -651,6 +693,20 @@ class SingleWordTranslationService:
             enriched.append(base)
 
         return enriched
+
+    def _with_min_n(
+        self,
+        min_n: int,
+        func: Callable[..., T],
+        *args: object,
+        **kwargs: object,
+    ) -> T:
+        previous = self.candidate_finder.min_n
+        self.candidate_finder.min_n = min_n
+        try:
+            return func(*args, **kwargs)
+        finally:
+            self.candidate_finder.min_n = previous
 
     def _fallback_morph_hints(self, word: str) -> List[dict[str, object]]:
         if not word:
@@ -951,6 +1007,17 @@ def _safe_ratio(breakdown: object, key: str) -> float:
         return float(value)
     except (TypeError, ValueError):
         return defaults.get(key, 0.0)
+
+
+def _has_segment_coverage(candidates: Sequence[Dict[str, object]]) -> bool:
+    for candidate in candidates:
+        breakdown = candidate.get("breakdown")
+        if not isinstance(breakdown, dict):
+            continue
+        segments = breakdown.get("segments")
+        if isinstance(segments, list) and segments:
+            return True
+    return False
 
 
 def _relaxed_fallback(
