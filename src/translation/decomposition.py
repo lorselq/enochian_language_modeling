@@ -17,6 +17,7 @@ LOGGER = logging.getLogger(__name__)
 
 class CoverageSegment(TypedDict):
     """Coverage segment from beam search segmentation."""
+
     start: int
     end: int
     ngram: str
@@ -149,9 +150,7 @@ class DecompositionEngine:
             if dictionary_ngrams
             else extra_ngrams
         )
-        parses = self.candidate_finder.segment_target(
-            normalized, extra_ngrams=merged
-        )
+        parses = self.candidate_finder.segment_target(normalized, extra_ngrams=merged)
         diagnostics["parse_count"] = len(parses)
 
         if not parses and not force_dictionary:
@@ -184,12 +183,8 @@ class DecompositionEngine:
 
         for path, score, _ngram_scores, coverage in parses:
             segments = cast(list[CoverageSegment], coverage)
-            morphs, canonicals = _segment_tokens(
-                normalized, segments, path
-            )
-            breakdown = _build_breakdown(
-                self.candidate_finder, normalized, segments
-            )
+            morphs, canonicals = _segment_tokens(normalized, segments, path)
+            breakdown = _build_breakdown(self.candidate_finder, normalized, segments)
 
             morph_support = {
                 morph: _classify_support(morph, support_lookup) for morph in morphs
@@ -226,9 +221,9 @@ def _build_breakdown(
     """
     # Prefer the candidate-finder's own helper if it exists.
     if hasattr(candidate_finder, "_build_breakdown"):
-        build_method: Callable[
-            [str, list[CoverageSegment]], dict[str, object]
-        ] = getattr(candidate_finder, "_build_breakdown")
+        build_method: Callable[[str, list[CoverageSegment]], dict[str, object]] = (
+            getattr(candidate_finder, "_build_breakdown")
+        )
         return build_method(word, list(coverage))
 
     # Fallback: compute simple coverage / residual spans from ``start`` / ``end``
@@ -314,17 +309,23 @@ def _segment_tokens(
 def _normalize_beam_scores(decompositions: List[Decomposition]) -> None:
     if not decompositions:
         return
-    scores = [float(decomp.beam_score) for decomp in decompositions]
-    min_score = min(scores)
-    max_score = max(scores)
-    if max_score == min_score:
-        normalized = 1.0
-        for decomp in decompositions:
-            decomp.beam_score_normalized = normalized
-        return
-    span = max_score - min_score
+
+    adjusted_scores: List[float] = []
     for decomp in decompositions:
-        decomp.beam_score_normalized = (float(decomp.beam_score) - min_score) / span
+        morph_count = max(1, len(decomp.morphs))
+        adjusted_scores.append(float(decomp.beam_score) / morph_count)
+
+    min_score = min(adjusted_scores)
+    max_score = max(adjusted_scores)
+
+    if max_score == min_score:
+        for decomp in decompositions:
+            decomp.beam_score_normalized = 1.0
+        return
+
+    span = max_score - min_score
+    for decomp, adjusted in zip(decompositions, adjusted_scores):
+        decomp.beam_score_normalized = (adjusted - min_score) / span
 
 
 def _build_support_lookup(evidence: WordEvidence) -> Dict[str, str]:
@@ -376,8 +377,10 @@ def _build_evidence_ngrams(
 ) -> Dict[str, List[Tuple[str, int, int]]]:
     """Build an extra ngram index based on evidence-backed morphs.
 
-    This allows the segmentation step to consider morphs that have evidence
-    in the insights databases but do not appear in the ngram index.
+    Key change vs. the old behavior:
+    - Treat evidence-backed morphs as *boost signals*, not just "missing ngrams".
+    - Use a small DF so the boost meaningfully affects IDF.
+    - Avoid boosting 1-char morphs and the full word (both encourage degenerate parses).
     """
 
     morphs: set[str] = set()
@@ -388,13 +391,26 @@ def _build_evidence_ngrams(
     morphs.update(attested.root_ngram for attested in evidence.attested_definitions)
     morphs.update(evidence.dictionary_morphs.keys())
 
-    if not morphs:
+    if not morphs or not word:
         return {}
 
-    total_docs = max(1, candidate_finder.total_docs)
-    fallback_df = max(1, int(total_docs * 0.5))
+    word = word.upper()
 
-    extra: Dict[str, List[Tuple[str, int, int]]] = {}
+    # We only boost *multi-char* submorphs (otherwise the beam search will happily
+    # prefer "N+A+Z+P+S+A+D" forever).
+    min_len = max(candidate_finder.min_n, 2)
+    max_len = candidate_finder.max_n
+
+    total_docs = max(1, int(candidate_finder.total_docs))
+
+    # Aggressive IDF boosts:
+    df_edge = 1  # strongest boost for prefix/suffix candidates (NAZ, PSAD)
+    df_inner = max(1, int(total_docs * 0.02))  # still strong, but not insane
+
+    support_stats = _compile_support_stats(evidence)
+
+    candidates: List[Tuple[int, int, int, str]] = []
+    # rank tuple = (edge_bonus, length, uses, morph)
     for morph in morphs:
         if not morph:
             continue
@@ -403,12 +419,43 @@ def _build_evidence_ngrams(
             continue
         if normalized not in word:
             continue
-        if not (candidate_finder.min_n <= len(normalized) <= candidate_finder.max_n):
+        if not (min_len <= len(normalized) <= max_len):
             continue
+        if len(normalized) >= len(word):
+            # Don't boost the full word; we're trying to get good *decompositions*.
+            continue
+
+        stats = support_stats.get(normalized)
+        uses = stats.uses if stats is not None else 0
+        edge_bonus = (
+            1 if (word.startswith(normalized) or word.endswith(normalized)) else 0
+        )
+        candidates.append((edge_bonus, len(normalized), uses, normalized))
+
+    if not candidates:
+        return {}
+
+    # Prefer edge morphs, then longer morphs, then higher-evidence morphs.
+    candidates.sort(reverse=True)
+
+    cap = 50  # keep this bounded per word
+    extra: Dict[str, List[Tuple[str, int, int]]] = {}
+    seen: set[str] = set()
+
+    for edge_bonus, _ln, _uses, normalized in candidates:
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+
         key = normalized.lower()
-        if key in candidate_finder.ngram_index:
-            continue
-        extra.setdefault(key, []).append((normalized, 1, fallback_df))
+        df = df_edge if edge_bonus else df_inner
+
+        # IMPORTANT: do NOT skip keys already in ngram_index.
+        # We want evidence to be able to override / bias existing weights.
+        extra.setdefault(key, []).append((normalized, 1, df))
+
+        if len(seen) >= cap:
+            break
 
     return extra
 
@@ -656,8 +703,7 @@ def apply_hard_filters(
             unsupported_counts.items(), key=lambda item: (-item[1], item[0])
         )
         diagnostics["unsupported_morphs"] = [
-            {"morph": morph, "count": count}
-            for morph, count in ranked[:top_n]
+            {"morph": morph, "count": count} for morph, count in ranked[:top_n]
         ]
 
     if dictionary_support_counts:
@@ -665,8 +711,7 @@ def apply_hard_filters(
             dictionary_support_counts.items(), key=lambda item: (-item[1], item[0])
         )
         diagnostics["dictionary_supported_morphs"] = [
-            {"morph": morph, "count": count}
-            for morph, count in ranked
+            {"morph": morph, "count": count} for morph, count in ranked
         ]
         diagnostics["dictionary_supported_count"] = sum(
             dictionary_support_counts.values()
@@ -677,12 +722,9 @@ def apply_hard_filters(
             attested_support_counts.items(), key=lambda item: (-item[1], item[0])
         )
         diagnostics["attested_supported_morphs"] = [
-            {"morph": morph, "count": count}
-            for morph, count in ranked
+            {"morph": morph, "count": count} for morph, count in ranked
         ]
-        diagnostics["attested_supported_count"] = sum(
-            attested_support_counts.values()
-        )
+        diagnostics["attested_supported_count"] = sum(attested_support_counts.values())
 
     if not supported:
         return [], diagnostics
@@ -720,9 +762,13 @@ def apply_hard_filters(
                 score += 1
         return score
 
-    attestation_scores = {tuple(d.morphs): attestation_score(d) for d in coverage_filtered}
+    attestation_scores = {
+        tuple(d.morphs): attestation_score(d) for d in coverage_filtered
+    }
     for decomp in coverage_filtered:
-        _update_attestation_trace(filter_traces, decomp, attestation_scores[tuple(decomp.morphs)])
+        _update_attestation_trace(
+            filter_traces, decomp, attestation_scores[tuple(decomp.morphs)]
+        )
     max_attestation = max(attestation_scores.values())
     diagnostics["max_attestation_score"] = max_attestation
     if max_attestation == 0:
