@@ -772,17 +772,31 @@ class SingleWordTranslationService:
             return None
         return float(np.dot(word_vec, morph_vec) / denom)
 
-    def _substring_candidates(self, word: str) -> List[str]:
+    def _substring_candidates(
+        self, word: str, *, include_singletons: bool = True
+    ) -> List[str]:
+        """Generate substring candidates for evidence lookup.
+
+        Returns substrings sorted by length descending (longest first), then
+        alphabetically. This prioritizes longer, chunkier morphs over singletons.
+
+        When ``include_singletons`` is True (default), single-letter substrings
+        are included so we can discover which singletons have evidence support.
+        This enables the singleton fallback path without exploding the search
+        space with unsupported single letters.
+        """
         if not word:
             return []
-        min_n = self.candidate_finder.min_n
+        # Include singletons for evidence discovery, but segmentation uses min_n
+        min_len = 1 if include_singletons else self.candidate_finder.min_n
         max_n = self.candidate_finder.max_n
         word_upper = word.upper()
         candidates: set[str] = set()
         for start in range(len(word_upper)):
-            for end in range(start + min_n, min(len(word_upper), start + max_n) + 1):
+            for end in range(start + min_len, min(len(word_upper), start + max_n) + 1):
                 candidates.add(word_upper[start:end])
-        return sorted(candidates)
+        # Sort by length descending (prefer longer morphs), then alphabetically
+        return sorted(candidates, key=lambda s: (-len(s), s))
 
     @staticmethod
     def _concatenate_meanings(meanings: Sequence[dict[str, object]]) -> str:

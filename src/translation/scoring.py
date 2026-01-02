@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
+
+import numpy as np
 
 from .decomposition import Decomposition
 from .repository import (
@@ -236,3 +238,226 @@ def _acceptance_bonus(
 
     normalized = bonus / float(total_len)
     return min(1.5, normalized)
+
+
+# ---------------------------------------------------------------------------
+# Semantic coherence scoring for singleton validation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CoherenceResult:
+    """Result of semantic coherence analysis for a decomposition.
+
+    Attributes
+    ----------
+    score:
+        Overall coherence score in [0, 1]. Higher is better.
+    singleton_cohesion:
+        Average pairwise similarity among singletons. Higher means
+        singletons are semantically related (good).
+    large_morph_diversity:
+        Average pairwise dissimilarity among larger morphs. Higher means
+        large morphs are semantically distinct (good).
+    singleton_count:
+        Number of singleton morphs in the decomposition.
+    large_morph_count:
+        Number of non-singleton morphs in the decomposition.
+    """
+
+    score: float
+    singleton_cohesion: float
+    large_morph_diversity: float
+    singleton_count: int
+    large_morph_count: int
+
+
+def compute_semantic_coherence(
+    morphs: List[str],
+    fasttext_model: Any,
+    *,
+    cohesion_threshold: float = 0.3,
+    diversity_threshold: float = 0.7,
+) -> CoherenceResult:
+    """Compute semantic coherence for a decomposition.
+
+    The coherence model is based on the observation that:
+    - Singletons (single-letter morphs) act as grammatical particles and should
+      be semantically similar to each other (they cohere).
+    - Larger morphs carry distinct semantic content and should be dissimilar
+      from each other (they diversify meaning).
+
+    For a decomposition like NAZ + P + SA + D:
+    - P and D (singletons) should have high similarity to each other.
+    - NAZ and SA (large morphs) should have low similarity to each other.
+
+    Parameters
+    ----------
+    morphs:
+        List of morph strings from a decomposition.
+    fasttext_model:
+        A FastText model with `wv` attribute supporting `get_word_vector`.
+    cohesion_threshold:
+        Minimum expected similarity among singletons. Pairs below this
+        are considered incoherent.
+    diversity_threshold:
+        Maximum expected similarity among large morphs. Pairs above this
+        are considered too similar (redundant).
+
+    Returns
+    -------
+    CoherenceResult:
+        Contains the overall coherence score and component metrics.
+    """
+    if not morphs or fasttext_model is None:
+        return CoherenceResult(
+            score=0.5,  # Neutral score when we can't compute
+            singleton_cohesion=0.0,
+            large_morph_diversity=0.0,
+            singleton_count=0,
+            large_morph_count=0,
+        )
+
+    # Separate morphs by length
+    singletons = [m.upper() for m in morphs if len(m) == 1]
+    large_morphs = [m.upper() for m in morphs if len(m) > 1]
+
+    # Get vectors for all morphs
+    vectors: Dict[str, np.ndarray] = {}
+    wv = getattr(fasttext_model, "wv", fasttext_model)
+    for morph in set(singletons + large_morphs):
+        try:
+            vec = wv.get_word_vector(morph.lower())
+            if vec is not None:
+                vectors[morph] = np.asarray(vec, dtype=float)
+        except (KeyError, AttributeError):
+            pass
+
+    # Compute singleton cohesion (should be HIGH for good decompositions)
+    singleton_cohesion = _compute_avg_pairwise_similarity(
+        singletons, vectors
+    )
+
+    # Compute large morph diversity (should be LOW similarity = HIGH diversity)
+    large_morph_similarity = _compute_avg_pairwise_similarity(
+        large_morphs, vectors
+    )
+    large_morph_diversity = 1.0 - large_morph_similarity
+
+    # Compute overall coherence score
+    # - Reward high singleton cohesion (above threshold)
+    # - Reward high large morph diversity (similarity below threshold)
+    cohesion_score = 0.0
+    if len(singletons) >= 2:
+        if singleton_cohesion >= cohesion_threshold:
+            cohesion_score = min(1.0, singleton_cohesion / cohesion_threshold)
+        else:
+            # Penalize low cohesion among singletons
+            cohesion_score = singleton_cohesion / cohesion_threshold * 0.5
+
+    diversity_score = 0.0
+    if len(large_morphs) >= 2:
+        if large_morph_similarity <= diversity_threshold:
+            diversity_score = 1.0 - (large_morph_similarity / diversity_threshold)
+        else:
+            # Penalize high similarity (redundancy) among large morphs
+            diversity_score = 0.0
+
+    # Combine scores - weight cohesion higher for singleton-heavy decompositions
+    singleton_weight = len(singletons) / max(1, len(morphs))
+    large_weight = len(large_morphs) / max(1, len(morphs))
+
+    if len(singletons) >= 2 and len(large_morphs) >= 2:
+        # Both groups present - blend scores
+        score = singleton_weight * cohesion_score + large_weight * diversity_score
+    elif len(singletons) >= 2:
+        # Only singletons to compare - use cohesion only
+        score = cohesion_score
+    elif len(large_morphs) >= 2:
+        # Only large morphs to compare - use diversity only
+        score = diversity_score
+    else:
+        # Can't compare pairs - neutral score
+        score = 0.5
+
+    return CoherenceResult(
+        score=score,
+        singleton_cohesion=singleton_cohesion,
+        large_morph_diversity=large_morph_diversity,
+        singleton_count=len(singletons),
+        large_morph_count=len(large_morphs),
+    )
+
+
+def _compute_avg_pairwise_similarity(
+    morphs: List[str],
+    vectors: Dict[str, np.ndarray],
+) -> float:
+    """Compute average pairwise cosine similarity among morphs.
+
+    Returns 0.0 if fewer than 2 morphs have vectors.
+    """
+    morph_vecs = [(m, vectors[m]) for m in morphs if m in vectors]
+    if len(morph_vecs) < 2:
+        return 0.0
+
+    similarities: List[float] = []
+    for i in range(len(morph_vecs)):
+        for j in range(i + 1, len(morph_vecs)):
+            _, vec_i = morph_vecs[i]
+            _, vec_j = morph_vecs[j]
+            sim = _cosine_similarity(vec_i, vec_j)
+            similarities.append(sim)
+
+    return sum(similarities) / len(similarities) if similarities else 0.0
+
+
+def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+    """Compute cosine similarity between two vectors."""
+    norm_a = np.linalg.norm(vec_a)
+    norm_b = np.linalg.norm(vec_b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+
+
+def score_decomposition_with_coherence(
+    decomp: Decomposition,
+    evidence: WordEvidence,
+    fasttext_model: Any,
+    *,
+    weights: ScoringWeights | None = None,
+    coherence_weight: float = 0.15,
+) -> Tuple[float, CoherenceResult]:
+    """Score a decomposition including semantic coherence.
+
+    This extends the standard scoring with a coherence component that
+    validates singleton usage. The coherence score is blended with
+    the base score using ``coherence_weight``.
+
+    Parameters
+    ----------
+    decomp:
+        The decomposition to score.
+    evidence:
+        Word evidence for the decomposition.
+    fasttext_model:
+        FastText model for computing semantic similarity.
+    weights:
+        Optional scoring weights for the base score.
+    coherence_weight:
+        Weight for the coherence component (default 0.15).
+        The base score weight is (1 - coherence_weight).
+
+    Returns
+    -------
+    Tuple[float, CoherenceResult]:
+        The combined score and the coherence analysis result.
+    """
+    base_score = score_decomposition(decomp, evidence, weights=weights)
+    coherence = compute_semantic_coherence(decomp.morphs, fasttext_model)
+
+    # Blend base score with coherence
+    combined = (1.0 - coherence_weight) * base_score + coherence_weight * coherence.score
+
+    return combined, coherence

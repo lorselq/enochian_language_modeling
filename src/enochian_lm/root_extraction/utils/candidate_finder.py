@@ -19,7 +19,14 @@ DEFAULT_LENGTH_BONUS = 0.2
 DEFAULT_SEGMENT_PENALTY = 0.35
 DEFAULT_SINGLE_CHAR_PENALTY = 2.5
 DEFAULT_EDGE_BONUS = 0.6
-DEFAULT_ALLOWED_SINGLETONS = {"i", "l"}
+# All Enochian letters are allowed as singletons; penalties vary by letter
+DEFAULT_ALLOWED_SINGLETONS = set("abcdefghiklmnopqrstuxyz")
+# Per-letter singleton penalties: L and I get reduced penalties (common morphemes)
+DEFAULT_SINGLETON_PENALTIES: dict[str, float] = {
+    "l": 0.25,  # Very common morpheme
+    "i": 0.75,  # Common morpheme
+    # All other letters use DEFAULT_SINGLE_CHAR_PENALTY (2.5)
+}
 
 # --- Logging setup ---
 logging.basicConfig(
@@ -80,6 +87,7 @@ class MorphemeCandidateFinder:
         single_char_penalty: float = DEFAULT_SINGLE_CHAR_PENALTY,
         edge_bonus: float = DEFAULT_EDGE_BONUS,
         allowed_singletons: set[str] | None = None,
+        singleton_penalties: dict[str, float] | None = None,
         n_best: int | None = None,
     ):
         # Connect to ngram SQLite index
@@ -119,6 +127,11 @@ class MorphemeCandidateFinder:
             {token.lower() for token in allowed_singletons}
             if allowed_singletons
             else set(DEFAULT_ALLOWED_SINGLETONS)
+        )
+        self.singleton_penalties = (
+            {k.lower(): v for k, v in singleton_penalties.items()}
+            if singleton_penalties
+            else dict(DEFAULT_SINGLETON_PENALTIES)
         )
         self.n_best = n_best
 
@@ -253,11 +266,16 @@ class MorphemeCandidateFinder:
                             edge_bonus += self.edge_bonus
                         if pos + n == len(tgt):
                             edge_bonus += self.edge_bonus
-                        singleton_penalty = (
-                            0.0
-                            if n > 1 or ng in self.allowed_singletons
-                            else self.single_char_penalty
-                        )
+                        # Singleton penalty: 0 for multi-char, per-letter for singletons
+                        if n > 1:
+                            singleton_penalty = 0.0
+                        elif ng in self.allowed_singletons:
+                            # Use per-letter penalty if defined, else default
+                            singleton_penalty = self.singleton_penalties.get(
+                                ng, self.single_char_penalty
+                            )
+                        else:
+                            singleton_penalty = self.single_char_penalty
                         segment_penalty = self.segment_penalty
                         tfidf = (
                             raw_tfidf
