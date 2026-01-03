@@ -13,6 +13,10 @@ import numpy as np
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
+from enochian_lm.root_extraction.utils.embeddings import (
+    cluster_definition_counts,
+    get_sentence_transformer,
+)
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 
 from .decomposition import Decomposition, DecompositionEngine, apply_hard_filters
@@ -460,9 +464,23 @@ class SingleWordTranslationService:
         # Fetch accepted definition counts for all possible substrings
         # This is used to penalize ambiguous morphs (many definitions) during beam search
         all_substrings = self._substring_candidates(normalized, include_singletons=True)
-        definition_counts = self.repository.fetch_accepted_definition_counts(
-            all_substrings, variants=active_variants
+        definition_counts: Dict[str, int] = {}
+        if evidence_mode != self.EvidenceMode.RESIDUALS_ONLY:
+            definition_counts = self.repository.fetch_accepted_definition_counts(
+                all_substrings, variants=active_variants
+            )
+        definition_glosses = self.repository.fetch_accepted_definition_glosses(
+            all_substrings,
+            variants=active_variants,
+            include_clusters=evidence_mode != self.EvidenceMode.RESIDUALS_ONLY,
+            include_residuals=evidence_mode != self.EvidenceMode.CLUSTERS_ONLY,
         )
+        clustered_counts = cluster_definition_counts(
+            definition_glosses,
+            get_sentence_transformer("paraphrase-MiniLM-L6-v2"),
+        )
+        if clustered_counts:
+            definition_counts = {**definition_counts, **clustered_counts}
 
         # Two-pass decomposition: first with min_n=2 (chunky), then with min_n=1 (singletons)
         # This ensures we generate both chunky and singleton-based decompositions
@@ -472,6 +490,7 @@ class SingleWordTranslationService:
             allow_whole_word=allow_whole_word,
             n_best=n_best,
             definition_counts=definition_counts,
+            definition_glosses=definition_glosses,
         )
 
         # Second pass: generate singleton-enabled decompositions for all words
@@ -486,6 +505,7 @@ class SingleWordTranslationService:
                 allow_whole_word=allow_whole_word,
                 n_best=n_best,
                 definition_counts=definition_counts,
+                definition_glosses=definition_glosses,
             )
             diagnostics["singleton_pass"] = {
                 "used": True,
@@ -535,6 +555,7 @@ class SingleWordTranslationService:
                     allow_whole_word=allow_whole_word,
                     n_best=n_best,
                     definition_counts=definition_counts,
+                    definition_glosses=definition_glosses,
                 )
             )
             diagnostics["dictionary_fallback"] = fallback_diag
