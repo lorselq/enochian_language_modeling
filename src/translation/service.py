@@ -26,7 +26,14 @@ from .repository import (
     WordEvidence,
     FasttextNeighbor,
 )
-from .scoring import ScoringWeights, score_decomposition, score_decomposition_unweighted
+from .scoring import (
+    CoherenceResult,
+    ScoringWeights,
+    compute_semantic_coherence,
+    score_decomposition,
+    score_decomposition_unweighted,
+    score_decomposition_with_coherence,
+)
 from .strategies import apply_strategy, select_top_k
 from .tokenization import expand_sentence_ngrams, tokenize_words
 
@@ -442,30 +449,53 @@ class SingleWordTranslationService:
                     support_residuals,
                     support_hypotheses,
                 )
-        self._apply_evidence_mode(evidence, mode=evidence_mode)
+        # NOTE: Do NOT apply evidence mode here. Decompositions should be
+        # generated with full evidence to find all valid segmentations.
+        # Evidence mode is applied later, before hard filtering, so that
+        # clusters-only mode still allows decompositions that have any support
+        # but only uses cluster definitions for output.
 
         n_best = max(top_k * 5, self.candidate_finder.beam_width)
+
+        # Fetch accepted definition counts for all possible substrings
+        # This is used to penalize ambiguous morphs (many definitions) during beam search
+        all_substrings = self._substring_candidates(normalized, include_singletons=True)
+        definition_counts = self.repository.fetch_accepted_definition_counts(
+            all_substrings, variants=active_variants
+        )
+
+        # Two-pass decomposition: first with min_n=2 (chunky), then with min_n=1 (singletons)
+        # This ensures we generate both chunky and singleton-based decompositions
         decompositions, diagnostics = self._decomposition_engine.generate_decompositions(
             normalized,
             evidence,
             allow_whole_word=allow_whole_word,
             n_best=n_best,
+            definition_counts=definition_counts,
         )
-        if not decompositions and self.candidate_finder.min_n > 1:
-            fallback_decomps, fallback_diag = self._with_min_n(
+
+        # Second pass: generate singleton-enabled decompositions for all words
+        # Even short words like OD (O+D) or ITA (I+TA) can have meaningful singleton splits
+        singleton_decomps: List[Decomposition] = []
+        if self.candidate_finder.min_n > 1:
+            singleton_decomps, singleton_diag = self._with_min_n(
                 1,
                 self._decomposition_engine.generate_decompositions,
                 normalized,
                 evidence,
                 allow_whole_word=allow_whole_word,
                 n_best=n_best,
+                definition_counts=definition_counts,
             )
-            diagnostics["min_n_fallback"] = {
-                "used": bool(fallback_decomps),
-                "min_n": 1,
+            diagnostics["singleton_pass"] = {
+                "used": True,
+                "generated": len(singleton_decomps),
             }
-            if fallback_decomps:
-                decompositions = fallback_decomps
+
+        # Merge decompositions from both passes
+        if singleton_decomps:
+            decompositions = self._merge_decompositions(decompositions, singleton_decomps)
+            diagnostics["merged_count"] = len(decompositions)
         if decompositions:
             morphs = {morph for decomp in decompositions for morph in decomp.morphs}
             if morphs:
@@ -482,8 +512,13 @@ class SingleWordTranslationService:
                     support_residuals,
                     support_hypotheses,
                 )
-                self._apply_evidence_mode(evidence, mode=evidence_mode)
+        # NOTE: Apply hard filters with FULL evidence so decompositions with
+        # any support pass. Evidence mode is applied AFTER filtering for
+        # scoring and output, so clusters-only still shows cluster definitions
+        # but doesn't reject decompositions that have residual/attested support.
         filtered, filter_diagnostics = apply_hard_filters(decompositions, evidence)
+        # Now apply evidence mode for scoring and meaning extraction
+        self._apply_evidence_mode(evidence, mode=evidence_mode)
         fallback_decompositions: List[Decomposition] = []
         fallback_used = False
         fallback_mode: str | None = None
@@ -497,6 +532,7 @@ class SingleWordTranslationService:
                     force_dictionary=True,
                     allow_whole_word=allow_whole_word,
                     n_best=n_best,
+                    definition_counts=definition_counts,
                 )
             )
             diagnostics["dictionary_fallback"] = fallback_diag
@@ -520,10 +556,11 @@ class SingleWordTranslationService:
                         support_residuals,
                         support_hypotheses,
                     )
-                    self._apply_evidence_mode(evidence, mode=evidence_mode)
+                # Apply hard filters with FULL evidence, then apply mode after
                 filtered, filter_diagnostics = apply_hard_filters(
                     fallback_decompositions, evidence
                 )
+                self._apply_evidence_mode(evidence, mode=evidence_mode)
 
         if not filtered:
             relaxed_source = (
@@ -547,14 +584,50 @@ class SingleWordTranslationService:
                 }
 
         ranked: List[tuple[Decomposition, float]] = []
+        coherence_results: dict[tuple[str, ...], CoherenceResult] = {}
+        fasttext_model = getattr(self.candidate_finder, "fasttext_model", None)
+
         for decomp in filtered:
-            if weight_enabled:
-                score = score_decomposition(
-                    decomp, evidence, weights=self.scoring_weights
-                )
+            # Check if decomposition has singletons and compute coherence
+            has_singletons = any(len(m) == 1 for m in decomp.morphs)
+
+            if has_singletons and fasttext_model is not None:
+                # Use coherence-aware scoring for singleton decompositions
+                if weight_enabled:
+                    score, coherence = score_decomposition_with_coherence(
+                        decomp,
+                        evidence,
+                        fasttext_model,
+                        weights=self.scoring_weights,
+                        coherence_weight=0.15,
+                    )
+                else:
+                    base_score = score_decomposition_unweighted(decomp, evidence)
+                    coherence = compute_semantic_coherence(decomp.morphs, fasttext_model)
+                    score = 0.85 * base_score + 0.15 * coherence.score
+                coherence_results[tuple(decomp.morphs)] = coherence
             else:
-                score = score_decomposition_unweighted(decomp, evidence)
+                # Standard scoring for non-singleton decompositions
+                if weight_enabled:
+                    score = score_decomposition(
+                        decomp, evidence, weights=self.scoring_weights
+                    )
+                else:
+                    score = score_decomposition_unweighted(decomp, evidence)
+
             ranked.append((decomp, score))
+
+        if coherence_results:
+            diagnostics["coherence_scores"] = {
+                " + ".join(morphs): {
+                    "score": result.score,
+                    "singleton_cohesion": result.singleton_cohesion,
+                    "large_morph_diversity": result.large_morph_diversity,
+                    "singleton_count": result.singleton_count,
+                    "large_morph_count": result.large_morph_count,
+                }
+                for morphs, result in coherence_results.items()
+            }
 
         reranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
         selected = select_top_k(
@@ -797,6 +870,37 @@ class SingleWordTranslationService:
                 candidates.add(word_upper[start:end])
         # Sort by length descending (prefer longer morphs), then alphabetically
         return sorted(candidates, key=lambda s: (-len(s), s))
+
+    @staticmethod
+    def _merge_decompositions(
+        primary: List[Decomposition],
+        secondary: List[Decomposition],
+    ) -> List[Decomposition]:
+        """Merge two sets of decompositions, deduplicating by morph sequence.
+
+        When the same morph sequence appears in both sets, the decomposition
+        with the higher beam_score is kept. This allows singleton-based
+        decompositions to compete fairly with chunky decompositions.
+        """
+        # Index by morph tuple for deduplication
+        by_morphs: dict[tuple[str, ...], Decomposition] = {}
+
+        for decomp in primary:
+            key = tuple(decomp.morphs)
+            existing = by_morphs.get(key)
+            if existing is None or decomp.beam_score > existing.beam_score:
+                by_morphs[key] = decomp
+
+        for decomp in secondary:
+            key = tuple(decomp.morphs)
+            existing = by_morphs.get(key)
+            if existing is None or decomp.beam_score > existing.beam_score:
+                by_morphs[key] = decomp
+
+        # Return sorted by beam_score descending for consistent ordering
+        merged = list(by_morphs.values())
+        merged.sort(key=lambda d: d.beam_score, reverse=True)
+        return merged
 
     @staticmethod
     def _concatenate_meanings(meanings: Sequence[dict[str, object]]) -> str:

@@ -15,10 +15,16 @@ DEFAULT_MIN_CANDIDATE_COS_SIM = 0.15
 DEFAULT_MIN_OVERLAP_RATIO = 0.1
 DEFAULT_MAX_CANDIDATES = 15
 DEFAULT_MULTI_SEGMENT_BONUS = 0.25
-DEFAULT_LENGTH_BONUS = 0.2
+# Increased length bonus to favor longer, more specific morphs (NAZ > NA)
+# 0.75 per extra char: NAZ (3 chars) gets 1.5 bonus, NA (2 chars) gets 0.75
+DEFAULT_LENGTH_BONUS = 0.75
 DEFAULT_SEGMENT_PENALTY = 0.35
 DEFAULT_SINGLE_CHAR_PENALTY = 2.5
 DEFAULT_EDGE_BONUS = 0.6
+# Ambiguity penalty: penalizes high-TF morphs (more common = more ambiguous)
+# This helps specific morphs (NAZ with 1 definition) beat ambiguous ones (NA with 28)
+# Scale of 0.5 means: log1p(32) * 0.5 = 1.75 penalty for highly frequent morphs
+DEFAULT_AMBIGUITY_PENALTY_SCALE = 0.5
 # All Enochian letters are allowed as singletons; penalties vary by letter
 DEFAULT_ALLOWED_SINGLETONS = set("abcdefghiklmnopqrstuxyz")
 # Per-letter singleton penalties: L and I get reduced penalties (common morphemes)
@@ -46,6 +52,8 @@ class CoverageSegment(TypedDict):
     edge_bonus: float
     segment_penalty: float
     singleton_penalty: float
+    ambiguity_penalty: float
+    specificity_penalty: float
 
 
 class SegmentScore(TypedDict):
@@ -77,7 +85,7 @@ class MorphemeCandidateFinder:
         prune_threshold: float = 0.0,
         min_n: int = 2,
         max_n: int = 7,
-        beam_width: int = 5,
+        beam_width: int = 15,
         min_candidate_cos_sim: float = DEFAULT_MIN_CANDIDATE_COS_SIM,
         min_overlap_ratio: float = DEFAULT_MIN_OVERLAP_RATIO,
         max_candidates: int = DEFAULT_MAX_CANDIDATES,
@@ -88,6 +96,7 @@ class MorphemeCandidateFinder:
         edge_bonus: float = DEFAULT_EDGE_BONUS,
         allowed_singletons: set[str] | None = None,
         singleton_penalties: dict[str, float] | None = None,
+        ambiguity_penalty_scale: float = DEFAULT_AMBIGUITY_PENALTY_SCALE,
         n_best: int | None = None,
     ):
         # Connect to ngram SQLite index
@@ -133,6 +142,7 @@ class MorphemeCandidateFinder:
             if singleton_penalties
             else dict(DEFAULT_SINGLETON_PENALTIES)
         )
+        self.ambiguity_penalty_scale = ambiguity_penalty_scale
         self.n_best = n_best
 
         # Load the ngram → [(canonical, tf, df), ...] map
@@ -214,6 +224,7 @@ class MorphemeCandidateFinder:
         extra_ngrams: dict[str, list[tuple[str, int, int]]] | None = None,
         min_n: int | None = None,
         n_best: int | None = None,
+        definition_counts: dict[str, int] | None = None,
     ) -> list[
         tuple[
             list[str],
@@ -277,12 +288,25 @@ class MorphemeCandidateFinder:
                         else:
                             singleton_penalty = self.single_char_penalty
                         segment_penalty = self.segment_penalty
+                        # Ambiguity penalty: penalize high-TF morphs (more common = more ambiguous)
+                        # This helps specific morphs (NAZ) beat ambiguous ones (NA)
+                        ambiguity_penalty = self.ambiguity_penalty_scale * tf_weight
+                        # Specificity penalty: penalize morphs with many accepted definitions
+                        # Fewer definitions = more specific = better
+                        # NAZ (1 def) vs NA (28 defs): log1p(1)*0.5=0.35 vs log1p(28)*0.5=1.68
+                        specificity_penalty = 0.0
+                        if definition_counts:
+                            def_count = definition_counts.get(canon.upper(), 0)
+                            if def_count > 0:
+                                specificity_penalty = 0.5 * math.log1p(def_count)
                         tfidf = (
                             raw_tfidf
                             + length_bonus
                             + edge_bonus
                             - segment_penalty
                             - singleton_penalty
+                            - ambiguity_penalty
+                            - specificity_penalty
                         )
                         new_path = path + [canon]
                         new_score = score + tfidf
@@ -305,6 +329,8 @@ class MorphemeCandidateFinder:
                             "edge_bonus": edge_bonus,
                             "segment_penalty": segment_penalty,
                             "singleton_penalty": singleton_penalty,
+                            "ambiguity_penalty": ambiguity_penalty,
+                            "specificity_penalty": specificity_penalty,
                         }
                         new_beams.append(
                             (

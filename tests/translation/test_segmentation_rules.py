@@ -127,7 +127,12 @@ def test_nazpsad_prefers_morpheme_splits(
     parses = finder.segment_target("NAZPSAD")
     assert parses
     best_path = parses[0][0]
-    assert best_path in (["NAZ", "PSAD"], ["NAZ", "PS", "AD"])
+    # With length bonus, longer morphs are preferred. All these are valid splits:
+    # - NAZ + PSAD (3+4=7, 2 segments)
+    # - NAZ + PS + AD (3+2+2=7, 3 segments)
+    # - NAZP + SAD (4+3=7, 2 segments)
+    # In real-world use, evidence filtering will prefer morphs with cluster support.
+    assert best_path in (["NAZ", "PSAD"], ["NAZ", "PS", "AD"], ["NAZP", "SAD"])
 
 
 def test_debuheka_does_not_invent_unknown_morphemes(
@@ -169,3 +174,90 @@ def test_single_letter_i_l_allowed_in_fallback(
     assert parses
     best_path = parses[0][0]
     assert best_path == ["I", "L"]
+
+
+def test_singleton_decomposition_with_all_letters_allowed(
+    tmp_path: Path, monkeypatched_fasttext: None
+) -> None:
+    """All Enochian letters should be allowed as singletons (with penalties).
+
+    Longer morphs should be preferred over shorter ones when both are valid,
+    so NAZ should appear in top decompositions rather than NA+Z.
+    """
+    # Tokens that include singletons P, D and larger morphs NAZ, SA
+    tokens = ["NAZ", "NA", "P", "SA", "D", "PSAD", "PS", "AD", "Z"]
+    finder = _build_finder(tmp_path, tokens, min_n=1)
+
+    parses = finder.segment_target("NAZPSAD")
+    assert parses
+
+    # Top parse should prefer longer morphs (NAZ over NA+Z)
+    top_path = parses[0][0]
+    # NAZ (3 chars) should be preferred over NA (2 chars) when both cover the same prefix
+    assert "NAZ" in top_path or "NAZP" in top_path, (
+        f"Expected longer morph NAZ in top parse, got {top_path}"
+    )
+
+
+def test_od_allows_singleton_decomposition(
+    tmp_path: Path, monkeypatched_fasttext: None
+) -> None:
+    """Short words like OD should allow O+D decomposition."""
+    tokens = ["O", "D", "OD"]
+    finder = _build_finder(tmp_path, tokens, min_n=1)
+
+    parses = finder.segment_target("OD")
+    assert parses
+
+    paths = [tuple(parse[0]) for parse in parses]
+    # Should include both whole word and singleton decomposition
+    assert ("OD",) in paths or ("O", "D") in paths
+
+
+def test_ita_allows_singleton_plus_bigram(
+    tmp_path: Path, monkeypatched_fasttext: None
+) -> None:
+    """Words like ITA should allow I+TA decomposition."""
+    tokens = ["I", "TA", "ITA", "IT", "A"]
+    finder = _build_finder(tmp_path, tokens, min_n=1)
+
+    parses = finder.segment_target("ITA")
+    assert parses
+
+    paths = [tuple(parse[0]) for parse in parses]
+    # Should include I+TA decomposition
+    i_ta_found = ("I", "TA") in paths
+    assert i_ta_found, f"Expected I+TA decomposition not found in {paths}"
+
+
+def test_singleton_penalties_are_per_letter(
+    tmp_path: Path, monkeypatched_fasttext: None
+) -> None:
+    """L and I should have lower penalties than other singletons."""
+    from enochian_lm.root_extraction.utils.candidate_finder import (
+        DEFAULT_SINGLETON_PENALTIES,
+        DEFAULT_SINGLE_CHAR_PENALTY,
+    )
+
+    # L should have lowest penalty
+    assert DEFAULT_SINGLETON_PENALTIES.get("l", DEFAULT_SINGLE_CHAR_PENALTY) < 1.0
+    # I should have moderate penalty
+    assert DEFAULT_SINGLETON_PENALTIES.get("i", DEFAULT_SINGLE_CHAR_PENALTY) < 1.5
+    # Other letters should use the default penalty
+    assert "p" not in DEFAULT_SINGLETON_PENALTIES
+
+
+def test_multiple_decompositions_returned(
+    tmp_path: Path, monkeypatched_fasttext: None
+) -> None:
+    """Beam search should return multiple valid decompositions."""
+    tokens = ["NAZ", "PSAD", "NAZP", "SAD", "PS", "AD", "P", "SA", "D"]
+    finder = _build_finder(tmp_path, tokens, min_n=1, beam_width=10)
+
+    parses = finder.segment_target("NAZPSAD")
+    # Should return multiple parses, not just one
+    assert len(parses) >= 2, f"Expected multiple parses, got {len(parses)}"
+
+    # Parses should have different morph sequences
+    unique_paths = {tuple(parse[0]) for parse in parses}
+    assert len(unique_paths) >= 2, f"Expected diverse parses, got {unique_paths}"

@@ -21,15 +21,16 @@ from .repository import (
 class ScoringWeights:
     """Configurable weights for the composite score.
 
-    If custom weights do not sum to 1.0 they are normalized 
-    automatically so the final score remains comparable 
+    If custom weights do not sum to 1.0 they are normalized
+    automatically so the final score remains comparable
     across configurations.
     """
 
-    beam_prior: float = 0.3
-    avg_cluster_quality: float = 0.25
-    residual_coverage: float = 0.25
-    acceptance_bonus: float = 0.2
+    beam_prior: float = 0.25
+    avg_cluster_quality: float = 0.20
+    residual_coverage: float = 0.20
+    acceptance_bonus: float = 0.15
+    specificity_bonus: float = 0.20  # Reward morphs with fewer definitions
 
     def normalized(self) -> "ScoringWeights":
         total = (
@@ -37,11 +38,12 @@ class ScoringWeights:
             + self.avg_cluster_quality
             + self.residual_coverage
             + self.acceptance_bonus
+            + self.specificity_bonus
         )
         if total <= 0:
             # Fall back to equal weights to avoid division by zero and keep the
             # scoring function usable.
-            return ScoringWeights(0.25, 0.25, 0.25, 0.25)
+            return ScoringWeights(0.2, 0.2, 0.2, 0.2, 0.2)
 
         scale = 1.0 / total
         return ScoringWeights(
@@ -49,6 +51,7 @@ class ScoringWeights:
             avg_cluster_quality=self.avg_cluster_quality * scale,
             residual_coverage=self.residual_coverage * scale,
             acceptance_bonus=self.acceptance_bonus * scale,
+            specificity_bonus=self.specificity_bonus * scale,
         )
 
 
@@ -67,6 +70,7 @@ def score_decomposition(
     - residual_coverage: 1 - residual_ratio from the decomposition breakdown.
     - acceptance_bonus: counts of clusters, residuals, and hypotheses aligned
       with the morphs (weighted 1.0 / 0.5 / 0.3).
+    - specificity_bonus: rewards morphs with fewer definitions (more specific).
     """
 
     active = (weights or ScoringWeights()).normalized()
@@ -92,11 +96,17 @@ def score_decomposition(
         evidence.morph_hypotheses,
     )
 
+    specificity = _specificity_bonus(
+        decomp.morphs,
+        evidence.direct_clusters,
+    )
+
     return (
         active.beam_prior * beam_prior
         + active.avg_cluster_quality * avg_cluster_quality
         + active.residual_coverage * residual_coverage
         + active.acceptance_bonus * acceptance
+        + active.specificity_bonus * specificity
     )
 
 
@@ -131,7 +141,12 @@ def score_decomposition_unweighted(
         evidence.morph_hypotheses,
     )
 
-    return beam_prior + avg_cluster_quality + residual_coverage + acceptance
+    specificity = _specificity_bonus(
+        decomp.morphs,
+        evidence.direct_clusters,
+    )
+
+    return beam_prior + avg_cluster_quality + residual_coverage + acceptance + specificity
 
 
 def _safe_number(value: Any, default: float = 0.0) -> float:
@@ -238,6 +253,48 @@ def _acceptance_bonus(
 
     normalized = bonus / float(total_len)
     return min(1.5, normalized)
+
+
+def _specificity_bonus(
+    morphs: Iterable[str],
+    clusters: List[ClusterRecord],
+) -> float:
+    """Calculate specificity bonus rewarding morphs with fewer definitions.
+
+    Morphs with fewer cluster definitions are more specific/less ambiguous.
+    For example, NAZ with 1 definition is preferred over NA with 5 definitions.
+
+    Returns a score in [0, 1] where higher means more specific.
+    """
+    # Count distinct definitions per morph
+    morph_def_counts: Dict[str, int] = {}
+    for cluster in clusters:
+        key = cluster.ngram.upper()
+        morph_def_counts[key] = morph_def_counts.get(key, 0) + 1
+
+    morph_list = [m.upper() for m in morphs]
+    if not morph_list:
+        return 0.0
+
+    total_len = sum(len(m) for m in morph_list)
+    if total_len <= 0:
+        return 0.0
+
+    # Calculate length-weighted specificity
+    # specificity = 1 / (1 + log(num_definitions))
+    # This gives: 1 def -> 1.0, 2 defs -> 0.59, 5 defs -> 0.38, 10 defs -> 0.30
+    weighted_specificity = 0.0
+    for morph in morph_list:
+        num_defs = morph_def_counts.get(morph, 0)
+        if num_defs == 0:
+            # No definitions = unknown, neutral specificity
+            specificity = 0.5
+        else:
+            specificity = 1.0 / (1.0 + math.log1p(num_defs - 1))
+        # Weight by morph length (longer morphs matter more)
+        weighted_specificity += len(morph) * specificity
+
+    return weighted_specificity / float(total_len)
 
 
 # ---------------------------------------------------------------------------

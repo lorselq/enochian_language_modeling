@@ -222,7 +222,10 @@ class InsightsRepository:
                 continue
             breakdown["clusters"][variant] = _count_matches(
                 conn,
-                "SELECT COUNT(*) FROM clusters WHERE TRIM(ngram) COLLATE NOCASE = ?",
+                """SELECT COUNT(*) FROM clusters
+                   WHERE TRIM(ngram) COLLATE NOCASE = ?
+                     AND action = 'escalate'
+                     AND verdict = 'True'""",
                 (normalized,),
             )
             breakdown["residual_semantics"][variant] = _count_matches(
@@ -322,8 +325,14 @@ class InsightsRepository:
     def _fetch_variant_clusters(
         self, conn: sqlite3.Connection, ngram: str, variant: str
     ) -> List[ClusterRecord]:
+        # Only fetch accepted clusters (action='escalate' AND verdict='True')
+        # Non-accepted clusters are either skipped or rejected definitions
         cursor = conn.execute(
-            "SELECT * FROM clusters WHERE TRIM(ngram) COLLATE NOCASE = ? ORDER BY cluster_index ASC;",
+            """SELECT * FROM clusters
+               WHERE TRIM(ngram) COLLATE NOCASE = ?
+                 AND action = 'escalate'
+                 AND verdict = 'True'
+               ORDER BY cluster_index ASC;""",
             (ngram,),
         )
         cluster_rows = cursor.fetchall()
@@ -471,6 +480,41 @@ class InsightsRepository:
                 self._fetch_morph_hypotheses(morph, variants=selected)
             )
         return clusters, residuals, hypotheses
+
+    def fetch_accepted_definition_counts(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Optional[Iterable[str]] = None,
+    ) -> Dict[str, int]:
+        """Return the count of accepted definitions per morph.
+
+        Accepted definitions are clusters with action='escalate' AND verdict='True'.
+        This count is used to determine specificity: fewer definitions = more specific.
+        """
+        selected = list(variants) if variants else self.variants
+        unique = {m.upper() for m in morphs if m}
+        counts: Dict[str, int] = {}
+
+        for morph in sorted(unique):
+            total = 0
+            for variant in selected:
+                conn = self._connections.get(variant)
+                if conn is None:
+                    continue
+                cursor = conn.execute(
+                    """SELECT COUNT(*) FROM clusters
+                       WHERE TRIM(ngram) COLLATE NOCASE = ?
+                         AND action = 'escalate'
+                         AND verdict = 'True'""",
+                    (morph,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    total += row[0]
+            counts[morph] = total
+
+        return counts
 
     def fetch_accepted_morphs(self, variant: str) -> Dict[str, AcceptedMorphInfo]:
         """Return accepted morph hypotheses for a single variant.
