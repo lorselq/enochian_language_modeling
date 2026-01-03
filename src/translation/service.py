@@ -6,7 +6,7 @@ from enum import Enum
 import numbers
 from pathlib import Path
 from types import TracebackType
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, TypeVar
+from typing import Callable, Iterable, Sequence, TypeVar
 
 import numpy as np
 
@@ -52,7 +52,7 @@ class InterpretationService:
         *,
         candidate_finder: MorphemeCandidateFinder,
         repository: InsightsRepository,
-        active_variants: Optional[Iterable[str]] = None,
+        active_variants: Iterable[str] | None = None,
         max_ngram_len: int = 7,
     ) -> None:
         self.candidate_finder = candidate_finder
@@ -64,7 +64,7 @@ class InterpretationService:
     def from_config(
         cls,
         *,
-        variants: Optional[Iterable[str]] = None,
+        variants: Iterable[str] | None = None,
         max_ngram_len: int = 7,
     ) -> "InterpretationService":
         paths = get_config_paths()
@@ -113,9 +113,9 @@ class InterpretationService:
         self,
         text: str,
         *,
-        max_ngram_len: Optional[int] = None,
-        variants: Optional[Iterable[str]] = None,
-    ) -> Dict[str, object]:
+        max_ngram_len: int | None = None,
+        variants: Iterable[str] | None = None,
+    ) -> dict[str, object]:
         max_len = max_ngram_len or self.max_ngram_len
         active_variants = list(variants) if variants else self.active_variants
         if active_variants:
@@ -123,7 +123,7 @@ class InterpretationService:
 
         tokens = tokenize_words(text)
         ngram_slices = expand_sentence_ngrams(text, max_len=max_len)
-        analyses: List[Dict[str, object]] = []
+        analyses: list[dict[str, object]] = []
         for slice_info in ngram_slices:
             ngram_text = slice_info.ngram
             cluster_records = self.repository.fetch_clusters(
@@ -138,9 +138,9 @@ class InterpretationService:
                     1, self.candidate_finder.find_candidates, ngram_text
                 )
 
-            candidate_lookup: Dict[str, Dict[str, object]] = {}
-            unique_candidates: List[Dict[str, object]] = []
-            seen_signatures: Set[tuple] = set()
+            candidate_lookup: dict[str, dict[str, object]] = {}
+            unique_candidates: list[dict[str, object]] = []
+            seen_signatures: set[tuple] = set()
 
             for candidate in candidate_breakdowns:
                 cleaned = _cleanup_candidate(candidate)
@@ -184,10 +184,10 @@ class InterpretationService:
     def _serialize_cluster(
         self,
         record: ClusterRecord,
-        candidate_lookup: Dict[str, Dict[str, object]],
-        candidates: List[Dict[str, object]],
-    ) -> Dict[str, object]:
-        serialized: Dict[str, object] = {
+        candidate_lookup: dict[str, dict[str, object]],
+        candidates: list[dict[str, object]],
+    ) -> dict[str, object]:
+        serialized: dict[str, object] = {
             "variant": record.variant,
             "cluster_id": record.cluster_id,
             "run_id": record.run_id,
@@ -211,7 +211,7 @@ class InterpretationService:
             ),
         }
 
-        enriched_defs: List[Dict[str, object]] = []
+        enriched_defs: list[dict[str, object]] = []
         for raw_def in record.raw_definitions:
             normalized_options = {
                 _safe_lower(raw_def.source_word),
@@ -237,12 +237,12 @@ class InterpretationService:
 
     def _reconcile_residual_details(
         self,
-        details: List[ResidualDetail],
-        candidate_lookup: Dict[str, Dict[str, object]],
-        candidates: List[Dict[str, object]],
-    ) -> List[Dict[str, object]]:
-        reconciled: List[Dict[str, object]] = []
-        matched_candidates: Set[int] = set()
+        details: list[ResidualDetail],
+        candidate_lookup: dict[str, dict[str, object]],
+        candidates: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        reconciled: list[dict[str, object]] = []
+        matched_candidates: set[int] = set()
 
         for detail in details:
             candidate = None
@@ -261,9 +261,9 @@ class InterpretationService:
         return reconciled
 
     def _merge_residual_detail(
-        self, detail: ResidualDetail, candidate: Optional[Dict[str, object]]
-    ) -> Dict[str, object]:
-        payload: Dict[str, object] = {
+        self, detail: ResidualDetail, candidate: dict[str, object] | None
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
             "normalized": detail.normalized,
             "definition": detail.definition,
             "coverage_ratio": detail.coverage_ratio,
@@ -319,11 +319,11 @@ class SingleWordTranslationService:
         candidate_finder: MorphemeCandidateFinder,
         repository: InsightsRepository,
         scoring_weights: ScoringWeights | None = None,
-        active_variants: Optional[Iterable[str]] = None,
+        active_variants: Iterable[str] | None = None,
         max_ngram_len: int = 7,
         llm_enabled: bool = False,
         llm_use_remote: bool = False,
-        llm_adapter: Callable[[List[str], List[str], Dict[str, object]], SynthesisResult] = synthesize_definition,
+        llm_adapter: Callable[[list[str], list[str], dict[str, object]], SynthesisResult] = synthesize_definition,
     ) -> None:
         self.candidate_finder = candidate_finder
         self.repository = repository
@@ -339,7 +339,7 @@ class SingleWordTranslationService:
     def from_config(
         cls,
         *,
-        variants: Optional[Iterable[str]] = None,
+        variants: Iterable[str] | None = None,
         max_ngram_len: int = 7,
         scoring_weights: ScoringWeights | None = None,
         llm_enabled: bool = False,
@@ -396,15 +396,15 @@ class SingleWordTranslationService:
         self,
         word: str,
         *,
-        variants: Optional[Iterable[str]] = None,
+        variants: Iterable[str] | None = None,
         strategy: str = "prefer-balance",
         top_k: int = 3,
-        llm: Optional[bool] = None,
+        llm: bool | None = None,
         fallback_top_n: int = 5,
         evidence_mode: EvidenceMode = EvidenceMode.ALL,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
 
         Steps (Task 4.2):
@@ -429,7 +429,54 @@ class SingleWordTranslationService:
             min_n=self.candidate_finder.min_n,
             max_n=self.candidate_finder.max_n,
         )
-        substring_support: List[str] = []
+        if not evidence or not getattr(evidence, "word", None):
+            fallback_morphs = self._fallback_morph_hints(normalized)
+            llm_enabled = self.llm_enabled if llm is None else bool(llm)
+            return {
+                "word": normalized,
+                "variants_queried": active_variants or [],
+                "strategy": strategy,
+                "evidence_mode": evidence_mode.value,
+                "weighting_enabled": weight_enabled,
+                "llm_enabled": llm_enabled,
+                "llm_mode": (
+                    "remote"
+                    if llm_enabled and self.llm_use_remote
+                    else "local"
+                    if llm_enabled
+                    else None
+                ),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "candidates": [],
+                "evidence": {},
+                "fallback_morphs": fallback_morphs,
+                "diagnostics": {
+                    "evidence_missing": True,
+                    "substring_support": [],
+                    "fasttext": self.repository.fasttext_diagnostics(),
+                    "repository": self.repository.path_diagnostics(),
+                    "word_lookup": self.repository.word_lookup_diagnostics(
+                        normalized, variants=active_variants
+                    ),
+                    "scoring_weights": (
+                        asdict(self.scoring_weights.normalized())
+                        if weight_enabled
+                        else None
+                    ),
+                    "weighting_enabled": weight_enabled,
+                    "hard_filters": {},
+                    "decomposition": {
+                        "generated": 0,
+                        "filtered": 0,
+                        "selected": 0,
+                        "fallback_generated": 0,
+                        "fallback_used": False,
+                        "fallback_mode": None,
+                        "fallback_min_coverage_ratio": None,
+                    },
+                },
+            }
+        substring_support: list[str] = []
         substrings = self._substring_candidates(normalized)
         if substrings:
             (
@@ -459,12 +506,15 @@ class SingleWordTranslationService:
         # In clusters-only mode, only cluster evidence is used.
         self._apply_evidence_mode(evidence, mode=evidence_mode)
 
-        n_best = max(top_k * 5, self.candidate_finder.beam_width)
+        beam_width = getattr(self.candidate_finder, "beam_width", 10)
+        if beam_width is None:
+            beam_width = 10
+        n_best = max(top_k * 5, beam_width)
 
         # Fetch accepted definition counts for all possible substrings
         # This is used to penalize ambiguous morphs (many definitions) during beam search
         all_substrings = self._substring_candidates(normalized, include_singletons=True)
-        definition_counts: Dict[str, int] = {}
+        definition_counts: dict[str, int] = {}
         if evidence_mode != self.EvidenceMode.RESIDUALS_ONLY:
             definition_counts = self.repository.fetch_accepted_definition_counts(
                 all_substrings, variants=active_variants
@@ -495,7 +545,7 @@ class SingleWordTranslationService:
 
         # Second pass: generate singleton-enabled decompositions for all words
         # Even short words like OD (O+D) or ITA (I+TA) can have meaningful singleton splits
-        singleton_decomps: List[Decomposition] = []
+        singleton_decomps: list[Decomposition] = []
         if self.candidate_finder.min_n > 1:
             singleton_decomps, singleton_diag = self._with_min_n(
                 1,
@@ -541,7 +591,7 @@ class SingleWordTranslationService:
                 )
         # Evidence mode already applied at the start - hard filter respects it
         filtered, filter_diagnostics = apply_hard_filters(decompositions, evidence)
-        fallback_decompositions: List[Decomposition] = []
+        fallback_decompositions: list[Decomposition] = []
         fallback_used = False
         fallback_mode: str | None = None
         fallback_min_coverage: float | None = None
@@ -612,7 +662,7 @@ class SingleWordTranslationService:
                     "min_coverage_ratio": relaxed_min_coverage,
                 }
 
-        ranked: List[tuple[Decomposition, float]] = []
+        ranked: list[tuple[Decomposition, float]] = []
         coherence_results: dict[tuple[str, ...], CoherenceResult] = {}
         fasttext_model = getattr(self.candidate_finder, "fasttext_model", None)
 
@@ -665,7 +715,7 @@ class SingleWordTranslationService:
             evidence=evidence,
         )
 
-        fallback_morphs: List[dict[str, object]] = []
+        fallback_morphs: list[dict[str, object]] = []
         if not selected:
             fallback_morphs = self._fallback_morph_hints(normalized)
 
@@ -722,21 +772,21 @@ class SingleWordTranslationService:
 
     def _enrich_candidates(
         self,
-        candidates: List[dict[str, object]],
+        candidates: list[dict[str, object]],
         *,
         evidence: WordEvidence,
         strategy: str,
         llm_enabled: bool,
-    ) -> List[dict[str, object]]:
-        enriched: List[dict[str, object]] = []
+    ) -> list[dict[str, object]]:
+        enriched: list[dict[str, object]] = []
         for idx, candidate in enumerate(candidates):
             base = dict(candidate)
             meanings_raw = base.get("meanings")
-            meanings: List[dict[str, object]] = (
+            meanings: list[dict[str, object]] = (
                 meanings_raw if isinstance(meanings_raw, list) else []
             )
             warnings_raw = base.get("warnings")
-            warnings: List[str] = (
+            warnings: list[str] = (
                 [str(w) for w in warnings_raw]
                 if isinstance(warnings_raw, (list, tuple))
                 else []
@@ -752,7 +802,7 @@ class SingleWordTranslationService:
                     self._meaning_or_morph(entry) for entry in meanings if isinstance(entry, dict)
                 ]
                 morphs_raw = base.get("morphs")
-                morphs: List[str] = (
+                morphs: list[str] = (
                     [str(m) for m in morphs_raw]
                     if isinstance(morphs_raw, (list, tuple))
                     else []
@@ -810,7 +860,7 @@ class SingleWordTranslationService:
         finally:
             self.candidate_finder.min_n = previous
 
-    def _fallback_morph_hints(self, word: str) -> List[dict[str, object]]:
+    def _fallback_morph_hints(self, word: str) -> list[dict[str, object]]:
         if not word:
             return []
         word_upper = word.upper()
@@ -820,7 +870,7 @@ class SingleWordTranslationService:
         if not dictionary:
             return []
 
-        hints: List[dict[str, object]] = []
+        hints: list[dict[str, object]] = []
         seen: set[str] = set()
         for start in range(len(word_upper)):
             for end in range(start + min_n, min(len(word_upper), start + max_n) + 1):
@@ -858,7 +908,7 @@ class SingleWordTranslationService:
         )
         return hints
 
-    def _fasttext_similarity(self, word: str, morph: str) -> Optional[float]:
+    def _fasttext_similarity(self, word: str, morph: str) -> float | None:
         model = self.candidate_finder.fasttext_model
         if not model:
             return None
@@ -876,7 +926,7 @@ class SingleWordTranslationService:
 
     def _substring_candidates(
         self, word: str, *, include_singletons: bool = True
-    ) -> List[str]:
+    ) -> list[str]:
         """Generate substring candidates for evidence lookup.
 
         Returns substrings sorted by length descending (longest first), then
@@ -902,9 +952,9 @@ class SingleWordTranslationService:
 
     @staticmethod
     def _merge_decompositions(
-        primary: List[Decomposition],
-        secondary: List[Decomposition],
-    ) -> List[Decomposition]:
+        primary: list[Decomposition],
+        secondary: list[Decomposition],
+    ) -> list[Decomposition]:
         """Merge two sets of decompositions, deduplicating by morph sequence.
 
         When the same morph sequence appears in both sets, the decomposition
@@ -933,7 +983,7 @@ class SingleWordTranslationService:
 
     @staticmethod
     def _concatenate_meanings(meanings: Sequence[dict[str, object]]) -> str:
-        parts: List[str] = []
+        parts: list[str] = []
         for meaning in meanings:
             if not isinstance(meaning, dict):
                 continue
@@ -960,9 +1010,9 @@ class SingleWordTranslationService:
     @staticmethod
     def _merge_support_evidence(
         evidence: WordEvidence,
-        clusters: List[ClusterRecord],
-        residuals: List[ResidualSemanticRecord],
-        hypotheses: List[MorphHypothesisRecord],
+        clusters: list[ClusterRecord],
+        residuals: list[ResidualSemanticRecord],
+        hypotheses: list[MorphHypothesisRecord],
     ) -> None:
         """Merge morph-level support evidence into the primary WordEvidence."""
         cluster_keys = {
@@ -1035,8 +1085,8 @@ class SingleWordTranslationService:
         }
 
 
-def _cleanup_candidate(candidate: Dict[str, object]) -> Dict[str, object]:
-    cleaned: Dict[str, object] = {}
+def _cleanup_candidate(candidate: dict[str, object]) -> dict[str, object]:
+    cleaned: dict[str, object] = {}
     for key in ("normalized", "composite", "cos_sim", "confidence", "tfidf"):
         if key in candidate:
             value = candidate[key]
@@ -1047,8 +1097,8 @@ def _cleanup_candidate(candidate: Dict[str, object]) -> Dict[str, object]:
     return cleaned
 
 
-def _candidate_lookup_keys(candidate: Dict[str, object]) -> Set[str]:
-    keys: Set[str] = set()
+def _candidate_lookup_keys(candidate: dict[str, object]) -> set[str]:
+    keys: set[str] = set()
     for raw in (candidate.get("normalized"), candidate.get("word")):
         lowered = _safe_lower(raw if isinstance(raw, str) else None)
         if lowered:
@@ -1068,7 +1118,7 @@ def _candidate_lookup_keys(candidate: Dict[str, object]) -> Set[str]:
     return keys
 
 
-def _residual_detail_from_candidate(candidate: Dict[str, object]) -> Dict[str, object]:
+def _residual_detail_from_candidate(candidate: dict[str, object]) -> dict[str, object]:
     raw_breakdown = candidate.get("breakdown")
     breakdown_dict = raw_breakdown if isinstance(raw_breakdown, dict) else {}
     uncovered = _extract_uncovered_texts(breakdown_dict)
@@ -1091,10 +1141,10 @@ def _residual_detail_from_candidate(candidate: Dict[str, object]) -> Dict[str, o
     }
 
 
-def _extract_uncovered_texts(breakdown: Dict[str, object]) -> List[str]:
+def _extract_uncovered_texts(breakdown: dict[str, object]) -> list[str]:
     raw_uncovered = breakdown.get("uncovered")
     uncovered = raw_uncovered if isinstance(raw_uncovered, list) else []
-    texts: List[str] = []
+    texts: list[str] = []
     for entry in uncovered:
         text = entry.get("text") if isinstance(entry, dict) else None
         if isinstance(text, str) and text.strip():
@@ -1102,10 +1152,10 @@ def _extract_uncovered_texts(breakdown: Dict[str, object]) -> List[str]:
     return texts
 
 
-def _extract_low_confidence_segments(breakdown: Dict[str, object]) -> List[str]:
+def _extract_low_confidence_segments(breakdown: dict[str, object]) -> list[str]:
     raw_segments = breakdown.get("segments")
     segments = raw_segments if isinstance(raw_segments, list) else []
-    low_conf: List[str] = []
+    low_conf: list[str] = []
     for segment in segments:
         if not isinstance(segment, dict):
             continue
@@ -1121,7 +1171,7 @@ def _extract_low_confidence_segments(breakdown: Dict[str, object]) -> List[str]:
     return low_conf
 
 
-def _first_sense_definition(entry: EntryRecord) -> Optional[str]:
+def _first_sense_definition(entry: EntryRecord) -> str | None:
     senses = entry.get("senses")
     if not isinstance(senses, list) or not senses:
         return None
@@ -1134,7 +1184,7 @@ def _first_sense_definition(entry: EntryRecord) -> Optional[str]:
     return None
 
 
-def _safe_lower(value: Optional[str]) -> Optional[str]:
+def _safe_lower(value: str | None) -> str | None:
     if isinstance(value, str):
         lowered = value.strip().lower()
         return lowered or None
@@ -1156,7 +1206,7 @@ def _safe_ratio(breakdown: object, key: str) -> float:
         return defaults.get(key, 0.0)
 
 
-def _has_segment_coverage(candidates: Sequence[Dict[str, object]]) -> bool:
+def _has_segment_coverage(candidates: Sequence[dict[str, object]]) -> bool:
     for candidate in candidates:
         breakdown = candidate.get("breakdown")
         if not isinstance(breakdown, dict):
@@ -1171,7 +1221,7 @@ def _relaxed_fallback(
     decompositions: Sequence[Decomposition],
     *,
     top_n: int,
-) -> tuple[List[Decomposition], float | None]:
+) -> tuple[list[Decomposition], float | None]:
     if not decompositions:
         return [], None
 
@@ -1182,7 +1232,7 @@ def _relaxed_fallback(
     if limit <= 0:
         limit = len(decompositions)
 
-    scored: List[tuple[Decomposition, float]] = [
+    scored: list[tuple[Decomposition, float]] = [
         (decomp, _safe_ratio(decomp.breakdown, "coverage_ratio"))
         for decomp in decompositions
     ]
