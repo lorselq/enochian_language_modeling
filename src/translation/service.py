@@ -449,11 +449,11 @@ class SingleWordTranslationService:
                     support_residuals,
                     support_hypotheses,
                 )
-        # NOTE: Do NOT apply evidence mode here. Decompositions should be
-        # generated with full evidence to find all valid segmentations.
-        # Evidence mode is applied later, before hard filtering, so that
-        # clusters-only mode still allows decompositions that have any support
-        # but only uses cluster definitions for output.
+
+        # Apply evidence mode EARLY so that decomposition generation, morph_support
+        # labeling, and hard filtering all respect the mode.
+        # In clusters-only mode, only cluster evidence is used.
+        self._apply_evidence_mode(evidence, mode=evidence_mode)
 
         n_best = max(top_k * 5, self.candidate_finder.beam_width)
 
@@ -506,19 +506,21 @@ class SingleWordTranslationService:
                 ) = self.repository.fetch_morph_support(
                     morphs, variants=active_variants
                 )
+                # Filter support data based on evidence mode before merging
+                if evidence_mode == self.EvidenceMode.CLUSTERS_ONLY:
+                    support_residuals = []
+                    support_hypotheses = []
+                elif evidence_mode == self.EvidenceMode.RESIDUALS_ONLY:
+                    support_clusters = []
+                    support_hypotheses = []
                 self._merge_support_evidence(
                     evidence,
                     support_clusters,
                     support_residuals,
                     support_hypotheses,
                 )
-        # NOTE: Apply hard filters with FULL evidence so decompositions with
-        # any support pass. Evidence mode is applied AFTER filtering for
-        # scoring and output, so clusters-only still shows cluster definitions
-        # but doesn't reject decompositions that have residual/attested support.
+        # Evidence mode already applied at the start - hard filter respects it
         filtered, filter_diagnostics = apply_hard_filters(decompositions, evidence)
-        # Now apply evidence mode for scoring and meaning extraction
-        self._apply_evidence_mode(evidence, mode=evidence_mode)
         fallback_decompositions: List[Decomposition] = []
         fallback_used = False
         fallback_mode: str | None = None
@@ -550,17 +552,23 @@ class SingleWordTranslationService:
                     ) = self.repository.fetch_morph_support(
                         decomp_morphs, variants=active_variants
                     )
+                    # Filter support data based on evidence mode before merging
+                    if evidence_mode == self.EvidenceMode.CLUSTERS_ONLY:
+                        support_residuals = []
+                        support_hypotheses = []
+                    elif evidence_mode == self.EvidenceMode.RESIDUALS_ONLY:
+                        support_clusters = []
+                        support_hypotheses = []
                     self._merge_support_evidence(
                         evidence,
                         support_clusters,
                         support_residuals,
                         support_hypotheses,
                     )
-                # Apply hard filters with FULL evidence, then apply mode after
+                # Evidence mode already applied - hard filter respects it
                 filtered, filter_diagnostics = apply_hard_filters(
                     fallback_decompositions, evidence
                 )
-                self._apply_evidence_mode(evidence, mode=evidence_mode)
 
         if not filtered:
             relaxed_source = (
