@@ -425,10 +425,13 @@ class InsightsRepository:
         attested_definitions = self._fetch_attested_definitions(
             normalized, variants=active_variants
         )
+        dictionary_min_n = min_n
+        if dictionary_min_n is not None and dictionary_min_n > 1:
+            dictionary_min_n = 1
         dictionary_morphs = _dictionary_morphs_for_word(
             normalized,
             dictionary_entries,
-            min_n=min_n,
+            min_n=dictionary_min_n,
             max_n=max_n,
         )
 
