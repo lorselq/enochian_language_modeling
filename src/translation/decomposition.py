@@ -97,6 +97,7 @@ class DecompositionEngine:
         allow_whole_word: bool = True,
         n_best: int | None = None,
         definition_counts: Dict[str, int] | None = None,
+        definition_glosses: Dict[str, List[tuple[str, Optional[float]]]] | None = None,
     ) -> tuple[List[Decomposition], Dict[str, object]]:
         """Return all plausible decompositions for ``word`` plus diagnostics.
 
@@ -161,6 +162,7 @@ class DecompositionEngine:
             extra_ngrams=merged,
             n_best=n_best,
             definition_counts=definition_counts,
+            definition_glosses=definition_glosses,
         )
         diagnostics["parse_count"] = len(parses)
 
@@ -179,6 +181,7 @@ class DecompositionEngine:
                     extra_ngrams=merged,
                     n_best=n_best,
                     definition_counts=definition_counts,
+                    definition_glosses=definition_glosses,
                 )
                 diagnostics["parse_count"] = len(parses)
                 if parses:
