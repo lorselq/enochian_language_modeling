@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Iterable
 
 import numpy as np
 
@@ -159,7 +159,7 @@ def _safe_number(value: Any, default: float = 0.0) -> float:
 
 def _average_cluster_quality(
     morphs: Iterable[str],
-    clusters: List[ClusterRecord],
+    clusters: list[ClusterRecord],
 ) -> float:
     """Compute average cluster quality across morphs using cohesion / coverage.
 
@@ -179,7 +179,7 @@ def _average_cluster_quality(
     morph_set = set(morph_list)
 
     # Best quality per morph.
-    best_scores: Dict[str, float] = {}
+    best_scores: dict[str, float] = {}
     for cluster in clusters:
         morph = cluster.ngram.upper()
         if morph not in morph_set:
@@ -208,9 +208,9 @@ def _average_cluster_quality(
 
 def _acceptance_bonus(
     morphs: Iterable[str],
-    clusters: List[ClusterRecord],
-    residuals: List[ResidualSemanticRecord],
-    hypotheses: List[MorphHypothesisRecord],
+    clusters: list[ClusterRecord],
+    residuals: list[ResidualSemanticRecord],
+    hypotheses: list[MorphHypothesisRecord],
 ) -> float:
     """Calculate acceptance bonus for a set of morphs.
 
@@ -218,17 +218,17 @@ def _acceptance_bonus(
     incentive to split a supported morph into many sub-morphs.
     """
 
-    cluster_counts: Dict[str, int] = {}
+    cluster_counts: dict[str, int] = {}
     for cluster in clusters:
         key = cluster.ngram.upper()
         cluster_counts[key] = cluster_counts.get(key, 0) + 1
 
-    residual_counts: Dict[str, int] = {}
+    residual_counts: dict[str, int] = {}
     for residual in residuals:
         key = residual.residual.upper()
         residual_counts[key] = residual_counts.get(key, 0) + 1
 
-    hypothesis_counts: Dict[str, int] = {}
+    hypothesis_counts: dict[str, int] = {}
     for hypothesis in hypotheses:
         key = hypothesis.morph.upper()
         hypothesis_counts[key] = hypothesis_counts.get(key, 0) + 1
@@ -257,7 +257,7 @@ def _acceptance_bonus(
 
 def _specificity_bonus(
     morphs: Iterable[str],
-    clusters: List[ClusterRecord],
+    clusters: list[ClusterRecord],
 ) -> float:
     """Calculate specificity bonus rewarding morphs with fewer definitions.
 
@@ -267,7 +267,7 @@ def _specificity_bonus(
     Returns a score in [0, 1] where higher means more specific.
     """
     # Count distinct definitions per morph
-    morph_def_counts: Dict[str, int] = {}
+    morph_def_counts: dict[str, int] = {}
     for cluster in clusters:
         key = cluster.ngram.upper()
         morph_def_counts[key] = morph_def_counts.get(key, 0) + 1
@@ -330,7 +330,7 @@ class CoherenceResult:
 
 
 def compute_semantic_coherence(
-    morphs: List[str],
+    morphs: list[str],
     fasttext_model: Any,
     *,
     cohesion_threshold: float = 0.3,
@@ -380,7 +380,7 @@ def compute_semantic_coherence(
     large_morphs = [m.upper() for m in morphs if len(m) > 1]
 
     # Get vectors for all morphs
-    vectors: Dict[str, np.ndarray] = {}
+    vectors: dict[str, np.ndarray] = {}
     wv = getattr(fasttext_model, "wv", fasttext_model)
     for morph in set(singletons + large_morphs):
         try:
@@ -447,8 +447,8 @@ def compute_semantic_coherence(
 
 
 def _compute_avg_pairwise_similarity(
-    morphs: List[str],
-    vectors: Dict[str, np.ndarray],
+    morphs: list[str],
+    vectors: dict[str, np.ndarray],
 ) -> float:
     """Compute average pairwise cosine similarity among morphs.
 
@@ -458,7 +458,7 @@ def _compute_avg_pairwise_similarity(
     if len(morph_vecs) < 2:
         return 0.0
 
-    similarities: List[float] = []
+    similarities: list[float] = []
     for i in range(len(morph_vecs)):
         for j in range(i + 1, len(morph_vecs)):
             _, vec_i = morph_vecs[i]
@@ -485,7 +485,7 @@ def score_decomposition_with_coherence(
     *,
     weights: ScoringWeights | None = None,
     coherence_weight: float = 0.15,
-) -> Tuple[float, CoherenceResult]:
+) -> tuple[float, CoherenceResult]:
     """Score a decomposition including semantic coherence.
 
     This extends the standard scoring with a coherence component that
@@ -508,7 +508,7 @@ def score_decomposition_with_coherence(
 
     Returns
     -------
-    Tuple[float, CoherenceResult]:
+    tuple[float, CoherenceResult]:
         The combined score and the coherence analysis result.
     """
     base_score = score_decomposition(decomp, evidence, weights=weights)

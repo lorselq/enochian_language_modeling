@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Iterable
 import json
 import re
 
@@ -22,7 +22,7 @@ def apply_strategy(
 
     strategy_key = (strategy or "").lower().strip()
 
-    support_counts: Dict[str, int] | None = None
+    support_counts: dict[str, int] | None = None
     if strategy_key == "prefer-known":
         support_counts = _compile_support_counts(evidence)
 
@@ -44,7 +44,7 @@ def _strategy_bonus(
     *,
     decomp: Decomposition,
     strategy: str,
-    support_counts: Dict[str, int] | None,
+    support_counts: dict[str, int] | None,
 ) -> float:
     if strategy == "prefer-fewer":
         return -0.5 * len(decomp.morphs)
@@ -69,9 +69,9 @@ def _strategy_bonus(
     return 0.0
 
 
-def _compile_support_counts(evidence: WordEvidence) -> Dict[str, int]:
+def _compile_support_counts(evidence: WordEvidence) -> dict[str, int]:
     """Aggregate per-morph usage counts across evidence types (case-insensitive keys)."""
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
 
     def bump(key: str) -> None:
         norm = (key or "").upper()
@@ -104,11 +104,11 @@ def _compile_support_counts(evidence: WordEvidence) -> Dict[str, int]:
 # ---------------------------
 
 def select_top_k(
-    ranked: List[Tuple[Decomposition, float]],
+    ranked: list[tuple[Decomposition, float]],
     k: int = 3,
     *,
     evidence: WordEvidence | None = None,
-) -> List[dict[str, object]]:
+) -> list[dict[str, object]]:
     if not ranked:
         return []
 
@@ -119,14 +119,14 @@ def select_top_k(
     if top_k <= 0:
         return []
 
-    ordered: List[Tuple[Decomposition, float]] = sorted(
+    ordered: list[tuple[Decomposition, float]] = sorted(
         ((d, _safe_number(s, default=0.0)) for d, s in ranked),
         key=lambda pair: pair[1],
         reverse=True,
     )
 
     seen: set[tuple[str, ...]] = set()
-    deduped: List[Tuple[Decomposition, float]] = []
+    deduped: list[tuple[Decomposition, float]] = []
     for decomp, score in ordered:
         key = tuple(decomp.morphs)
         if key in seen:
@@ -140,9 +140,9 @@ def select_top_k(
         if delta < 0.05:
             tie_warning = "alternate decomposition exists"
 
-    results: List[dict[str, object]] = []
+    results: list[dict[str, object]] = []
     for idx, (decomp, score) in enumerate(deduped[:top_k], start=1):
-        warnings: List[str] = []
+        warnings: list[str] = []
         if tie_warning and idx <= 2:
             warnings.append(tie_warning)
 
@@ -166,12 +166,12 @@ def _extract_meanings(
     *,
     decomp: Decomposition,
     evidence: WordEvidence | None,
-) -> List[dict[str, object]]:
-    support_lookup: Dict[str, str] = {
+) -> list[dict[str, object]]:
+    support_lookup: dict[str, str] = {
         k.upper(): v for k, v in (decomp.morph_support or {}).items()
     }
 
-    meanings: List[dict[str, object]] = []
+    meanings: list[dict[str, object]] = []
     for idx, morph in enumerate(decomp.morphs):
         key = (morph or "").upper()
         canonical = (
@@ -269,7 +269,7 @@ def _meaning_from_evidence(
 
 
 def _first_cluster_raw_definition(cluster: ClusterRecord) -> str | None:
-    # raw_definitions is a List[RawDefinition] (dataclass), so use attributes.
+    # raw_definitions is a list[RawDefinition] (dataclass), so use attributes.
     for raw in cluster.raw_definitions:
         definition = _first_non_empty(raw.enhanced_def, raw.definition)
         if definition is not None:

@@ -13,7 +13,7 @@ import json
 import sys
 import textwrap
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, Sequence
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -203,7 +203,7 @@ def build_interpret_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[Iterable[str]] = None) -> int:
+def main(argv: Iterable[str] | None = None) -> int:
     """Dispatch the CLI while preserving backward compatibility.
 
     The entry point supports two invocation styles:
@@ -353,7 +353,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
             llm_enabled=llm_enabled,
             llm_use_remote=llm_use_remote,
         ) as service:
-            outputs: List[dict[str, object]] = []
+            outputs: list[dict[str, object]] = []
             for variant in variants:
                 result = service.translate_word(
                     word,
@@ -376,7 +376,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
         _emit_error(str(exc))
         return 2
 
-    payload: dict[str, object] | List[dict[str, object]]
+    payload: dict[str, object] | list[dict[str, object]]
     if args.variant == "both":
         payload = outputs
     else:
@@ -458,7 +458,7 @@ def _configure_llm_env(llm_mode: str) -> None:
         )
 
 
-def _resolve_variants(variant: str) -> List[str]:
+def _resolve_variants(variant: str) -> list[str]:
     """Expand a variant selector into the concrete variant list.
 
     The ``both`` option is expanded to ``["solo", "debate"]`` to keep downstream
@@ -469,14 +469,14 @@ def _resolve_variants(variant: str) -> List[str]:
     return [variant]
 
 
-def _missing_db_paths(variants: Sequence[str]) -> List[Path]:
+def _missing_db_paths(variants: Sequence[str]) -> list[Path]:
     """Return any insight database paths that are missing on disk.
 
     Missing databases are a hard failure for translation, so we preflight them
     up front to provide immediate, clear feedback.
     """
     paths = get_config_paths()
-    missing: List[Path] = []
+    missing: list[Path] = []
     for variant in variants:
         path = paths.get(variant)
         if path and not path.exists():
@@ -523,7 +523,7 @@ def _build_output_payload(
     """
     evidence_raw = result.get("evidence")
     evidence: dict[str, object] = evidence_raw if isinstance(evidence_raw, dict) else {}
-    senses: List[dict[str, object]] = []
+    senses: list[dict[str, object]] = []
     payload: dict[str, object] = {
         "word": result.get("word"),
         "variant": variant,
@@ -627,7 +627,7 @@ def _no_direct_evidence(evidence: dict[str, object]) -> bool:
 
 
 def _render_json(
-    payload: dict[str, object] | List[dict[str, object]], *, pretty: bool
+    payload: dict[str, object] | list[dict[str, object]], *, pretty: bool
 ) -> str:
     """Render output payloads as JSON, optionally pretty-printed.
 
@@ -640,7 +640,7 @@ def _render_json(
 
 
 def _format_text_report(
-    payload: dict[str, object] | List[dict[str, object]],
+    payload: dict[str, object] | list[dict[str, object]],
     *,
     verbose: bool = False,
     trace_filters: bool = False,
@@ -674,7 +674,7 @@ def _format_variant_report(
     The output emphasizes the evidence hierarchy: first the high-level summary,
     then candidate senses, then any FastText fallback neighbors.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     word = payload.get("word", "")
     variant = payload.get("variant", "")
     strategy = payload.get("strategy", "")
@@ -787,7 +787,7 @@ def _format_variant_report(
                 coverage = hint.get("coverage_ratio")
                 similarity = hint.get("fasttext_similarity")
                 label = f"{morph}: {definition}"
-                details: List[str] = []
+                details: list[str] = []
                 if isinstance(coverage, (int, float)):
                     details.append(f"coverage {float(coverage):.2f}")
                 if isinstance(similarity, (int, float)):
@@ -874,7 +874,7 @@ def _format_variant_report(
                     for label, per_variant in counts.items():
                         if not isinstance(per_variant, dict):
                             continue
-                        parts: List[str] = []
+                        parts: list[str] = []
                         for variant_key, count in per_variant.items():
                             if count is None:
                                 parts.append(f"{variant_key}=n/a")
@@ -935,7 +935,7 @@ def _format_variant_report(
                 generated = decomposition.get("generated")
                 filtered = decomposition.get("filtered")
                 selected = decomposition.get("selected")
-                parts: List[str] = []
+                parts: list[str] = []
                 if isinstance(generated, int):
                     parts.append(f"generated={generated}")
                 if isinstance(filtered, int):
@@ -956,7 +956,7 @@ def _format_variant_report(
                 stage1 = hard_filters.get("stage1_dropped")
                 stage2 = hard_filters.get("stage2_dropped")
                 stage3 = hard_filters.get("stage3_dropped")
-                dropped_parts: List[str] = []
+                dropped_parts: list[str] = []
                 if isinstance(stage1, int):
                     dropped_parts.append(f"filter1={stage1}")
                 if isinstance(stage2, int):
@@ -1129,7 +1129,7 @@ def _wrap_text(text: str, *, indent: int, bullet: bool = False) -> str:
     )
 
 
-def _emit_output(content: str, *, output_path: Optional[Path], newline: bool = True) -> None:
+def _emit_output(content: str, *, output_path: Path | None, newline: bool = True) -> None:
     """Write output to a file or stdout, ensuring a trailing newline.
 
     Output files intentionally include a trailing newline for POSIX friendliness.
@@ -1171,7 +1171,7 @@ def _resolve_text(args: argparse.Namespace) -> str:
     raise SystemExit("Provide --text, --input-file, or pipe text via stdin.")
 
 
-def _dedupe_variants(variants: Optional[List[str]]) -> Optional[List[str]]:
+def _dedupe_variants(variants: list[str] | None) -> list[str] | None:
     """Return an ordered, deduplicated list of variants.
 
     Deduplication prevents repeated DB hits when the user supplies the same
@@ -1180,7 +1180,7 @@ def _dedupe_variants(variants: Optional[List[str]]) -> Optional[List[str]]:
     if not variants:
         return None
     seen = set()
-    deduped: List[str] = []
+    deduped: list[str] = []
     for variant in variants:
         if variant not in seen:
             seen.add(variant)
