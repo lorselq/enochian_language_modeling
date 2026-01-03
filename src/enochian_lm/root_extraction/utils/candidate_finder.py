@@ -9,7 +9,10 @@ from functools import lru_cache
 from gensim.utils import simple_preprocess
 from rapidfuzz import process as rf_process, fuzz
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
-from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
+from enochian_lm.root_extraction.utils.embeddings import (
+    cluster_definitions,
+    get_fasttext_model,
+)
 
 DEFAULT_MIN_CANDIDATE_COS_SIM = 0.15
 DEFAULT_MIN_OVERLAP_RATIO = 0.1
@@ -225,6 +228,8 @@ class MorphemeCandidateFinder:
         min_n: int | None = None,
         n_best: int | None = None,
         definition_counts: dict[str, int] | None = None,
+        definition_glosses: dict[str, list[tuple[str, float | None]]] | None = None,
+        definition_cluster_threshold: float = 0.8,
     ) -> list[
         tuple[
             list[str],
@@ -254,6 +259,29 @@ class MorphemeCandidateFinder:
         final = []
         min_len = min_n if min_n is not None else self.min_n
 
+        cluster_count_cache: dict[str, int] = {}
+
+        def _cluster_count(ngram: str) -> int:
+            ngram_key = ngram.upper()
+            if ngram_key in cluster_count_cache:
+                return cluster_count_cache[ngram_key]
+            glosses = definition_glosses.get(ngram_key) if definition_glosses else None
+            if not glosses:
+                cluster_count_cache[ngram_key] = 0
+                return 0
+            texts = [gloss for gloss, _score in glosses if gloss]
+            scores = [score for gloss, score in glosses if gloss]
+            if not texts:
+                cluster_count_cache[ngram_key] = 0
+                return 0
+            clusters = cluster_definitions(
+                texts,
+                similarity_threshold=definition_cluster_threshold,
+                scores=scores,
+            )
+            cluster_count_cache[ngram_key] = len(clusters)
+            return cluster_count_cache[ngram_key]
+
         while beams:
             new_beams = []
             for pos, path, score, ngram_scores, coverage in beams:
@@ -266,6 +294,12 @@ class MorphemeCandidateFinder:
                     entries = self.ngram_index.get(ng, [])
                     if extra_ngrams:
                         entries = entries + extra_ngrams.get(ng, [])
+                    if definition_glosses:
+                        cluster_count = _cluster_count(ng)
+                        if cluster_count > 0 and len(entries) > cluster_count:
+                            entries = sorted(entries, key=lambda item: item[0])[
+                                :cluster_count
+                            ]
                     for canon, tf, df in entries:
                         total_docs = max(1, self.total_docs)
                         idf = math.log(total_docs / (df + 1))
@@ -296,7 +330,7 @@ class MorphemeCandidateFinder:
                         # NAZ (1 def) vs NA (28 defs): log1p(1)*0.5=0.35 vs log1p(28)*0.5=1.68
                         specificity_penalty = 0.0
                         if definition_counts:
-                            def_count = definition_counts.get(canon.upper(), 0)
+                            def_count = definition_counts.get(ng.upper(), 0)
                             if def_count > 0:
                                 specificity_penalty = 0.5 * math.log1p(def_count)
                         tfidf = (
