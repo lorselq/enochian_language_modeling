@@ -14,7 +14,7 @@ callers resilient to LLM variability.
 from dataclasses import dataclass, field
 import json
 import logging
-from typing import Dict, List
+from typing import Any
 
 from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 
@@ -66,9 +66,9 @@ class SynthesisResult:
 
 
 def synthesize_definition(
-    morphs: List[str],
-    meanings: List[str],
-    context: Dict[str, object],
+    morphs: list[str],
+    meanings: list[str],
+    context: dict[str, Any],
 ) -> SynthesisResult:
     """Return an LLM-synthesized gloss for the supplied morph meanings.
 
@@ -130,13 +130,13 @@ def synthesize_definition(
 
 
 def _build_prompt(
-    morphs: List[str], meanings: List[str], context: Dict[str, object]
+    morphs: list[str], meanings: list[str], context: dict[str, Any]
 ) -> str:
     coverage_ratio = _safe_float(context.get("coverage_ratio"), default=0.0)
     residual_ratio = _safe_float(context.get("residual_ratio"), default=1.0)
     strategy = str(context.get("strategy") or "prefer-balance")
 
-    provenance_lines: List[str] = []
+    provenance_lines: list[str] = []
     provenance_raw = context.get("provenance")
     provenance_list = provenance_raw if isinstance(provenance_raw, list) else []
     for item in provenance_list:
@@ -190,9 +190,9 @@ def _parse_response(
     payload: str,
     *,
     fallback: str,
-    context: Dict[str, object],
+    context: dict[str, Any],
     max_len: int = 160,
-) -> Dict[str, str | float]:
+) -> dict[str, str | float]:
     """Parse LLM JSON response with validation and trimming."""
 
     def _trim(value: str) -> str:
@@ -201,7 +201,7 @@ def _parse_response(
             return text
         return text[: max_len - 1].rstrip() + "…"
 
-    parsed: Dict[str, str | float] = {}
+    parsed: dict[str, str | float] = {}
 
     if not payload:
         parsed["definition"] = fallback
@@ -242,7 +242,7 @@ def _parse_response(
 
 def _resolved_confidence(
     reported: float | None,
-    context: Dict[str, object],
+    context: dict[str, Any],
     *,
     fallback_only: bool = False,
 ) -> float:

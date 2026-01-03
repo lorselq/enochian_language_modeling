@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, SupportsFloat, SupportsInt, TypedDict
+from typing import Iterable, Mapping, SupportsFloat, SupportsInt, TypedDict
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
@@ -13,31 +13,31 @@ from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 @dataclass
 class ResidualDetail:
     normalized: str
-    definition: Optional[str]
-    coverage_ratio: Optional[float]
-    residual_ratio: Optional[float]
-    avg_confidence: Optional[float]
-    uncovered: List[str] = field(default_factory=list)
-    low_confidence: List[str] = field(default_factory=list)
+    definition: str | None
+    coverage_ratio: float | None
+    residual_ratio: float | None
+    avg_confidence: float | None
+    uncovered: list[str] = field(default_factory=list)
+    low_confidence: list[str] = field(default_factory=list)
 
 
 @dataclass
 class RawDefinition:
-    source_word: Optional[str]
-    variant: Optional[str]
-    definition: Optional[str]
-    enhanced_def: Optional[str]
-    fasttext: Optional[float]
-    similarity: Optional[float]
-    tier: Optional[str]
-    cluster_id: Optional[int] = None
+    source_word: str | None
+    variant: str | None
+    definition: str | None
+    enhanced_def: str | None
+    fasttext: float | None
+    similarity: float | None
+    tier: str | None
+    cluster_id: int | None = None
 
 
 @dataclass
 class AttestedDefinition:
     variant: str
     source_word: str
-    definition: Optional[str]
+    definition: str | None
     cluster_id: int
     root_ngram: str
 
@@ -45,8 +45,8 @@ class AttestedDefinition:
 @dataclass
 class DictionaryMorph:
     morph: str
-    definition: Optional[str]
-    senses: List[str] = field(default_factory=list)
+    definition: str | None
+    senses: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -56,17 +56,17 @@ class ClusterRecord:
     run_id: str
     ngram: str
     cluster_index: int
-    glossator_def: Optional[str]
-    residual_explained: Optional[float]
-    residual_ratio: Optional[float]
-    residual_headline: Optional[str]
-    residual_focus_prompt: Optional[str]
-    semantic_coverage: Optional[float]
-    cohesion: Optional[float]
-    semantic_cohesion: Optional[float]
-    best_config: Optional[str]
-    residual_details: List[ResidualDetail] = field(default_factory=list)
-    raw_definitions: List[RawDefinition] = field(default_factory=list)
+    glossator_def: str | None
+    residual_explained: float | None
+    residual_ratio: float | None
+    residual_headline: str | None
+    residual_focus_prompt: str | None
+    semantic_coverage: float | None
+    cohesion: float | None
+    semantic_cohesion: float | None
+    best_config: str | None
+    residual_details: list[ResidualDetail] = field(default_factory=list)
+    raw_definitions: list[RawDefinition] = field(default_factory=list)
 
 
 @dataclass
@@ -77,18 +77,18 @@ class ResidualSemanticRecord:
     parent_word: str
     group_index: int
     group_size: int
-    glossator_def: Optional[str]
-    glossator_prompt: Optional[str]
-    residual_headline: Optional[str]
-    residual_focus_prompt: Optional[str]
-    semantic_coverage: Optional[float]
-    cohesion: Optional[float]
-    semantic_cohesion: Optional[float]
-    residual_explained: Optional[float]
-    residual_ratio: Optional[float]
-    derivational_validity: Optional[float]
-    rebuttal_resilience: Optional[float]
-    created_at: Optional[str]
+    glossator_def: str | None
+    glossator_prompt: str | None
+    residual_headline: str | None
+    residual_focus_prompt: str | None
+    semantic_coverage: float | None
+    cohesion: float | None
+    semantic_cohesion: float | None
+    residual_explained: float | None
+    residual_ratio: float | None
+    derivational_validity: float | None
+    rebuttal_resilience: float | None
+    created_at: str | None
 
 
 @dataclass
@@ -97,14 +97,14 @@ class MorphHypothesisRecord:
     hyp_id: int
     morph: str
     source_word: str
-    anchor: Optional[str]
-    seed_glosses: List[str]
-    proposed_gloss: Optional[str]
-    rationale: Optional[str]
-    delta_cosine: Optional[float]
-    residual_before: Optional[float]
-    residual_after: Optional[float]
-    created_at: Optional[str]
+    anchor: str | None
+    seed_glosses: list[str]
+    proposed_gloss: str | None
+    rationale: str | None
+    delta_cosine: float | None
+    residual_before: float | None
+    residual_after: float | None
+    created_at: str | None
 
 
 @dataclass
@@ -116,44 +116,44 @@ class FasttextNeighbor:
 @dataclass
 class WordEvidence:
     word: str
-    variants_queried: List[str]
-    direct_clusters: List[ClusterRecord] = field(default_factory=list)
-    residual_semantics: List[ResidualSemanticRecord] = field(default_factory=list)
-    morph_hypotheses: List[MorphHypothesisRecord] = field(default_factory=list)
-    fasttext_neighbors: List[FasttextNeighbor] = field(default_factory=list)
-    attested_definitions: List[AttestedDefinition] = field(default_factory=list)
-    dictionary_morphs: Dict[str, DictionaryMorph] = field(default_factory=dict)
+    variants_queried: list[str]
+    direct_clusters: list[ClusterRecord] = field(default_factory=list)
+    residual_semantics: list[ResidualSemanticRecord] = field(default_factory=list)
+    morph_hypotheses: list[MorphHypothesisRecord] = field(default_factory=list)
+    fasttext_neighbors: list[FasttextNeighbor] = field(default_factory=list)
+    attested_definitions: list[AttestedDefinition] = field(default_factory=list)
+    dictionary_morphs: dict[str, DictionaryMorph] = field(default_factory=dict)
 
 
 @dataclass
 class AcceptedMorphInfo(TypedDict):
-    gloss: Optional[str]
-    rationale: Optional[str]
-    delta_cosine: Optional[float]
-    source_word: Optional[str]
-    anchor: Optional[str]
+    gloss: str | None
+    rationale: str | None
+    delta_cosine: float | None
+    source_word: str | None
+    anchor: str | None
 
 
 class VariantPathInfo(TypedDict):
-    path: Optional[str]
+    path: str | None
     exists: bool
 
 
 class PathDiagnostics(TypedDict):
-    variants_available: List[str]
-    variant_paths: Dict[str, VariantPathInfo]
+    variants_available: list[str]
+    variant_paths: dict[str, VariantPathInfo]
 
 
 class WordLookupCounts(TypedDict):
-    clusters: Dict[str, Optional[int]]
-    residual_semantics: Dict[str, Optional[int]]
-    morph_hypotheses: Dict[str, Optional[int]]
-    attested_definitions: Dict[str, Optional[int]]
+    clusters: dict[str, int | None]
+    residual_semantics: dict[str, int | None]
+    morph_hypotheses: dict[str, int | None]
+    attested_definitions: dict[str, int | None]
 
 
 class WordLookupDiagnostics(TypedDict):
     word: str
-    variants: List[str]
+    variants: list[str]
     counts: WordLookupCounts
 
 
@@ -163,19 +163,19 @@ class InsightsRepository:
     def __init__(
         self,
         *,
-        solo_path: Optional[Path],
-        debate_path: Optional[Path],
-        fasttext_model_path: Optional[Path] = None,
+        solo_path: Path | None,
+        debate_path: Path | None,
+        fasttext_model_path: Path | None = None,
     ):
         paths = {"solo": solo_path, "debate": debate_path}
-        self._paths: Dict[str, Optional[Path]] = {
+        self._paths: dict[str, Path | None] = {
             variant: Path(path) if path else None for variant, path in paths.items()
         }
-        self._connections: Dict[str, sqlite3.Connection] = {}
+        self._connections: dict[str, sqlite3.Connection] = {}
         for variant, path in paths.items():
-            if not path:
+            if path is None:
                 continue
-            abs_path = Path(path)
+            abs_path = Path(path) if isinstance(path, str) else path
             if not abs_path.exists():
                 continue
             conn = sqlite3.connect(str(abs_path))
@@ -186,12 +186,12 @@ class InsightsRepository:
         self._fasttext_model = None
 
     @property
-    def variants(self) -> List[str]:
+    def variants(self) -> list[str]:
         return sorted(self._connections.keys())
 
     def path_diagnostics(self) -> PathDiagnostics:
         """Return configured variant paths and whether they exist on disk."""
-        details: Dict[str, VariantPathInfo] = {}
+        details: dict[str, VariantPathInfo] = {}
         for variant, path in self._paths.items():
             if path is None:
                 details[variant] = {"path": None, "exists": False}
@@ -203,7 +203,7 @@ class InsightsRepository:
         }
 
     def word_lookup_diagnostics(
-        self, word: str, *, variants: Optional[Iterable[str]] = None
+        self, word: str, *, variants: Iterable[str] | None = None
     ) -> WordLookupDiagnostics:
         """Return per-variant evidence match counts for a word."""
         normalized = word.upper()
@@ -262,8 +262,8 @@ class InsightsRepository:
         self._connections.clear()
         self._fasttext_model = None
 
-    def fasttext_diagnostics(self, *, sample_size: int = 5) -> Dict[str, object]:
-        info: Dict[str, object] = {
+    def fasttext_diagnostics(self, *, sample_size: int = 5) -> dict[str, object]:
+        info: dict[str, object] = {
             "model_path": str(self._fasttext_model_path) if self._fasttext_model_path else None,
             "loaded": False,
             "vocab_sample": [],
@@ -281,8 +281,8 @@ class InsightsRepository:
             return info
 
         info["loaded"] = True
-        vocab: List[str] = []
-        vocab_size: Optional[int] = None
+        vocab: list[str] = []
+        vocab_size: int | None = None
         if hasattr(model, "wv"):
             wv = model.wv
             if hasattr(wv, "index_to_key"):
@@ -309,11 +309,11 @@ class InsightsRepository:
             )
 
     def fetch_clusters(
-        self, ngram: str, *, variants: Optional[Iterable[str]] = None
-    ) -> List[ClusterRecord]:
+        self, ngram: str, *, variants: Iterable[str] | None = None
+    ) -> list[ClusterRecord]:
         ngram_key = ngram.upper()
         selected = list(variants) if variants else self.variants
-        clusters: List[ClusterRecord] = []
+        clusters: list[ClusterRecord] = []
         for variant in selected:
             conn = self._connections.get(variant)
             if conn is None:
@@ -324,7 +324,7 @@ class InsightsRepository:
 
     def _fetch_variant_clusters(
         self, conn: sqlite3.Connection, ngram: str, variant: str
-    ) -> List[ClusterRecord]:
+    ) -> list[ClusterRecord]:
         # Only fetch accepted clusters (action='escalate' AND verdict='True')
         # Non-accepted clusters are either skipped or rejected definitions
         cursor = conn.execute(
@@ -339,7 +339,7 @@ class InsightsRepository:
         if not cluster_rows:
             return []
 
-        cluster_map: Dict[int, ClusterRecord] = {}
+        cluster_map: dict[int, ClusterRecord] = {}
         for row in cluster_rows:
             row_dict = {key: row[key] for key in row.keys()}
             cluster_id = int(row_dict["cluster_id"])
@@ -406,12 +406,12 @@ class InsightsRepository:
     def fetch_word_evidence(
         self,
         word: str,
-        variants: Optional[Iterable[str]] = None,
+        variants: Iterable[str] | None = None,
         *,
         fasttext_top_k: int = 5,
-        dictionary_entries: Optional[Mapping[str, EntryRecord]] = None,
-        min_n: Optional[int] = None,
-        max_n: Optional[int] = None,
+        dictionary_entries: Mapping[str, EntryRecord] | None = None,
+        min_n: int | None = None,
+        max_n: int | None = None,
     ) -> WordEvidence:
         normalized = word.upper()
         active_variants = list(variants) if variants else self.variants
@@ -432,7 +432,7 @@ class InsightsRepository:
             max_n=max_n,
         )
 
-        fasttext_neighbors: List[FasttextNeighbor] = []
+        fasttext_neighbors: list[FasttextNeighbor] = []
         if not (
             direct_clusters
             or residual_semantics
@@ -459,18 +459,18 @@ class InsightsRepository:
         self,
         morphs: Iterable[str],
         *,
-        variants: Optional[Iterable[str]] = None,
+        variants: Iterable[str] | None = None,
     ) -> tuple[
-        List[ClusterRecord],
-        List[ResidualSemanticRecord],
-        List[MorphHypothesisRecord],
+        list[ClusterRecord],
+        list[ResidualSemanticRecord],
+        list[MorphHypothesisRecord],
     ]:
         """Fetch evidence records for a collection of morphs."""
         selected = list(variants) if variants else self.variants
         unique = {m.upper() for m in morphs if m}
-        clusters: List[ClusterRecord] = []
-        residuals: List[ResidualSemanticRecord] = []
-        hypotheses: List[MorphHypothesisRecord] = []
+        clusters: list[ClusterRecord] = []
+        residuals: list[ResidualSemanticRecord] = []
+        hypotheses: list[MorphHypothesisRecord] = []
         for morph in sorted(unique):
             clusters.extend(self.fetch_clusters(morph, variants=selected))
             residuals.extend(
@@ -485,8 +485,8 @@ class InsightsRepository:
         self,
         morphs: Iterable[str],
         *,
-        variants: Optional[Iterable[str]] = None,
-    ) -> Dict[str, int]:
+        variants: Iterable[str] | None = None,
+    ) -> dict[str, int]:
         """Return the count of accepted definitions per morph.
 
         Accepted definitions are clusters with action='escalate' AND verdict='True'.
@@ -494,7 +494,7 @@ class InsightsRepository:
         """
         selected = list(variants) if variants else self.variants
         unique = {m.upper() for m in morphs if m}
-        counts: Dict[str, int] = {}
+        counts: dict[str, int] = {}
 
         for morph in sorted(unique):
             total = 0
@@ -520,14 +520,14 @@ class InsightsRepository:
         self,
         morphs: Iterable[str],
         *,
-        variants: Optional[Iterable[str]] = None,
+        variants: Iterable[str] | None = None,
         include_clusters: bool = True,
         include_residuals: bool = True,
-    ) -> Dict[str, List[tuple[str, Optional[float]]]]:
+    ) -> dict[str, list[tuple[str, float | None]]]:
         """Return glossator definitions and confidence cues for accepted evidence."""
         selected = list(variants) if variants else self.variants
         unique = {m.upper() for m in morphs if m}
-        glosses: Dict[str, Dict[str, Optional[float]]] = {}
+        glosses: dict[str, dict[str, float | None]] = {}
 
         for morph in sorted(unique):
             for variant in selected:
@@ -592,12 +592,12 @@ class InsightsRepository:
                         ):
                             gloss_bucket[normalized] = score
 
-        output: Dict[str, List[tuple[str, Optional[float]]]] = {}
+        output: dict[str, list[tuple[str, float | None]]] = {}
         for morph, entries in glosses.items():
             output[morph] = [(text, score) for text, score in entries.items()]
         return output
 
-    def fetch_accepted_morphs(self, variant: str) -> Dict[str, AcceptedMorphInfo]:
+    def fetch_accepted_morphs(self, variant: str) -> dict[str, AcceptedMorphInfo]:
         """Return accepted morph hypotheses for a single variant.
 
         For each morph, pick the accepted hypothesis with the highest delta_cosine.
@@ -615,7 +615,7 @@ class InsightsRepository:
             """
         ).fetchall()
 
-        accepted: Dict[str, AcceptedMorphInfo] = {}
+        accepted: dict[str, AcceptedMorphInfo] = {}
 
         for row in rows:
             data = {key: row[key] for key in row.keys()}
@@ -644,10 +644,10 @@ class InsightsRepository:
         return accepted
 
     def _fetch_residual_semantics(
-        self, residual: str, *, variants: Optional[Iterable[str]] = None
-    ) -> List[ResidualSemanticRecord]:
+        self, residual: str, *, variants: Iterable[str] | None = None
+    ) -> list[ResidualSemanticRecord]:
         selected = list(variants) if variants else self.variants
-        records: List[ResidualSemanticRecord] = []
+        records: list[ResidualSemanticRecord] = []
         for variant in selected:
             conn = self._connections.get(variant)
             if conn is None:
@@ -687,10 +687,10 @@ class InsightsRepository:
         return records
 
     def _fetch_morph_hypotheses(
-        self, morph: str, *, variants: Optional[Iterable[str]] = None
-    ) -> List[MorphHypothesisRecord]:
+        self, morph: str, *, variants: Iterable[str] | None = None
+    ) -> list[MorphHypothesisRecord]:
         selected = list(variants) if variants else self.variants
-        records: List[MorphHypothesisRecord] = []
+        records: list[MorphHypothesisRecord] = []
         for variant in selected:
             conn = self._connections.get(variant)
             if conn is None:
@@ -720,10 +720,10 @@ class InsightsRepository:
         return records
 
     def _fetch_attested_definitions(
-        self, word: str, *, variants: Optional[Iterable[str]] = None
-    ) -> List[AttestedDefinition]:
+        self, word: str, *, variants: Iterable[str] | None = None
+    ) -> list[AttestedDefinition]:
         selected = list(variants) if variants else self.variants
-        records: List[AttestedDefinition] = []
+        records: list[AttestedDefinition] = []
         for variant in selected:
             conn = self._connections.get(variant)
             if conn is None:
@@ -751,7 +751,7 @@ class InsightsRepository:
                 )
         return records
 
-    def _fasttext_neighbors(self, word: str, *, top_k: int) -> List[FasttextNeighbor]:
+    def _fasttext_neighbors(self, word: str, *, top_k: int) -> list[FasttextNeighbor]:
         model = self._load_fasttext_model()
         if model is None:
             return []
@@ -760,7 +760,7 @@ class InsightsRepository:
         except KeyError:
             return []
 
-        results: List[FasttextNeighbor] = []
+        results: list[FasttextNeighbor] = []
         for candidate, similarity in neighbors:
             try:
                 sim_value = float(similarity)
@@ -778,7 +778,7 @@ class InsightsRepository:
         return self._fasttext_model
 
 
-def _safe_float(value: SupportsFloat | str | bytes | bytearray | None) -> Optional[float]:
+def _safe_float(value: SupportsFloat | str | bytes | bytearray | None) -> float | None:
     if value is None:
         return None
     try:
@@ -798,11 +798,11 @@ def _safe_int(value: SupportsInt | str | bytes | bytearray | None, default: int 
 
 def _dictionary_morphs_for_word(
     word: str,
-    dictionary_entries: Optional[Mapping[str, EntryRecord]],
+    dictionary_entries: Mapping[str, EntryRecord] | None,
     *,
-    min_n: Optional[int] = None,
-    max_n: Optional[int] = None,
-) -> Dict[str, DictionaryMorph]:
+    min_n: int | None = None,
+    max_n: int | None = None,
+) -> dict[str, DictionaryMorph]:
     if not word or not dictionary_entries:
         return {}
 
@@ -817,7 +817,7 @@ def _dictionary_morphs_for_word(
     )
     max_len = min(max_len, word_len)
 
-    morphs: Dict[str, DictionaryMorph] = {}
+    morphs: dict[str, DictionaryMorph] = {}
     for start in range(word_len):
         for end in range(start + min_len, min(word_len, start + max_len) + 1):
             slice_text = word_upper[start:end]
@@ -836,7 +836,7 @@ def _dictionary_morphs_for_word(
     return morphs
 
 
-def _dictionary_entry_definition(entry: Mapping[str, object]) -> Optional[str]:
+def _dictionary_entry_definition(entry: Mapping[str, object]) -> str | None:
     enhanced = entry.get("enhanced_definition")
     if isinstance(enhanced, str) and enhanced.strip():
         return enhanced.strip()
@@ -854,11 +854,11 @@ def _dictionary_entry_definition(entry: Mapping[str, object]) -> Optional[str]:
     return None
 
 
-def _dictionary_entry_senses(entry: Mapping[str, object]) -> List[str]:
+def _dictionary_entry_senses(entry: Mapping[str, object]) -> list[str]:
     senses = entry.get("senses")
     if not isinstance(senses, list):
         return []
-    definitions: List[str] = []
+    definitions: list[str] = []
     for sense in senses:
         if not isinstance(sense, Mapping):
             continue
@@ -868,7 +868,7 @@ def _dictionary_entry_senses(entry: Mapping[str, object]) -> List[str]:
     return definitions
 
 
-def _safe_json_array(payload: object) -> List[str]:
+def _safe_json_array(payload: object) -> list[str]:
     if isinstance(payload, (list, tuple)):
         return [str(item) for item in payload]
     if isinstance(payload, str):

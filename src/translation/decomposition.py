@@ -8,7 +8,7 @@ that can be further filtered and scored in later tasks (2.2 / 2.3).
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, cast, Dict, Iterable, List, Tuple, Optional, TypedDict
+from typing import Callable, Iterable, TypedDict, cast
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 from .repository import WordEvidence
 
@@ -31,7 +31,7 @@ class MorphSupportStats:
     has_residual: bool = False
     has_attested: bool = False
     has_dictionary: bool = False
-    hypothesis_max: Optional[float] = None  # max delta_cosine across hypotheses
+    hypothesis_max: float | None = None  # max delta_cosine across hypotheses
     uses: int = 0  # total appearances across evidence
 
 
@@ -68,12 +68,12 @@ class Decomposition:
         based on the supplied :class:`WordEvidence`.
     """
 
-    morphs: List[str]
-    canonicals: List[str]
+    morphs: list[str]
+    canonicals: list[str]
     beam_score: float
-    breakdown: Dict[str, object] = field(default_factory=dict)
-    beam_score_normalized: Optional[float] = None
-    morph_support: Dict[str, str] = field(default_factory=dict)
+    breakdown: dict[str, object] = field(default_factory=dict)
+    beam_score_normalized: float | None = None
+    morph_support: dict[str, str] = field(default_factory=dict)
 
 
 class DecompositionEngine:
@@ -96,9 +96,9 @@ class DecompositionEngine:
         force_dictionary: bool = False,
         allow_whole_word: bool = True,
         n_best: int | None = None,
-        definition_counts: Dict[str, int] | None = None,
-        definition_glosses: Dict[str, List[tuple[str, Optional[float]]]] | None = None,
-    ) -> tuple[List[Decomposition], Dict[str, object]]:
+        definition_counts: dict[str, int] | None = None,
+        definition_glosses: dict[str, list[tuple[str, float | None]]] | None = None,
+    ) -> tuple[list[Decomposition], dict[str, object]]:
         """Return all plausible decompositions for ``word`` plus diagnostics.
 
         The beam-search is delegated to ``segment_target``. Each returned path
@@ -116,7 +116,7 @@ class DecompositionEngine:
           responsible for letting competing analyses "fight it out".
         """
 
-        diagnostics: Dict[str, object] = {
+        diagnostics: dict[str, object] = {
             "fallback_used": False,
             "fallback_morphs": [],
             "parse_count": 0,
@@ -142,7 +142,7 @@ class DecompositionEngine:
         diagnostics["extra_ngram_entries"] = sum(
             len(entries) for entries in extra_ngrams.values()
         )
-        dictionary_ngrams: Dict[str, List[Tuple[str, int, int]]] = {}
+        dictionary_ngrams: dict[str, list[tuple[str, int, int]]] = {}
         if force_dictionary:
             dictionary_ngrams = _build_dictionary_ngrams(
                 normalized, candidate_finder=self.candidate_finder
@@ -194,21 +194,24 @@ class DecompositionEngine:
                         }
                     )
 
-        decompositions: List[Decomposition] = []
+        decompositions: list[Decomposition] = []
+
+        if not parses:
+            _normalize_beam_scores(decompositions)
+            diagnostics["decomposition_count"] = len(decompositions)
+            return decompositions, diagnostics
 
         support_lookup = _build_support_lookup(evidence)
 
         for path, score, _ngram_scores, coverage in parses:
+            if not isinstance(coverage, list):
+                continue
             segments = cast(list[CoverageSegment], coverage)
-            morphs, canonicals = _segment_tokens(
-                normalized, segments, path
-            )
+            morphs, canonicals = _segment_tokens(normalized, segments, path)
             if not allow_whole_word and len(normalized) > 1:
                 if len(morphs) == 1 and morphs[0] == normalized:
                     continue
-            breakdown = _build_breakdown(
-                self.candidate_finder, normalized, segments
-            )
+            breakdown = _build_breakdown(self.candidate_finder, normalized, segments)
 
             morph_support = {
                 morph: _classify_support(morph, support_lookup) for morph in morphs
@@ -233,7 +236,7 @@ def _build_breakdown(
     candidate_finder: MorphemeCandidateFinder,
     word: str,
     coverage: Iterable[CoverageSegment],
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Build a coverage breakdown dictionary.
 
     Preference order:
@@ -264,7 +267,7 @@ def _build_breakdown(
         }
 
     # Normalize segments into [start, end) ranges within [0, word_len]
-    ranges: List[Tuple[int, int]] = []
+    ranges: list[tuple[int, int]] = []
     for segment in coverage_list:
         start_raw = segment.get("start", 0)
         end_raw = segment.get("end", start_raw)
@@ -280,7 +283,7 @@ def _build_breakdown(
             ranges.append((start, end))
 
     ranges.sort()
-    merged: List[Tuple[int, int]] = []
+    merged: list[tuple[int, int]] = []
     for start, end in ranges:
         if not merged or start > merged[-1][1]:
             merged.append((start, end))
@@ -292,7 +295,7 @@ def _build_breakdown(
     coverage_ratio = covered / word_len if word_len else 0.0
 
     # Build uncovered spans between merged covered ranges.
-    uncovered: List[Dict[str, List[int]]] = []
+    uncovered: list[dict[str, list[int]]] = []
     cursor = 0
     for start, end in merged:
         if cursor < start:
@@ -311,12 +314,12 @@ def _build_breakdown(
 
 def _segment_tokens(
     word: str,
-    coverage: List[CoverageSegment],
+    coverage: list[CoverageSegment],
     canonicals: Iterable[str],
-) -> tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Return morph slices (ngrams) and canonicals for a segmentation."""
-    ngrams: List[str] = []
-    canon_list: List[str] = [str(c).upper() for c in canonicals]
+    ngrams: list[str] = []
+    canon_list: list[str] = [str(c).upper() for c in canonicals]
 
     if coverage:
         for segment in coverage:
@@ -330,11 +333,11 @@ def _segment_tokens(
     return ngrams, canon_list
 
 
-def _normalize_beam_scores(decompositions: List[Decomposition]) -> None:
+def _normalize_beam_scores(decompositions: list[Decomposition]) -> None:
     if not decompositions:
         return
 
-    adjusted_scores: List[float] = []
+    adjusted_scores: list[float] = []
     for decomp in decompositions:
         morph_count = max(1, len(decomp.morphs))
         adjusted_scores.append(float(decomp.beam_score) / morph_count)
@@ -352,7 +355,7 @@ def _normalize_beam_scores(decompositions: List[Decomposition]) -> None:
         decomp.beam_score_normalized = (adjusted - min_score) / span
 
 
-def _build_support_lookup(evidence: WordEvidence) -> Dict[str, str]:
+def _build_support_lookup(evidence: WordEvidence) -> dict[str, str]:
     """Build a case-insensitive lookup table of morph → support label.
 
     Priority is:
@@ -367,7 +370,7 @@ def _build_support_lookup(evidence: WordEvidence) -> Dict[str, str]:
     """
 
     # Normalize everything to uppercase for consistent lookups.
-    support: Dict[str, str] = {}
+    support: dict[str, str] = {}
 
     for cluster in evidence.direct_clusters:
         key = cluster.ngram.upper()
@@ -398,14 +401,15 @@ def _build_evidence_ngrams(
     evidence: WordEvidence,
     *,
     candidate_finder: MorphemeCandidateFinder,
-    definition_counts: Dict[str, int] | None = None,
-) -> Dict[str, List[Tuple[str, int, int]]]:
+    definition_counts: dict[str, int] | None = None,
+) -> dict[str, list[tuple[str, int, int]]]:
     """Build an extra ngram index based on evidence-backed morphs.
 
     Key change vs. the old behavior:
     - Treat evidence-backed morphs as *boost signals*, not just "missing ngrams".
     - Use a small DF so the boost meaningfully affects IDF.
-    - Avoid boosting 1-char morphs and the full word (both encourage degenerate parses).
+    - Avoid boosting 1-char morphs and the full word (both encourage degenerate parses),
+      except when the 1-char morph is explicitly dictionary-backed.
     """
 
     morphs: set[str] = set()
@@ -434,7 +438,7 @@ def _build_evidence_ngrams(
 
     support_stats = _compile_support_stats(evidence)
 
-    candidates: List[Tuple[int, int, int, str]] = []
+    candidates: list[tuple[int, int, int, str]] = []
     # rank tuple = (edge_bonus, length, uses, morph)
     for morph in morphs:
         if not morph:
@@ -444,7 +448,10 @@ def _build_evidence_ngrams(
             continue
         if normalized not in word:
             continue
-        if not (min_len <= len(normalized) <= max_len):
+        if len(normalized) < min_len:
+            if len(normalized) != 1 or normalized not in evidence.dictionary_morphs:
+                continue
+        if len(normalized) > max_len:
             continue
         if len(normalized) >= len(word):
             # Don't boost the full word; we're trying to get good *decompositions*.
@@ -464,7 +471,7 @@ def _build_evidence_ngrams(
     candidates.sort(reverse=True)
 
     cap = 50  # keep this bounded per word
-    extra: Dict[str, List[Tuple[str, int, int]]] = {}
+    extra: dict[str, list[tuple[str, int, int]]] = {}
     seen: set[str] = set()
 
     for edge_bonus, _ln, _uses, normalized in candidates:
@@ -505,7 +512,7 @@ def _build_dictionary_ngrams(
     word: str,
     *,
     candidate_finder: MorphemeCandidateFinder,
-) -> Dict[str, List[Tuple[str, int, int]]]:
+) -> dict[str, list[tuple[str, int, int]]]:
     """Build extra ngrams for dictionary-backed substrings in ``word``.
 
     This fallback helps when the ngram index is missing substrings that are
@@ -522,7 +529,7 @@ def _build_dictionary_ngrams(
     word_upper = word.upper()
     known_words = {w.upper() for w in candidate_finder.known_words}
 
-    extra: Dict[str, List[Tuple[str, int, int]]] = {}
+    extra: dict[str, list[tuple[str, int, int]]] = {}
     for start in range(len(word_upper)):
         for end in range(start + min_n, min(len(word_upper), start + max_n) + 1):
             slice_text = word_upper[start:end]
@@ -537,16 +544,16 @@ def _build_dictionary_ngrams(
 
 
 def _merge_ngrams(
-    left: Dict[str, List[Tuple[str, int, int]]],
-    right: Dict[str, List[Tuple[str, int, int]]],
-) -> Dict[str, List[Tuple[str, int, int]]]:
-    merged: Dict[str, List[Tuple[str, int, int]]] = {**left}
+    left: dict[str, list[tuple[str, int, int]]],
+    right: dict[str, list[tuple[str, int, int]]],
+) -> dict[str, list[tuple[str, int, int]]]:
+    merged: dict[str, list[tuple[str, int, int]]] = {**left}
     for key, entries in right.items():
         merged.setdefault(key, []).extend(entries)
     return merged
 
 
-def _classify_support(morph: str, support_lookup: Dict[str, str]) -> str:
+def _classify_support(morph: str, support_lookup: dict[str, str]) -> str:
     """Return the provenance label for ``morph`` given a support lookup."""
     return support_lookup.get(morph.upper(), "unknown")
 
@@ -567,10 +574,10 @@ def _residual_ratio(decomp: Decomposition) -> float:
     return 1.0
 
 
-def _compile_support_stats(evidence: WordEvidence) -> Dict[str, MorphSupportStats]:
+def _compile_support_stats(evidence: WordEvidence) -> dict[str, MorphSupportStats]:
     """Aggregate per-morph support details for filtering decisions."""
 
-    stats: Dict[str, MorphSupportStats] = {}
+    stats: dict[str, MorphSupportStats] = {}
 
     def ensure(key: str) -> MorphSupportStats:
         key = key.upper()
@@ -619,10 +626,10 @@ def _compile_support_stats(evidence: WordEvidence) -> Dict[str, MorphSupportStat
 
 
 def apply_hard_filters(
-    decompositions: List[Decomposition],
+    decompositions: list[Decomposition],
     evidence: WordEvidence,
     min_support_threshold: float = 0.2,
-) -> tuple[List[Decomposition], Dict[str, object]]:
+) -> tuple[list[Decomposition], dict[str, object]]:
     """Apply the hard-filtering rules described in task 2.2.
 
     Filters are applied in order:
@@ -652,7 +659,7 @@ def apply_hard_filters(
         }
 
     support_stats = _compile_support_stats(evidence)
-    diagnostics: Dict[str, object] = {
+    diagnostics: dict[str, object] = {
         "stage1_dropped": 0,
         "stage2_dropped": 0,
         "stage3_dropped": 0,
@@ -666,9 +673,9 @@ def apply_hard_filters(
         "min_support_threshold": min_support_threshold,
         "filter_traces": [],
     }
-    unsupported_counts: Dict[str, int] = {}
-    dictionary_support_counts: Dict[str, int] = {}
-    attested_support_counts: Dict[str, int] = {}
+    unsupported_counts: dict[str, int] = {}
+    dictionary_support_counts: dict[str, int] = {}
+    attested_support_counts: dict[str, int] = {}
 
     def has_support(morph: str) -> bool:
         stats = support_stats.get(morph.upper())
@@ -703,11 +710,11 @@ def apply_hard_filters(
     # ------------------------------------------------------------------
     # Filter 1: every morph must have support.
     # ------------------------------------------------------------------
-    supported: List[Decomposition] = []
-    filter_traces: List[Dict[str, object]] = []
+    supported: list[Decomposition] = []
+    filter_traces: list[dict[str, object]] = []
     for decomp in decompositions:
         missing = [m for m in decomp.morphs if not has_support(m)]
-        trace: Dict[str, object] = {
+        trace: dict[str, object] = {
             "morphs": list(decomp.morphs),
             "missing_morphs": missing,
             "morph_support": dict(decomp.morph_support),
@@ -775,7 +782,7 @@ def apply_hard_filters(
     # ------------------------------------------------------------------
     min_residual = min(_residual_ratio(d) for d in supported)
     diagnostics["min_residual_ratio"] = min_residual
-    coverage_filtered: List[Decomposition] = []
+    coverage_filtered: list[Decomposition] = []
     for decomp in supported:
         ratio = _residual_ratio(decomp)
         if ratio > 0.5 and min_residual <= 0.5:
@@ -816,7 +823,7 @@ def apply_hard_filters(
         # Nobody uses well-attested morphs; let soft scoring handle it.
         return coverage_filtered, diagnostics
 
-    attested: List[Decomposition] = []
+    attested: list[Decomposition] = []
     for decomp in coverage_filtered:
         score = attestation_scores[tuple(decomp.morphs)]
         if score == 0:
@@ -832,10 +839,10 @@ def apply_hard_filters(
     return (attested if attested else coverage_filtered), diagnostics
 
 
-def _summarize_segments(breakdown: Dict[str, object]) -> List[Dict[str, str]]:
+def _summarize_segments(breakdown: dict[str, object]) -> list[dict[str, str]]:
     raw_segments = breakdown.get("segments")
     segments = raw_segments if isinstance(raw_segments, list) else []
-    summary: List[Dict[str, str]] = []
+    summary: list[dict[str, str]] = []
     for segment in segments:
         if not isinstance(segment, dict):
             continue
@@ -852,7 +859,7 @@ def _summarize_segments(breakdown: Dict[str, object]) -> List[Dict[str, str]]:
 
 
 def _update_attestation_trace(
-    traces: List[Dict[str, object]],
+    traces: list[dict[str, object]],
     target: Decomposition,
     score: int,
 ) -> None:
