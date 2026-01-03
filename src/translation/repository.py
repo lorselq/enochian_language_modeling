@@ -516,6 +516,87 @@ class InsightsRepository:
 
         return counts
 
+    def fetch_accepted_definition_glosses(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Optional[Iterable[str]] = None,
+        include_clusters: bool = True,
+        include_residuals: bool = True,
+    ) -> Dict[str, List[tuple[str, Optional[float]]]]:
+        """Return glossator definitions and confidence cues for accepted evidence."""
+        selected = list(variants) if variants else self.variants
+        unique = {m.upper() for m in morphs if m}
+        glosses: Dict[str, Dict[str, Optional[float]]] = {}
+
+        for morph in sorted(unique):
+            for variant in selected:
+                conn = self._connections.get(variant)
+                if conn is None:
+                    continue
+                if include_clusters:
+                    rows = conn.execute(
+                        """SELECT glossator_def, semantic_coverage, semantic_cohesion, cohesion
+                           FROM clusters
+                           WHERE TRIM(ngram) COLLATE NOCASE = ?
+                             AND action = 'escalate'
+                             AND verdict = 'True'""",
+                        (morph,),
+                    ).fetchall()
+                    for row in rows:
+                        gloss = row[0]
+                        if not gloss:
+                            continue
+                        score = _safe_float(row[1])
+                        if score is None:
+                            score = _safe_float(row[2])
+                        if score is None:
+                            score = _safe_float(row[3])
+                        normalized = str(gloss).strip()
+                        if not normalized:
+                            continue
+                        gloss_bucket = glosses.setdefault(morph, {})
+                        existing = gloss_bucket.get(normalized)
+                        if existing is None or (
+                            score is not None and score > existing
+                        ):
+                            gloss_bucket[normalized] = score
+                if include_residuals:
+                    residual_rows = conn.execute(
+                        """SELECT glossator_def, semantic_coverage, semantic_cohesion, cohesion,
+                                  derivational_validity, rebuttal_resilience
+                           FROM root_residual_semantics
+                           WHERE TRIM(residual) COLLATE NOCASE = ?""",
+                        (morph,),
+                    ).fetchall()
+                    for row in residual_rows:
+                        gloss = row[0]
+                        if not gloss:
+                            continue
+                        score = _safe_float(row[1])
+                        if score is None:
+                            score = _safe_float(row[2])
+                        if score is None:
+                            score = _safe_float(row[3])
+                        if score is None:
+                            score = _safe_float(row[4])
+                        if score is None:
+                            score = _safe_float(row[5])
+                        normalized = str(gloss).strip()
+                        if not normalized:
+                            continue
+                        gloss_bucket = glosses.setdefault(morph, {})
+                        existing = gloss_bucket.get(normalized)
+                        if existing is None or (
+                            score is not None and score > existing
+                        ):
+                            gloss_bucket[normalized] = score
+
+        output: Dict[str, List[tuple[str, Optional[float]]]] = {}
+        for morph, entries in glosses.items():
+            output[morph] = [(text, score) for text, score in entries.items()]
+        return output
+
     def fetch_accepted_morphs(self, variant: str) -> Dict[str, AcceptedMorphInfo]:
         """Return accepted morph hypotheses for a single variant.
 
