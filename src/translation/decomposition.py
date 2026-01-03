@@ -96,6 +96,7 @@ class DecompositionEngine:
         force_dictionary: bool = False,
         allow_whole_word: bool = True,
         n_best: int | None = None,
+        definition_counts: Dict[str, int] | None = None,
     ) -> tuple[List[Decomposition], Dict[str, object]]:
         """Return all plausible decompositions for ``word`` plus diagnostics.
 
@@ -131,7 +132,10 @@ class DecompositionEngine:
 
         normalized = word.upper()
         extra_ngrams = _build_evidence_ngrams(
-            normalized, evidence, candidate_finder=self.candidate_finder
+            normalized,
+            evidence,
+            candidate_finder=self.candidate_finder,
+            definition_counts=definition_counts,
         )
         diagnostics["extra_ngram_keys"] = len(extra_ngrams)
         diagnostics["extra_ngram_entries"] = sum(
@@ -153,7 +157,10 @@ class DecompositionEngine:
             else extra_ngrams
         )
         parses = self.candidate_finder.segment_target(
-            normalized, extra_ngrams=merged, n_best=n_best
+            normalized,
+            extra_ngrams=merged,
+            n_best=n_best,
+            definition_counts=definition_counts,
         )
         diagnostics["parse_count"] = len(parses)
 
@@ -168,7 +175,10 @@ class DecompositionEngine:
             if dictionary_ngrams:
                 merged = _merge_ngrams(extra_ngrams, dictionary_ngrams)
                 parses = self.candidate_finder.segment_target(
-                    normalized, extra_ngrams=merged, n_best=n_best
+                    normalized,
+                    extra_ngrams=merged,
+                    n_best=n_best,
+                    definition_counts=definition_counts,
                 )
                 diagnostics["parse_count"] = len(parses)
                 if parses:
@@ -385,6 +395,7 @@ def _build_evidence_ngrams(
     evidence: WordEvidence,
     *,
     candidate_finder: MorphemeCandidateFinder,
+    definition_counts: Dict[str, int] | None = None,
 ) -> Dict[str, List[Tuple[str, int, int]]]:
     """Build an extra ngram index based on evidence-backed morphs.
 
@@ -459,7 +470,23 @@ def _build_evidence_ngrams(
         seen.add(normalized)
 
         key = normalized.lower()
-        df = df_edge if edge_bonus else df_inner
+        base_df = df_edge if edge_bonus else df_inner
+
+        # Use definition counts to adjust DF for specificity:
+        # - Fewer definitions = more specific = lower DF = higher IDF = better score
+        # - More definitions = more ambiguous = higher DF = lower IDF = worse score
+        if definition_counts:
+            def_count = definition_counts.get(normalized, 0)
+            if def_count > 0:
+                # Scale DF by definition count: more defs = higher DF = lower score
+                # Use log scale to prevent extreme values
+                import math
+                specificity_factor = math.log1p(def_count)  # 1 def -> 0.69, 28 defs -> 3.37
+                df = max(1, int(base_df * (1 + specificity_factor)))
+            else:
+                df = base_df
+        else:
+            df = base_df
 
         # IMPORTANT: do NOT skip keys already in ngram_index.
         # We want evidence to be able to override / bias existing weights.
