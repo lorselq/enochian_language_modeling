@@ -6,7 +6,8 @@ from enum import Enum
 import numbers
 from pathlib import Path
 from types import TracebackType
-from typing import Callable, Iterable, Sequence, TypeVar
+from collections.abc import Callable, Iterable, Sequence
+from typing import TypeVar
 
 import numpy as np
 
@@ -23,6 +24,7 @@ from .decomposition import Decomposition, DecompositionEngine, apply_hard_filter
 from .llm_synthesis import SynthesisResult, synthesize_definition
 from .repository import (
     ClusterRecord,
+    DictionaryMorph,
     MorphHypothesisRecord,
     InsightsRepository,
     ResidualSemanticRecord,
@@ -1061,14 +1063,16 @@ class SingleWordTranslationService:
             evidence.residual_semantics = []
             evidence.morph_hypotheses = []
             evidence.attested_definitions = []
-            evidence.dictionary_morphs = {}
+            empty_morphs: dict[str, DictionaryMorph] = {}
+            evidence.dictionary_morphs = empty_morphs
             evidence.fasttext_neighbors = []
             return
         if mode == SingleWordTranslationService.EvidenceMode.RESIDUALS_ONLY:
             evidence.direct_clusters = []
             evidence.morph_hypotheses = []
             evidence.attested_definitions = []
-            evidence.dictionary_morphs = {}
+            empty_morphs: dict[str, DictionaryMorph] = {}
+            evidence.dictionary_morphs = empty_morphs
             evidence.fasttext_neighbors = []
             return
 

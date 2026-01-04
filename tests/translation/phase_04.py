@@ -11,7 +11,6 @@ prompt content and parsing robustness.
 import json
 from pathlib import Path
 import sys
-from typing import Dict
 
 import pytest
 
@@ -35,7 +34,7 @@ from translation.service import SingleWordTranslationService
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def sample_context() -> Dict[str, object]:
+def sample_context() -> dict[str, object]:
     return {
         "coverage_ratio": 0.8,
         "residual_ratio": 0.2,
@@ -53,7 +52,7 @@ def sample_context() -> Dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def test_prompt_includes_constraints_and_evidence(sample_context: Dict[str, object]):
+def test_prompt_includes_constraints_and_evidence(sample_context: dict[str, object]):
     prompt = _build_prompt(["NAZ", "PSAD"], ["rectangular prism", "sharp"], sample_context)
 
     # Constraint markers
@@ -75,7 +74,7 @@ def test_prompt_includes_constraints_and_evidence(sample_context: Dict[str, obje
 # ---------------------------------------------------------------------------
 
 
-def test_parse_response_trims_and_truncates(sample_context: Dict[str, object]):
+def test_parse_response_trims_and_truncates(sample_context: dict[str, object]):
     long_text = "A" * 300
     payload = json.dumps({
         "definition": long_text,
@@ -91,7 +90,7 @@ def test_parse_response_trims_and_truncates(sample_context: Dict[str, object]):
     assert 0.0 <= parsed["confidence"] <= 1.0
 
 
-def test_parse_response_handles_missing_fields(sample_context: Dict[str, object]):
+def test_parse_response_handles_missing_fields(sample_context: dict[str, object]):
     payload = json.dumps({"definition": ""})
     parsed = _parse_response(payload, fallback="fallback", context=sample_context)
 
@@ -100,7 +99,7 @@ def test_parse_response_handles_missing_fields(sample_context: Dict[str, object]
     assert "concatenated" in parsed["reasoning"] or "fallback" in parsed["reasoning"].lower()
 
 
-def test_parse_response_handles_non_json(sample_context: Dict[str, object]):
+def test_parse_response_handles_non_json(sample_context: dict[str, object]):
     parsed = _parse_response("raw text", fallback="fallback", context=sample_context)
 
     assert parsed["definition"].startswith("raw text"[:10])
@@ -112,7 +111,7 @@ def test_parse_response_handles_non_json(sample_context: Dict[str, object]):
 # ---------------------------------------------------------------------------
 
 
-def test_synthesize_definition_handles_llm_failure(monkeypatch: pytest.MonkeyPatch, sample_context: Dict[str, object]):
+def test_synthesize_definition_handles_llm_failure(monkeypatch: pytest.MonkeyPatch, sample_context: dict[str, object]):
     # Force QueryModelTool._run to raise, triggering fallback path.
     class DummyTool:
         def __init__(self, *args, **kwargs):

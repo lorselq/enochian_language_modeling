@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import hashlib, json, datetime, sqlite3
-from typing import Optional
 
 def _sha256(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -16,7 +17,7 @@ def make_prompt_hash(*, system_prompt: str, user_prompt: str, role: str, model: 
     }, sort_keys=True, ensure_ascii=False)
     return _sha256(blob)
 
-def llm_job_try_cache(conn: sqlite3.Connection, prompt_hash: str) -> Optional[dict]:
+def llm_job_try_cache(conn: sqlite3.Connection, prompt_hash: str) -> dict | None:
     row = conn.execute(
         "SELECT response_text, model, status FROM llm_job WHERE prompt_hash = ? LIMIT 1",
         (prompt_hash,)

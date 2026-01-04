@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 def normalize_word(word, subst_map):
     normalized = ""
     for char in word:

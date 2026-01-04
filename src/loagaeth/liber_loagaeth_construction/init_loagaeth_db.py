@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 # init_loagaeth_db.py
 # Create an empty SQLite database for Liber Loagaeth research with DLL-ready schema.
 # Usage:

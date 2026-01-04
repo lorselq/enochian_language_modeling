@@ -14,7 +14,7 @@ from collections import Counter
 import unicodedata
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 
 from enochian_lm.analysis.utils.token_morphs import (
     fetch_token_morphs,

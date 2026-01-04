@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 
@@ -190,7 +190,7 @@ def _fetch_residual_clusters(
         ).fetchall():
             cluster_sizes[int(row["cluster_id"])] = int(row["size"] or 0)
     except sqlite3.Error:
-        cluster_sizes = {}
+        cluster_sizes.clear()
 
     counts = counts or Counter()
     results: list[ResidualClusterInfo] = []
@@ -223,7 +223,7 @@ def gather_morph_evidence(
     residual_counts: Counter[str] | None = None,
     max_partners: int = 6,
     max_residuals: int = 5,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Collect analytic evidence for *root* from the shared SQLite database."""
 
     root_norm = _normalize_token(root)
@@ -345,4 +345,3 @@ def gather_morph_evidence(
 
 
 __all__ = ["gather_morph_evidence", "PairwiseDelta", "CollocationStat", "ResidualClusterInfo"]
-

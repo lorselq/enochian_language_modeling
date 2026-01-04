@@ -559,10 +559,11 @@ def ensure_artifact(
     if row:
         art_id, meta_json, old_title = row
         # merge meta
+        base: dict[str, object] = {}
         try:
             base = json.loads(meta_json) if meta_json else {}
         except Exception:
-            base = {}
+            base.clear()
         base.update(meta or {})
         merged = _as_json_text(base)
         if (title and title != old_title) or merged != (meta_json or "{}"):
@@ -660,7 +661,7 @@ def insert_prose_cell(con: sqlite3.Connection, artifact_id: int, line_idx: int, 
 #     *,
 #     name: str,
 #     scope: str,
-#     node_ids: List[int],
+#     node_ids: list[int],
 #     instruction: str,
 # ) -> int:
 #     cur = con.cursor()

@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import os
 import json
 import hashlib
 import logging
 import random
 import numpy as np
-from typing import List, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from gensim.models import FastText, Word2Vec
@@ -65,15 +67,15 @@ def hash_entries(entries: Sequence[EntryRecord]) -> str:
 
 
 # --- Sentence generator ---
-def load_sentences(entries: Sequence[EntryRecord]) -> List[List[str]]:
+def load_sentences(entries: Sequence[EntryRecord]) -> list[list[str]]:
     """
     Turn entries into short 'sentences' for FastText:
     - canonical token
     - alternate tokens
     """
-    sents: List[List[str]] = []
+    sents: list[list[str]] = []
     for e in entries:
-        parts: List[str] = []
+        parts: list[str] = []
 
         canonical = (e.get("canonical") or "").strip().lower()
         if canonical:

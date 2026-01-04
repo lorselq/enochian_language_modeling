@@ -10,7 +10,7 @@ import math
 import sys
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Iterable
+from collections.abc import Iterable
 import types
 import numpy as np
 import pytest
@@ -1175,7 +1175,7 @@ class TestScoreDecomposition:
         # Create decomposition with invalid beam_score
         decomp = Decomposition(
             morphs=["TEST"],
-            beam_score="invalid",  # type: ignore - intentionally invalid
+            beam_score=0.0,
             breakdown={
                 "segments": [],
                 "uncovered": [],
@@ -1184,6 +1184,7 @@ class TestScoreDecomposition:
             },
             morph_support={"TEST": "cluster"},
         )
+        setattr(decomp, "beam_score", "invalid")
 
         score = score_decomposition(decomp, evidence)
 

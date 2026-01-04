@@ -1,9 +1,9 @@
 # residual_analysis.py — tighter, more numeric summaries
 
 from __future__ import annotations
-from dataclasses import dataclass, asdict
 from collections import Counter
-from typing import Any, Iterable, List, Dict, Tuple
+from collections.abc import Iterable
+from dataclasses import dataclass, asdict
 
 
 @dataclass
@@ -13,16 +13,16 @@ class ResidualDetail:
     definition: str
     coverage_ratio: float
     residual_ratio: float
-    uncovered: List[str]            # raw fragments
+    uncovered: list[str]            # raw fragments
     avg_confidence: float | None
-    low_conf_segments: List[str]    # "frag@0.42"
+    low_conf_segments: list[str]    # "frag@0.42"
 
     @property
     def length(self) -> int:
         return len(self.normalized or "")
 
     @classmethod
-    def from_breakdown(cls, payload: dict[str, Any]) -> "ResidualDetail":
+    def from_breakdown(cls, payload: dict[str, object]) -> "ResidualDetail":
         word = str(payload.get("word") or payload.get("normalized") or "").strip()
         normalized = str(payload.get("normalized") or word).strip()
         breakdown = payload.get("breakdown") or {}
@@ -67,8 +67,8 @@ class ResidualDetail:
 
 
 def exclude_root_segments(
-    breakdown: dict[str, Any] | None, root_norm: str, target: str
-) -> dict[str, Any]:
+    breakdown: dict[str, object] | None, root_norm: str, target: str
+) -> dict[str, object]:
     """
     Drop segments that echo the candidate root AND mark the root's position as uncovered.
 
@@ -105,7 +105,7 @@ def exclude_root_segments(
             for i in range(start_pos, start_pos + root_len):
                 root_positions.add(i)
 
-    kept_segments: list[dict[str, Any]] = []
+    kept_segments: list[dict[str, object]] = []
     coverage_mask = [False] * total_len
 
     for segment in breakdown.get("segments") or []:
@@ -133,7 +133,7 @@ def exclude_root_segments(
         kept_segments.append(kept_segment)
 
     # Build uncovered spans (positions not covered by kept segments, excluding root positions)
-    uncovered: list[dict[str, Any]] = []
+    uncovered: list[dict[str, object]] = []
     idx = 0
     while idx < total_len:
         if coverage_mask[idx]:
@@ -159,7 +159,7 @@ def _top_residue_fragments(details: list[ResidualDetail], k: int = 6) -> list[tu
     Return top-K uncovered fragments as (frag, freq, total_len).
     """
     c: Counter[str] = Counter()
-    total_len: Dict[str, int] = {}
+    total_len: dict[str, int] = {}
     for d in details:
         for frag in d.uncovered:
             c[frag] += 1
@@ -170,10 +170,10 @@ def _top_residue_fragments(details: list[ResidualDetail], k: int = 6) -> list[tu
 
 def summarize_residuals(
     root: str,
-    analyses: Iterable[dict[str, Any]],
+    analyses: Iterable[dict[str, object]],
     *,
     max_focus: int = 5,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """
     Aggregate residuals with numeric context AND a machine-readable guidance blob.
     """

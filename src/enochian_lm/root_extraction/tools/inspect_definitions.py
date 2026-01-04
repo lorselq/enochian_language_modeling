@@ -1,4 +1,5 @@
-from typing import List
+from __future__ import annotations
+
 import sys
 import json
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
@@ -12,12 +13,12 @@ from enochian_lm.root_extraction.utils.embeddings import (
 )
 
 # === 0. Establish substitution map for later reference ===
-def load_substitution_map():
+def load_substitution_map() -> dict[str, list[str]]:
     path = get_config_paths()["substitution_map"]
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
     
-    subst_map = {}
+    subst_map: dict[str, list[str]] = {}
     for k, v in raw.items():
         subs = []
         for alt in v["alternates"]:
@@ -27,7 +28,7 @@ def load_substitution_map():
     return subst_map
 
 # === 1. Load Dictionary ===
-def load_entries() -> List[EntryRecord]:
+def load_entries() -> list[EntryRecord]:
     path = get_config_paths()["dictionary"]
     return load_dictionary(str(path))
 
@@ -83,7 +84,7 @@ def _definition_text(entry: EntryRecord) -> str:
 def find_semantically_similar_words(
     ft_model,
     sent_model,
-    entries: List[EntryRecord],
+    entries: list[EntryRecord],
     target_word,
     subst_map,
     topn=11,

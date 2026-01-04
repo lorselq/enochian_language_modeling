@@ -20,7 +20,6 @@ from __future__ import annotations
 from os import PathLike
 import os
 from pathlib import Path
-from typing import Dict, Tuple
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 
@@ -73,7 +72,7 @@ def _index_exists(conn: sqlite3.Connection, name: str) -> bool:
 
 def _columns(
     conn: sqlite3.Connection, table: str
-) -> Dict[str, Tuple[int, str, int, int, str]]:
+) -> dict[str, tuple[int, str, int, int, str]]:
     """Return PRAGMA table_info columns mapping: {name: (cid, name, type, notnull, dflt_value, pk)}"""
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
     return {r[1]: r for r in rows}

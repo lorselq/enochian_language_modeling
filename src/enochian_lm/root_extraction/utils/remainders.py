@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 
@@ -258,4 +258,3 @@ def backfill_root_remainders(
         processed_roots += len(seen_pairs)
 
     return processed_roots, total_rows
-
