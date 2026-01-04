@@ -4,7 +4,7 @@ from collections.abc import Iterable
 import json
 import re
 
-from enochian_lm.common.types import NumberConvertible
+from enochian_lm.common.types import MaybeNumber
 from .decomposition import Decomposition
 from .repository import ClusterRecord, WordEvidence
 
@@ -369,7 +369,7 @@ def _length_variance(morphs: Iterable[str]) -> float:
     return sum((length - mean) ** 2 for length in lengths) / float(len(lengths))
 
 
-def _safe_number(value: NumberConvertible, *, default: float) -> float:
+def _safe_number(value: MaybeNumber, *, default: float) -> float:
     if value is None:
         return default
     if isinstance(value, (int, float)):

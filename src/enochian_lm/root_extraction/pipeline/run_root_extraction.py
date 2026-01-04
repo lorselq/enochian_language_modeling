@@ -10,7 +10,7 @@ import random
 import statistics as st
 import time
 import uuid, json, sys, platform, datetime
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from collections import defaultdict, Counter
 from enochian_lm.root_extraction.utils.logger import save_log
 from enochian_lm.root_extraction.tools.debate_engine import debate_ngram
@@ -246,7 +246,7 @@ class RootExtractionCrew:
                     ngrams.add(ngram)
         return ngrams
 
-    def _normalize_root(self, value: str) -> str:
+    def _normalize_root(self, value: object) -> str:
         return str(value or "").strip().lower()
 
     @staticmethod
@@ -488,12 +488,12 @@ class RootExtractionCrew:
             self._advance_queue(norm)
 
     @staticmethod
-    def _round_vector(values: Sequence[float], places: int = 6) -> list[float]:
+    def _round_vector(values: Iterable[float], places: int = 6) -> list[float]:
         factor = 10**places
         return [math.floor(float(val) * factor + 0.5) / factor for val in values]
 
     @staticmethod
-    def _vector_norm(values: Sequence[float]) -> float:
+    def _vector_norm(values: Iterable[float]) -> float:
         return math.sqrt(sum(float(v) * float(v) for v in values))
 
     def _persist_root_remainders(self, rows: list[RootRemainder]) -> None:
@@ -521,28 +521,33 @@ class RootExtractionCrew:
             if not norm:
                 continue
 
-            breakdown = item.get("breakdown") or {}
+            breakdown_raw = item.get("breakdown")
+            breakdown = breakdown_raw if isinstance(breakdown_raw, dict) else {}
             vector = self.fasttext.get_word_vector(norm)
             morphs: list[str] = []
-            for seg in breakdown.get("segments") or []:
-                canonical = str(seg.get("canonical") or "").strip()
-                if canonical and canonical not in morphs:
-                    morphs.append(canonical)
-                if canonical and canonical not in morph_rows:
-                    morph_vector = self.fasttext.get_word_vector(canonical)
-                    morph_rows[canonical] = (
-                        json.dumps(self._round_vector(morph_vector)),
-                        round(self._vector_norm(morph_vector), 4),
-                        timestamp,
-                    )
+            segments = breakdown.get("segments") or []
+            if isinstance(segments, list):
+                for seg in segments:
+                    if isinstance(seg, dict):
+                        canonical = str(seg.get("canonical") or "").strip()
+                        if canonical and canonical not in morphs:
+                            morphs.append(canonical)
+                        if canonical and canonical not in morph_rows:
+                            morph_vector = self.fasttext.get_word_vector(canonical)
+                            morph_rows[canonical] = (
+                                json.dumps(self._round_vector(morph_vector)),
+                                round(self._vector_norm(morph_vector), 4),
+                                timestamp,
+                            )
 
             gold_gloss = item.get("definition") or None
+            residual_ratio = breakdown.get("residual_ratio")
             composite_rows.append(
                 (
                     norm,
                     gold_gloss if isinstance(gold_gloss, str) and gold_gloss.strip() else None,
                     json.dumps(self._round_vector(vector)),
-                    round(float(breakdown.get("residual_ratio") or 0.0), 4),
+                    round(float(residual_ratio) if isinstance(residual_ratio, (int, float)) else 0.0, 4),
                     json.dumps(morphs),
                     "fasttext",
                     timestamp,
@@ -972,12 +977,16 @@ class RootExtractionCrew:
         Wraps either the debate engine or the solo engine, and standardizes keys.
         """
 
-        def _get_field(item, field, default=""):
+        def _get_field(item: object, field: str, default: object = "") -> object:
             # Unified accessor for Entry objects and dicts.
             if isinstance(item, dict):
                 return item.get(field, default)
-            else:
-                return getattr(item, field, default)
+            return getattr(item, field, default)
+
+        def _get_str(item: object, field: str, default: str = "") -> str:
+            # String-typed accessor for fields that should be strings.
+            value = _get_field(item, field, default)
+            return str(value) if value is not None else default
 
         trimmed_cluster = []
         anchor_entry = None
@@ -985,46 +994,48 @@ class RootExtractionCrew:
         root_entry = None
 
         for c in cluster:
-            if not _get_field(c, "definition", ""):
+            if not _get_str(c, "definition", ""):
                 continue
 
             citations = _get_field(c, "key_citations", "")
-            if citations and isinstance(citations[0], dict):
+            if isinstance(citations, list) and citations and isinstance(citations[0], dict):
                 contexts = [
-                    _get_field(cite, "context", "").strip()
+                    _get_str(cite, "context", "").strip()
                     for cite in citations
-                    if _get_field(cite, "context", "")
+                    if _get_str(cite, "context", "")
                 ]
+            elif isinstance(citations, list):
+                contexts = [str(ctx) for ctx in citations]
             else:
-                contexts = citations
+                contexts = []
 
             definition = (
-                f"{_get_field(c, 'definition', '')} [{' / '.join(contexts[:2])}]"
+                f"{_get_str(c, 'definition', '')} [{' / '.join(contexts[:2])}]"
                 if contexts
-                else _get_field(c, "definition", "")
+                else _get_str(c, "definition", "")
             )
 
             entry = {
-                "word": _get_field(c, "word", "").upper(),
+                "word": _get_str(c, "word", "").upper(),
                 "definition": definition,
-                "enhanced_definition": _get_field(c, "enhanced_definition", ""),
-                "normalized": _get_field(c, "normalized", "").lower(),
-                "fasttext": _get_field(c, "fasttext", "0.0"),
-                "semantic": _get_field(c, "semantic", "0.0"),
-                "score": _get_field(c, "score", "0.0"),
-                "tier": _get_field(c, "tier", "Untiered"),
-                "priority": _get_field(c, "priority", "0"),
-                "citations": _get_field(c, "citations", ""),
-                "source": _get_field(c, "source", "unknown"),
+                "enhanced_definition": _get_str(c, "enhanced_definition", ""),
+                "normalized": _get_str(c, "normalized", "").lower(),
+                "fasttext": _get_str(c, "fasttext", "0.0"),
+                "semantic": _get_str(c, "semantic", "0.0"),
+                "score": _get_str(c, "score", "0.0"),
+                "tier": _get_str(c, "tier", "Untiered"),
+                "priority": _get_str(c, "priority", "0"),
+                "citations": _get_str(c, "citations", ""),
+                "source": _get_str(c, "source", "unknown"),
             }
 
             # Check if this is the literal ngram word
-            if _get_field(entry, "normalized", "") == ngram_lower:
+            if _get_str(entry, "normalized", "") == ngram_lower:
                 root_entry = c  # We can directly use the Entry object
                 anchor_entry = {
-                    "word": f"{_get_field(c, 'word', '')} ⭐️",
-                    "definition": _get_field(c, "enhanced_definition", ""),
-                    "normalized": _get_field(c, "normalized", "").lower(),
+                    "word": f"{_get_str(c, 'word', '')} ⭐️",
+                    "definition": _get_str(c, "enhanced_definition", ""),
+                    "normalized": _get_str(c, "normalized", "").lower(),
                 }
             else:
                 trimmed_cluster.append(entry)
@@ -1034,10 +1045,10 @@ class RootExtractionCrew:
             trimmed_cluster.insert(0, anchor_entry)
 
         # Check for exact-match anchor word in the cluster
-        if root_entry and _get_field(root_entry, "definition", ""):
+        if root_entry and _get_str(root_entry, "definition", ""):
             root_callout = (
                 f"📌 Note: The proposed root '{ngram.upper()}' is itself a defined word: "
-                f"**{_get_field(root_entry, 'definition', '')}**\n"
+                f"**{_get_str(root_entry, 'definition', '')}**\n"
                 "This may indicate its role as a base morpheme from which related forms are derived.\n"
             )
         else:
@@ -1045,27 +1056,27 @@ class RootExtractionCrew:
 
         tiered_groups = defaultdict(list)
         for c in cluster:
-            tier = _get_field(c, "tier", "Untiered")
+            tier = _get_str(c, "tier", "Untiered")
             tiered_groups[tier].append(c)
         for tier, group in tiered_groups.items():
             group.sort(
                 key=lambda x: (
-                    -x.get("priority", 0),
-                    -x.get("cluster_similarity", 0),
-                    -x.get("score", 0),
+                    -(x.get("priority", 0) if isinstance(x, dict) else 0),
+                    -(x.get("cluster_similarity", 0) if isinstance(x, dict) else 0),
+                    -(x.get("score", 0) if isinstance(x, dict) else 0),
                 )
             )
             seen = set()
             unique = []
             for entry in group:
-                key = _get_field(entry, "normalized", "").lower()
+                key = _get_str(entry, "normalized", "").lower()
                 if key not in seen:
                     seen.add(key)
                     unique.append(entry)
             tiered_groups[tier] = unique
         # Cohesion & coverage already computed as `cohesion_score` and `semantic_coverage`
         semantic_hits = sum(
-            1 for c in cluster if _get_field(c, "source", "") in ("semantic", "both")
+            1 for c in cluster if _get_str(c, "source", "") in ("semantic", "both")
         )
 
         residual_inputs = []
@@ -1075,11 +1086,11 @@ class RootExtractionCrew:
         now_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
         seen_norms = set()
         for original in cluster:
-            norm_form = _get_field(original, "normalized", "").lower()
+            norm_form = _get_str(original, "normalized", "").lower()
             if not norm_form or norm_form in seen_norms:
                 continue
             seen_norms.add(norm_form)
-            display_word = _get_field(original, "word", norm_form)
+            display_word = _get_str(original, "word", norm_form)
             breakdown = self._get_candidate_breakdown(norm_form)
             if not breakdown:
                 uncovered = (
@@ -1100,22 +1111,27 @@ class RootExtractionCrew:
                     target=norm_form,
                 )
             if breakdown:
-                for seg in breakdown.get("segments", []):
-                    canonical = str(seg.get("canonical", "")).strip()
-                    if canonical and canonical.lower() != ngram_lower:
-                        segment_counter[canonical] += 1
-                for uncovered_entry in breakdown.get("uncovered", []):
-                    if isinstance(uncovered_entry, dict):
-                        frag = str(uncovered_entry.get("text", "")).strip()
-                    else:
-                        frag = str(uncovered_entry).strip()
-                    if frag and frag.lower() != ngram_lower:
-                        residual_counter[frag] += 1
+                segments = breakdown.get("segments", [])
+                if isinstance(segments, list):
+                    for seg in segments:
+                        if isinstance(seg, dict):
+                            canonical = str(seg.get("canonical", "")).strip()
+                            if canonical and canonical.lower() != ngram_lower:
+                                segment_counter[canonical] += 1
+                uncovered = breakdown.get("uncovered", [])
+                if isinstance(uncovered, list):
+                    for uncovered_entry in uncovered:
+                        if isinstance(uncovered_entry, dict):
+                            frag = str(uncovered_entry.get("text", "")).strip()
+                        else:
+                            frag = str(uncovered_entry).strip()
+                        if frag and frag.lower() != ngram_lower:
+                            residual_counter[frag] += 1
             residual_inputs.append(
                 {
                     "word": display_word,
                     "normalized": norm_form,
-                    "definition": _get_field(original, "definition", ""),
+                    "definition": _get_str(original, "definition", ""),
                     "breakdown": breakdown,
                 }
             )
@@ -1145,7 +1161,8 @@ class RootExtractionCrew:
             self.new_definitions_db, run_id=self.run_id, root=ngram_lower
         )
         if isinstance(residual_report, dict):
-            guidance_json = residual_report.get("residual_guidance_json") or {}
+            guidance_raw = residual_report.get("residual_guidance_json")
+            guidance_json: dict[str, object] = guidance_raw if isinstance(guidance_raw, dict) else {}
             guidance_json["remainders"] = remainder_summary
             residual_report["residual_guidance_json"] = guidance_json
 
@@ -1164,40 +1181,51 @@ class RootExtractionCrew:
         )
         if fallback_summary:
             analytics_summary = analytics_summary or {}
-            merged_summary = list(analytics_summary.get("summary_lines") or [])
-            for line in fallback_summary.get("summary_lines", []):
-                if line not in merged_summary:
-                    merged_summary.append(line)
-            analytics_summary["summary_lines"] = merged_summary
+            summary_lines_raw = analytics_summary.get("summary_lines") if isinstance(analytics_summary, dict) else None
+            merged_summary: list[str] = list(summary_lines_raw) if isinstance(summary_lines_raw, list) else []
+            fallback_lines = fallback_summary.get("summary_lines", []) if isinstance(fallback_summary, dict) else []
+            if isinstance(fallback_lines, list):
+                for line in fallback_lines:
+                    if isinstance(line, str) and line not in merged_summary:
+                        merged_summary.append(line)
+            if isinstance(analytics_summary, dict):
+                analytics_summary["summary_lines"] = merged_summary
 
-            merged_focus = list(analytics_summary.get("focus_lines") or [])
-            for line in fallback_summary.get("focus_lines", []):
-                if line not in merged_focus:
-                    merged_focus.append(line)
-            analytics_summary["focus_lines"] = merged_focus
+            focus_lines_raw = analytics_summary.get("focus_lines") if isinstance(analytics_summary, dict) else None
+            merged_focus: list[str] = list(focus_lines_raw) if isinstance(focus_lines_raw, list) else []
+            fallback_focus = fallback_summary.get("focus_lines", []) if isinstance(fallback_summary, dict) else []
+            if isinstance(fallback_focus, list):
+                for line in fallback_focus:
+                    if isinstance(line, str) and line not in merged_focus:
+                        merged_focus.append(line)
+            if isinstance(analytics_summary, dict):
+                analytics_summary["focus_lines"] = merged_focus
 
         # Summarize stats for agents with residual diagnostics
         coverage_pct = round(semantic_coverage * 100, 1)
-        stats_lines = [
+        stats_lines: list[str] = [
             f"{root_callout}The proposed root '{ngram.upper()}' has:",
             f"- Cohesion Score: {cohesion_score} (semantic similarity among definitions; from 0.0 to 1.0, with higher being better)",
             f"- Semantic Coverage: {coverage_pct}% ({semantic_hits}/{len(cluster)} words match semantically)",
             f"- Candidate Count: {len(cluster)}",
         ]
-        focus_prompt = residual_report.get("focus_prompt") if residual_report else ""
+        focus_prompt_raw = residual_report.get("focus_prompt") if isinstance(residual_report, dict) else None
+        focus_prompt: str = str(focus_prompt_raw) if focus_prompt_raw else ""
         if focus_prompt:
             stats_lines.append("")
             stats_lines.append("Morphological diagnostics:")
             stats_lines.append(focus_prompt)
 
         analytics_summary = analytics_summary or {}
-        analytics_lines = analytics_summary.get("summary_lines") or []
+        analytics_lines_raw = analytics_summary.get("summary_lines") if isinstance(analytics_summary, dict) else None
+        analytics_lines: list[str] = [str(ln) for ln in analytics_lines_raw] if isinstance(analytics_lines_raw, list) else []
         if analytics_lines:
             stats_lines.append("")
             stats_lines.append("Analytics priors:")
             stats_lines.extend(analytics_lines)
 
-        analytics_focus = analytics_summary.get("focus_lines") or []
+        analytics_focus_raw = analytics_summary.get("focus_lines") if isinstance(analytics_summary, dict) else None
+        analytics_focus: list[str] = [str(ln) for ln in analytics_focus_raw] if isinstance(analytics_focus_raw, list) else []
         if analytics_focus:
             focus_block = "Attribution highlights:\n" + "\n".join(
                 f"- {line}" for line in analytics_focus
@@ -1237,6 +1265,12 @@ class RootExtractionCrew:
                 query_run_id=self.run_id,
             )
         else:
+            residual_guidance_raw = (
+                residual_report.get("residual_guidance_json")
+                if isinstance(residual_report, dict)
+                else None
+            )
+            residual_guidance = residual_guidance_raw if isinstance(residual_guidance_raw, dict) else None
             the_result = solo_agent_ngram_analysis(
                 root=ngram.upper(),
                 candidates=trimmed_cluster,
@@ -1245,11 +1279,7 @@ class RootExtractionCrew:
                 root_entry=None,   # can be None; debate engine will handle
                 use_remote=self.use_remote,
                 residual_prompt=focus_prompt,
-                residual_guidance=(
-                    residual_report.get("residual_guidance_json")
-                    if residual_report
-                    else None
-                ),
+                residual_guidance=residual_guidance,
                 query_db=self.new_definitions_db,
                 query_run_id=self.run_id,
             )
@@ -1292,10 +1322,12 @@ class RootExtractionCrew:
         engines omit a model string.
         """
 
+        raw_output = evaluated.get("raw_output")
+        raw_output_dict = raw_output if isinstance(raw_output, dict) else {}
         raw_model = (
             evaluated.get("Model")
-            or evaluated.get("raw_output", {}).get("Model")
-            or evaluated.get("raw_output", {}).get("Glossator_Model")
+            or raw_output_dict.get("Model")
+            or raw_output_dict.get("Glossator_Model")
         )
 
         if raw_model:
@@ -1785,25 +1817,29 @@ class RootExtractionCrew:
                     output.append(evaluated)
 
                     # 1) Save the log
+                    raw_output_eval = evaluated.get("raw_output")
+                    raw_output_dict = raw_output_eval if isinstance(raw_output_eval, dict) else {}
+                    archivist_val = evaluated.get("Archivist") or raw_output_dict.get("Archivist")
+                    archivist_str = str(archivist_val) if archivist_val else ""
+                    glossator_val = evaluated.get("Glossator")
+                    glossator_str = str(glossator_val) if glossator_val else ""
                     if style == "debate":
                         save_log(
-                            evaluated["Archivist"]
-                            or evaluated["raw_output"].get("Archivist"),
+                            archivist_str,
                             label=root_token,
                             cluster_number=str(cluster_id + 1),
                             cluster_total=str(len(clusters)),
-                            accepted=len(evaluated["Glossator"]) > 0,
+                            accepted=len(glossator_str) > 0,
                             style=style,
                         )
                     elif style == "solo":
                         txt = self._extract_evaluation(
-                            evaluated["Glossator"].strip().lower()
+                            glossator_str.strip().lower()
                         )
                         print(f"\n\n[Debug] Just so you know: {txt}\n\n")
                         verdict = "accept" in txt.lower() if txt else False
                         save_log(
-                            evaluated["Archivist"]
-                            or evaluated["raw_output"].get("Archivist"),
+                            archivist_str,
                             label=root_token,
                             cluster_number=str(cluster_id + 1),
                             cluster_total=str(len(clusters)),
@@ -1834,18 +1870,16 @@ class RootExtractionCrew:
                         except (TypeError, ValueError):
                             return None
 
-                    residual_report = evaluated.get("residual_report") or {}
+                    residual_report_raw = evaluated.get("residual_report")
+                    residual_report = residual_report_raw if isinstance(residual_report_raw, dict) else {}
                     residual_explained = _safe_float(
                         residual_report.get("explained_ratio")
                     )
                     residual_ratio = _safe_float(residual_report.get("residual_ratio"))
 
                     # Per-word residual diagnostics (used for both headline and prompt)
-                    residual_word_details = (
-                        residual_report.get("word_details") or []
-                        if isinstance(residual_report, dict)
-                        else []
-                    )
+                    word_details_raw = residual_report.get("word_details")
+                    residual_word_details = word_details_raw if isinstance(word_details_raw, list) else []
 
                     # --- 1) Build a clearer residual_headline ---------------------------------
                     # Example target:
@@ -1942,6 +1976,8 @@ class RootExtractionCrew:
 
                     # 2) insert cluster and llm records into sqlite
                     xstr = lambda s: str(s).lower() or ""
+                    eval_raw_output = evaluated.get("raw_output")
+                    eval_raw = eval_raw_output if isinstance(eval_raw_output, dict) else {}
                     if style == "debate":
                         cursor.execute(
                             """
@@ -1981,41 +2017,33 @@ class RootExtractionCrew:
                                 total_clusters,
                                 len(sem_norms),
                                 len(index_norms),
-                                evaluated["overlap_count"],
+                                evaluated.get("overlap_count"),
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
                                 _to_text(self._resolve_model_name(evaluated)),
                                 # proposal
-                                _to_text(evaluated["raw_output"].get("Proposal")),
+                                _to_text(eval_raw.get("Proposal")),
                                 # critique
-                                _to_text(evaluated["raw_output"].get("Critique")),
+                                _to_text(eval_raw.get("Critique")),
                                 # defense
-                                _to_text(
-                                    evaluated["raw_output"].get("Initial_Defense")
-                                ),
+                                _to_text(eval_raw.get("Initial_Defense")),
                                 # adjudicator_rounds
-                                _to_text(evaluated["raw_output"].get("Adjudicator")),
+                                _to_text(eval_raw.get("Adjudicator")),
                                 # skeptic_rounds
-                                _to_text(evaluated["raw_output"].get("Skeptic")),
+                                _to_text(eval_raw.get("Skeptic")),
                                 # linguist_rounds
-                                _to_text(evaluated["raw_output"].get("Linguist")),
+                                _to_text(eval_raw.get("Linguist")),
                                 # gloss prompt
-                                _to_text(evaluated["Glossator_Prompt"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Glossator_Prompt")
-                                ),
+                                _to_text(evaluated.get("Glossator_Prompt"))
+                                or _to_text(eval_raw.get("Glossator_Prompt")),
                                 # glossator def
-                                _to_text(evaluated["Glossator"])
-                                or _to_text(evaluated["raw_output"].get("Glossator")),
+                                _to_text(evaluated.get("Glossator"))
+                                or _to_text(eval_raw.get("Glossator")),
                                 # verdict
                                 str(
-                                    "accepted" in xstr(_to_text(evaluated["Glossator"]))
+                                    "accepted" in xstr(_to_text(evaluated.get("Glossator")))
                                     or "accepted"
-                                    in xstr(
-                                        _to_text(
-                                            evaluated["raw_output"].get("Glossator")
-                                        )
-                                    )
+                                    in xstr(_to_text(eval_raw.get("Glossator")))
                                 ),
                                 cohesion_score,
                                 semantic_coverage,
@@ -2059,26 +2087,20 @@ class RootExtractionCrew:
                                 total_clusters,
                                 len(sem_norms),
                                 len(index_norms),
-                                evaluated["overlap_count"],
+                                evaluated.get("overlap_count"),
                                 _to_text(prevaluate["action"]),
                                 _to_text(prevaluate["reason"]),
                                 _to_text(self._resolve_model_name(evaluated)),
-                                _to_text(evaluated["Glossator_Prompt"])
-                                or _to_text(
-                                    evaluated["raw_output"].get("Glossator_Prompt")
-                                ),
+                                _to_text(evaluated.get("Glossator_Prompt"))
+                                or _to_text(eval_raw.get("Glossator_Prompt")),
                                 # verdict
                                 str(
-                                    "accepted" in xstr(_to_text(evaluated["Glossator"]))
+                                    "accepted" in xstr(_to_text(evaluated.get("Glossator")))
                                     or "accepted"
-                                    in xstr(
-                                        _to_text(
-                                            evaluated["raw_output"].get("Glossator")
-                                        )
-                                    )
+                                    in xstr(_to_text(eval_raw.get("Glossator")))
                                 ),
-                                _to_text(evaluated["Glossator"])
-                                or _to_text(evaluated["raw_output"].get("Glossator")),
+                                _to_text(evaluated.get("Glossator"))
+                                or _to_text(eval_raw.get("Glossator")),
                                 cohesion_score,
                                 semantic_coverage,
                                 clustering_meta_json,

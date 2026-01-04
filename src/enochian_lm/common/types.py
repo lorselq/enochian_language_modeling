@@ -6,24 +6,32 @@ the codebase, ensuring type safety without excessive use of Any.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
-try:
+if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    Vector = NDArray[np.floating]
-    """A numeric vector, backed by numpy when available."""
+    Vector: TypeAlias = NDArray[np.floating]
+else:
+    try:
+        import numpy as np
+        from numpy.typing import NDArray
 
-    _HAS_NUMPY = True
-except ImportError:
-    _HAS_NUMPY = False
-    Vector = list[float]  # type: ignore[misc]
+        Vector: TypeAlias = NDArray[np.floating]
+        _HAS_NUMPY = True
+    except ImportError:
+        _HAS_NUMPY = False
+        Vector: TypeAlias = list[float]
 
 
-# Type for values that can be safely converted to float
-# Used by _safe_number() functions throughout the codebase
-NumberConvertible = float | int | str | None
+# Type for values that are known to be convertible to float
+NumberConvertible: TypeAlias = float | int | str | None
+
+# Type for values that may or may not be convertible to numbers.
+# Used by _safe_number() functions that accept untrusted/dynamic values
+# (e.g., from dict.get() calls where the value type is object | None).
+MaybeNumber: TypeAlias = float | int | str | object | None
 
 
 @runtime_checkable
@@ -78,6 +86,7 @@ class SentenceEmbedder(Protocol):
 __all__ = [
     "FastTextModel",
     "KeyedVectorsLike",
+    "MaybeNumber",
     "NumberConvertible",
     "SentenceEmbedder",
     "Vector",
