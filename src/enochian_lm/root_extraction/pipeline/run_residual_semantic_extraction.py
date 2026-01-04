@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import math
 import re
@@ -8,7 +10,7 @@ import random
 import statistics as st
 import time
 import uuid, json, sys, platform, datetime
-from typing import List, Optional, Dict, Any, Tuple, Sequence
+from collections.abc import Sequence
 from collections import defaultdict, Counter
 from enochian_lm.root_extraction.utils.logger import save_log
 from enochian_lm.root_extraction.tools.debate_residual_semantic_engine import (
@@ -208,7 +210,7 @@ class RemainderExtractionCrew:
         return max(0.05, min(0.95, base))
 
     def _get_source_label(
-        self, sem_entry: Optional[Dict[str, Any]], index_entry: Optional[Dict[str, Any]]
+        self, sem_entry: dict[str, object] | None, index_entry: dict[str, object] | None
     ) -> str:
         if sem_entry and index_entry:
             return "both"
@@ -275,7 +277,7 @@ class RemainderExtractionCrew:
         # fallback
         return (None, None)
 
-    def load_entries(self) -> List[EntryRecord]:
+    def load_entries(self) -> list[EntryRecord]:
         return load_dictionary(str(self.dictionary_path))
 
     def load_subst_map(self):
@@ -1111,7 +1113,7 @@ class RemainderExtractionCrew:
     def evaluate_ngram(
         self,
         ngram: str,
-        cluster: List[Dict[str, Any]],
+        cluster: list[dict[str, object]],
         cohesion_score: float,
         semantic_hits: int,
         semantic_coverage: float,
@@ -1121,7 +1123,7 @@ class RemainderExtractionCrew:
         stats_summary,
         stream_callback=None,
         style: str = "debate",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, object]:
         """
         Wraps either the debate engine or the solo engine, and standardizes keys.
         """
@@ -1490,7 +1492,7 @@ class RemainderExtractionCrew:
         normalized["analytics_summary"] = analytics_summary
         return normalized
 
-    def _resolve_model_name(self, evaluated: dict[str, Any]) -> str:
+    def _resolve_model_name(self, evaluated: dict[str, object]) -> str:
         """Return a human-readable model label for database inserts."""
 
         raw_model = (
@@ -2398,7 +2400,7 @@ class RemainderExtractionCrew:
             existing_data = []
 
         # Combine existing and new
-        combined_data = {}
+        combined_data: dict[str, dict[str, object]] = {}
         for item in existing_data + new_data:
             combined_data[item["root"]] = item
 

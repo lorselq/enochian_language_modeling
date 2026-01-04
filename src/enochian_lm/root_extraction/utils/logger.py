@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import datetime
-from typing import Optional
 from pathlib import Path
 
-def save_log(log_entries: str, label: Optional[str] = None, cluster_number: Optional[str] = None, cluster_total: Optional[str] = None, accepted: Optional[bool] = False, style: str="StyleUnclear"):
+def save_log(log_entries: str, label: str | None = None, cluster_number: str | None = None, cluster_total: str | None = None, accepted: bool | None = False, style: str="StyleUnclear"):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     name = f"{label.upper()}" if label else "ngram-missing"
     cluster_info = ""

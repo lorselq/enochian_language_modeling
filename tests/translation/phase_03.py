@@ -15,7 +15,7 @@ These tests mirror the Phase 01 / Phase 02 style:
 import sys
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Iterable
+from collections.abc import Iterable
 
 import pytest
 

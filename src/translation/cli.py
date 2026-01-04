@@ -13,7 +13,7 @@ import json
 import sys
 import textwrap
 from pathlib import Path
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from dotenv import find_dotenv, load_dotenv
 

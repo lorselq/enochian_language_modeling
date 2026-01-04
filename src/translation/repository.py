@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Mapping, SupportsFloat, SupportsInt, TypedDict
+from collections.abc import Iterable, Mapping
+from typing import SupportsFloat, SupportsInt, TypedDict
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model

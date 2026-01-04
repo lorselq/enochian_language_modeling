@@ -418,7 +418,7 @@ def build_sidecar(
             loaded = _load_variant_map(variant_map_path)
             manual_map = {k.lower(): v.lower() for k, v in loaded.items()}
         except Exception:
-            manual_map = {}
+            manual_map.clear()
 
     # 4) Reconcile corpus types to dictionary canonicals
     redirects: dict[str, str] = {}

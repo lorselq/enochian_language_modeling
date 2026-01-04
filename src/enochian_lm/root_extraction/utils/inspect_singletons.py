@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 
@@ -21,7 +20,7 @@ class Anchor:
   morph: str
   uses: int
   avg_cohesion: float
-  any_gloss_json: Optional[str]  # JSON string or None
+  any_gloss_json: str | None  # JSON string or None
 
 @dataclass
 class SingletonCandidate:
@@ -40,7 +39,7 @@ def _normalize(v: np.ndarray) -> np.ndarray:
   n = np.linalg.norm(v)
   return v / n if n > 0 else v
 
-def _embed_texts(texts: List[str], sbert) -> Optional[np.ndarray]:
+def _embed_texts(texts: list[str], sbert) -> np.ndarray | None:
   texts = [t for t in (texts or []) if isinstance(t, str) and t.strip()]
   if not texts:
     return None
@@ -59,7 +58,7 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
 # -----------------------------
 def build_anchor_index(conn: sqlite3.Connection,
                        min_uses: int = 3,
-                       min_cohesion: float = 0.40) -> Dict[str, Anchor]:
+                       min_cohesion: float = 0.40) -> dict[str, Anchor]:
   """
   Returns {morph -> Anchor} for accepted, stable morphemes.
   Expects `anchors` VIEW to exist (see ANCHORS_VIEW_SQL).
@@ -71,7 +70,7 @@ def build_anchor_index(conn: sqlite3.Connection,
     WHERE uses >= ? AND avg_cohesion >= ?
     ORDER BY uses DESC, avg_cohesion DESC
   """, (min_uses, min_cohesion))
-  out: Dict[str, Anchor] = {}
+  out: dict[str, Anchor] = {}
   for r in cur:
     out[r["morph"].upper()] = Anchor(
       morph=r["morph"].upper(),
@@ -85,7 +84,7 @@ def build_anchor_index(conn: sqlite3.Connection,
 # -----------------------------
 # Fetch defs for embeddings
 # -----------------------------
-def _defs_for_word(conn: sqlite3.Connection, word_upper: str) -> List[str]:
+def _defs_for_word(conn: sqlite3.Connection, word_upper: str) -> list[str]:
   cur = conn.execute("""
     SELECT definition
     FROM raw_defs
@@ -94,7 +93,7 @@ def _defs_for_word(conn: sqlite3.Connection, word_upper: str) -> List[str]:
   """, (word_upper,))
   return [r[0] for r in cur.fetchall()]
 
-def _defs_for_morph(conn: sqlite3.Connection, morph_upper: str) -> List[str]:
+def _defs_for_morph(conn: sqlite3.Connection, morph_upper: str) -> list[str]:
   # accepted defs of that n-gram via any cluster
   cur = conn.execute("""
     SELECT rd.definition
@@ -136,7 +135,7 @@ def _defs_for_morph(conn: sqlite3.Connection, morph_upper: str) -> List[str]:
 def fetch_singleton_candidates(conn: sqlite3.Connection,
                                min_residual: float = 0.35,
                                max_uncovered: int = 1,
-                               limit: int = 500) -> List[SingletonCandidate]:
+                               limit: int = 500) -> list[SingletonCandidate]:
   """
   Pull high-residue words with exactly `max_uncovered` uncovered fragments.
   """
@@ -161,7 +160,7 @@ def fetch_singleton_candidates(conn: sqlite3.Connection,
     ORDER BY rd.residual_ratio DESC
     LIMIT ?
   """, (min_residual, max_uncovered, limit))
-  out: List[SingletonCandidate] = []
+  out: list[SingletonCandidate] = []
   for r in cur:
     frag = (r["frag"] or "").strip()
     if not frag:
@@ -178,7 +177,7 @@ def fetch_singleton_candidates(conn: sqlite3.Connection,
 
 
 def _choose_anchor_in_word(source_word: str,
-                           anchor_index: Dict[str, Anchor]) -> Optional[str]:
+                           anchor_index: dict[str, Anchor]) -> str | None:
   """
   Very simple heuristic: pick the longest anchor substring present in the word.
   You can replace this with segmentation-aware selection later.
@@ -199,8 +198,8 @@ def _choose_anchor_in_word(source_word: str,
 class SingletonHypothesis:
   morph: str
   source_word: str
-  anchor: Optional[str]
-  seed_glosses: List[str]
+  anchor: str | None
+  seed_glosses: list[str]
   proposed_gloss: str
   rationale: str
   delta_cosine: float
@@ -211,11 +210,11 @@ class SingletonHypothesis:
 
 def infer_singleton(conn: sqlite3.Connection,
                     sbert,                         # your sentence-transformer
-                    anchor_index: Dict[str, Anchor],
+                    anchor_index: dict[str, Anchor],
                     candidate: SingletonCandidate,
                     sense_matrix: np.ndarray,      # precomputed (N x d) embeddings
-                    sense_labels: List[str],       # N labels for seeds
-                    topk: int = 5) -> Optional[SingletonHypothesis]:
+                    sense_labels: list[str],       # N labels for seeds
+                    topk: int = 5) -> SingletonHypothesis | None:
   """
   Build a Δ-embedding: meaning(source_word) - meaning(anchor).
   NN over dictionary senses to get seed glosses. The *proposed_gloss* and

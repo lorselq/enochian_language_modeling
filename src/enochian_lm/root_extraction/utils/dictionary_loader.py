@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import json
 import logging
 import os
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -56,23 +58,23 @@ class Sense(BaseModel):
 
 class Entry(BaseModel):
     canonical: str
-    alternates: List["Alternate"] = Field(default_factory=list)
-    senses: Optional[List["Sense"]] = None
-    context_tags: Optional[List[str]] = None
-    pos: Optional[str] = None
+    alternates: list["Alternate"] = Field(default_factory=list)
+    senses: list["Sense"] | None = None
+    context_tags: list[str] | None = None
+    pos: str | None = None
     normalized: str = ""
     enhanced_definition: str = ""
     # Additional metadata
-    key_citations: Optional[List[Dict[str, Any]]] = None
-    commentary: Optional[str] = None
-    canon_word: Optional[bool] = None
+    key_citations: list[dict[str, object]] | None = None
+    commentary: str | None = None
+    canon_word: bool | None = None
 
     @field_validator("canonical", mode="before")
     def normalize_canonical(cls, v: str) -> str:
         return unicodedata.normalize("NFKC", v.strip().lower())
 
     @field_validator("context_tags", mode="before")
-    def normalize_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def normalize_tags(cls, v: list[str] | None) -> list[str] | None:
         if v is None:
             return v
         return [tag.strip().lower() for tag in v]
@@ -81,7 +83,7 @@ class Entry(BaseModel):
 def load_dictionary(
     json_path: str,
     cache_dir: str = ".cache",
-) -> List[EntryRecord]:
+) -> list[EntryRecord]:
     """
     Load dictionary JSON (list or dict) into validated Entry objects.
     - Supports 'alternates', 'senses', or single 'definition'.
@@ -96,7 +98,7 @@ def load_dictionary(
     raw = json.loads(data_bytes)
 
     # Support both list-of-dicts and dict-of-dicts
-    items: List[Tuple[str, dict]] = []
+    items: list[tuple[str, dict[str, object]]] = []
     if isinstance(raw, list):
         logger.info(f"Loading {len(raw)} entries from list JSON")
         for item in raw:
@@ -114,7 +116,7 @@ def load_dictionary(
         return []
 
     # --- Group/merge phase ---
-    grouped: Dict[str, Dict[str, Any]] = {}
+    grouped: dict[str, dict[str, object]] = {}
     for key, val in items:
         canonical = unicodedata.normalize("NFKC", str(key).strip().lower())
         norm = canonical
@@ -188,7 +190,7 @@ def load_dictionary(
                 logger.warning(f"Invalid alternate for '{canonical}': {alt} ({e})")
 
     # --- Build phase (AFTER grouping) ---
-    entries: List[EntryRecord] = []
+    entries: list[EntryRecord] = []
     for norm, data in grouped.items():
         entry: EntryRecord = {
             "canonical": data["canonical"],

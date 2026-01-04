@@ -7,7 +7,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Literal, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Literal
 
 from ...common.config import get_config_paths
 from .dictionary_loader import load_dictionary
@@ -140,7 +141,7 @@ class _SeedSnapshot:
     def status(self) -> str:
         return "pending" if self.occurrences > 0 else "skipped"
 
-    def as_payload(self) -> dict[str, Any]:
+    def as_payload(self) -> dict[str, object]:
         return {
             "ngram": self.ngram,
             "occurrences": self.occurrences,
@@ -328,7 +329,7 @@ class _PreanalysisManager:
         trusted: Sequence[str],
         run_id: str | None,
         refresh: bool,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         trusted_norm = _normalize_trusted(trusted)
         if not trusted_norm:
             raise ValueError("Trusted n-gram list is empty")
@@ -408,7 +409,7 @@ def execute_preanalysis(
     trusted_path: str | Path | None = None,
     run_id: str | None = None,
     refresh: bool = False,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Apply the pre-analysis safeguards for ``stage`` to ``db_path``."""
 
     if trusted_ngrams is None:
@@ -465,12 +466,12 @@ def fetch_preanalysis_summary(
         status = row["status"]
         stage = row["stage"]
         created_at = row["created_at"]
-        payload: dict[str, Any] = {}
+        payload: dict[str, object] = {}
         if payload_raw:
             try:
                 payload = json.loads(payload_raw)
             except json.JSONDecodeError:
-                payload = {}
+                payload.clear()
         occurrences = payload.get("occurrences")
         try:
             occ_int = int(occurrences)

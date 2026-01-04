@@ -17,7 +17,7 @@ import json
 import logging
 import re
 import textwrap
-from typing import Optional, Any
+from enochian_lm.common.sqlite_bootstrap import sqlite3
 
 from crewai import Task
 
@@ -67,12 +67,12 @@ def solo_analyze_remainder(
     candidates: list[EntryRecord],
     stats_summary: str,
     stream_callback=None,
-    root_entry: Optional[EntryRecord] = None,
+    root_entry: EntryRecord | None = None,
     use_remote: bool = True,
     residual_prompt: str | None = None,
     residual_guidance: dict | None = None,
-    query_db: Any | None = None,
-    query_run_id: Any | None = None,
+    query_db: sqlite3.Connection | None = None,
+    query_run_id: str | None = None,
     has_host: bool = False
 ):
     """
