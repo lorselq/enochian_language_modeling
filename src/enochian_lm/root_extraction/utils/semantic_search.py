@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import math
 import sys
@@ -7,7 +9,6 @@ from collections import OrderedDict
 import numpy as np
 import networkx as nx
 import torch
-from typing import List, Optional
 from tqdm import tqdm
 from Levenshtein import distance as levenshtein_distance
 from sentence_transformers import util
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 class EmbeddingCache:
     def __init__(self, max_size: int = 2048):
         self.max_size = max_size
-        self._cache: OrderedDict[tuple[str, str], torch.Tensor] = OrderedDict()
+        self._cache: Ordereddict[tuple[str, str], torch.Tensor] = OrderedDict()
         self.hits = 0
         self.misses = 0
 
@@ -94,10 +95,10 @@ embedding_cache = EmbeddingCache()
 
 
 def _batched_cached_embeddings(entries, sentence_model, *, context: str):
-    embeddings: List[Optional[torch.Tensor]] = [None] * len(entries)
-    to_encode_texts: List[str] = []
-    to_encode_keys: List[tuple[str, str]] = []
-    to_encode_indices: List[int] = []
+    embeddings: list[torch.Tensor | None] = [None] * len(entries)
+    to_encode_texts: list[str] = []
+    to_encode_keys: list[tuple[str, str]] = []
+    to_encode_indices: list[int] = []
 
     for idx, entry in enumerate(entries):
         key = (
@@ -180,7 +181,7 @@ def cluster_dbscan(defs, embeddings, eps=0.15, min_samples=2):
     labels = DBSCAN(eps=eps, min_samples=min_samples, metric="cosine").fit_predict(
         embeddings
     )
-    clusters = {}
+    clusters: dict[int, list[str]] = {}
     for idx, lbl in enumerate(labels):
         clusters.setdefault(lbl, []).append(defs[idx])
     return clusters  # note: label = -1 means “noise”
@@ -377,7 +378,7 @@ def tuned_cluster_definitions(texts, original_entries, embeddings, dist_matrix):
                 min_samples=params["min_samples"],
                 metric="precomputed",
             ).fit_predict(dist_matrix)
-            cmap = {}
+            cmap: dict[int, list[int]] = {}
             for i, lbl in enumerate(labels):
                 cmap.setdefault(lbl, []).append(i)
             clusters_idx = list(cmap.values())

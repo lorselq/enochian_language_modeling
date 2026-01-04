@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 #
 # IMPORTANT: this is temporary; this will ultimately be refactored to mirror solo_remainder_engine.py in terms of functionality, but preserving the debate structure!
 #
@@ -6,7 +8,7 @@ import logging
 import re
 import time
 import textwrap
-from typing import Any, Dict, List, Optional, Set, Tuple
+from enochian_lm.common.sqlite_bootstrap import sqlite3
 from crewai import Agent, Task, Crew
 from sentence_transformers import util
 from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
@@ -70,13 +72,13 @@ _CHECKBOX_OPEN_RE = re.compile(r"- \[ \]|^\s*\[\s\]\s", re.MULTILINE)
 _TASKS_HEADER_RE = re.compile(r"(?:^|\n)(TASKS?|CHECKLIST)\s*:\s*", re.IGNORECASE)
 
 
-def _split_lines(text: str) -> List[str]:
+def _split_lines(text: str) -> list[str]:
     return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
-def _sectionize(text: str):
+def _sectionize(text: str) -> dict[str, list[str]]:
     lines = _split_lines(text or "")
-    sections = {}
+    sections: dict[str, list[str]] = {}
     current = None
     for ln in lines:
         m = _KEYVAL_RE.match(ln.strip())
@@ -92,7 +94,7 @@ def _sectionize(text: str):
     return sections
 
 
-def _extract_bullets(lines: List[str]) -> List[str]:
+def _extract_bullets(lines: list[str]) -> list[str]:
     out = []
     for ln in lines:
         m = _BULLET_RE.match(ln)
@@ -106,11 +108,11 @@ def _get_field_text(sections, key: str) -> str:
     return "\n".join(vals).strip()
 
 
-def _get_bulleted_field(sections, key: str) -> List[str]:
+def _get_bulleted_field(sections, key: str) -> list[str]:
     return _extract_bullets(sections.get(key.upper(), []))
 
 
-def _norm_set(items: List[str]) -> Set[str]:
+def _norm_set(items: list[str]) -> set[str]:
     return {
         re.sub(r"\s+", " ", it.strip().lower())
         for it in (items or [])
@@ -118,7 +120,7 @@ def _norm_set(items: List[str]) -> Set[str]:
     }
 
 
-def _parse_confidence(text: str) -> Optional[float]:
+def _parse_confidence(text: str) -> float | None:
     m = re.search(r"(\d+(?:\.\d+)?)\s*(?:/?\s*1\.?0*|%)?", text or "")
     if not m:
         return None
@@ -128,7 +130,7 @@ def _parse_confidence(text: str) -> Optional[float]:
     return max(0.0, min(1.0, val))
 
 
-def _extract_confidence(block_text: str) -> Optional[float]:
+def _extract_confidence(block_text: str) -> float | None:
     sections = _sectionize(block_text)
     conf = _get_field_text(sections, "CONFIDENCE")
     if conf:
@@ -147,7 +149,7 @@ def _has_meaningful_delta(delta_text: str) -> bool:
     return t not in {"", "none", "n/a", "na", "no change"}
 
 
-def _extract_evidence(block_text: str) -> List[str]:
+def _extract_evidence(block_text: str) -> list[str]:
     sections = _sectionize(block_text)
     bullets = _get_bulleted_field(sections, "EVIDENCE")
     if bullets:
@@ -189,12 +191,12 @@ def debate_remainder(
     candidates: list[EntryRecord],
     stats_summary: str,
     stream_callback=None,
-    root_entry: Optional[EntryRecord] = None,
+    root_entry: EntryRecord | None = None,
     blind_evaluation: bool = True,
     use_remote: bool = True,
     residual_prompt: str | None = None,
-    query_db: Any | None = None,
-    query_run_id: Any | None = None
+    query_db: sqlite3.Connection | None = None,
+    query_run_id: str | None = None
 ):
     joined_defs = []
     evidence_prompt_portion = []

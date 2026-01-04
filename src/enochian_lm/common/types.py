@@ -5,7 +5,8 @@ the codebase, ensuring type safety without excessive use of Any.
 """
 from __future__ import annotations
 
-from typing import Protocol, Sequence, runtime_checkable
+from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
 
 try:
     import numpy as np

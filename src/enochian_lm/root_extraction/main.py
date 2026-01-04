@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import os
 from dotenv import load_dotenv, find_dotenv

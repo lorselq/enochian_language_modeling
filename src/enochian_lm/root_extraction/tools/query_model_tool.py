@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 import os
 import sys
@@ -8,7 +10,8 @@ import time
 from yaspin import yaspin, Spinner
 from yaspin.spinners import Spinners
 from tenacity import retry, stop_after_attempt, wait_exponential, RetryCallState
-from typing import Optional, Callable, ClassVar
+from collections.abc import Callable
+from typing import ClassVar
 from openai import OpenAI
 from crewai.tools import BaseTool
 from pydantic import PrivateAttr
@@ -43,15 +46,15 @@ class QueryModelTool(BaseTool):
     gloss_model: str = ""
     # private attribute (not a field)
     _use_remote: bool = PrivateAttr(default=True)
-    _db: Optional[sqlite3.Connection] = PrivateAttr(default=None)
-    _run_id: Optional[str] = PrivateAttr(default=None)
+    _db: sqlite3.Connection | None = PrivateAttr(default=None)
+    _run_id: str | None = PrivateAttr(default=None)
 
     def __init__(
         self,
         *,
         system_prompt: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
+        name: str | None = None,
+        description: str | None = None,
         use_remote: bool = True,
     ):
         super().__init__(
@@ -177,9 +180,9 @@ class QueryModelTool(BaseTool):
     def _try_remote(
         self,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str], None]] = None,
+        stream_callback: Callable[[str, str], None] | None = None,
         print_chunks: bool = False,
-        role_name: Optional[str] = None,
+        role_name: str | None = None,
     ) -> dict[str, str]:
         return self._llm_call(
             api_base_env="REMOTE_OPENAI_API_BASE",
@@ -220,9 +223,9 @@ class QueryModelTool(BaseTool):
         api_key_env: str,
         model_env: str,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str], None]] = None,
+        stream_callback: Callable[[str, str], None] | None = None,
         print_chunks: bool = False,
-        role_name: Optional[str] = None,
+        role_name: str | None = None,
     ) -> dict[str, str]:
         base_url = os.getenv(api_base_env, "[ERROR] could not get base URL!")
         api_key  = os.getenv(api_key_env, "[ERROR] could not get API key!")
@@ -371,9 +374,9 @@ class QueryModelTool(BaseTool):
     def _run(
         self,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str], None]] = None,
+        stream_callback: Callable[[str, str], None] | None = None,
         print_chunks: bool = False,
-        role_name: Optional[str] = None,
+        role_name: str | None = None,
     ) -> dict[str, str]:
         if self._use_remote:
             try:
@@ -416,9 +419,9 @@ class QueryModelTool(BaseTool):
     async def _arun(
         self,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str], None]] = None,
+        stream_callback: Callable[[str, str], None] | None = None,
         print_chunks: bool = False,
-        role_name: Optional[str] = None,
+        role_name: str | None = None,
     ) -> dict[str, str]:
         """
         Async entrypoint. Delegate straight to the sync _run.

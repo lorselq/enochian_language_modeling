@@ -10,7 +10,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from collections.abc import Iterable, Sequence
 
 import yaml
 
@@ -75,7 +75,7 @@ WORDNET_POS_BY_LABEL = {
 }
 
 
-def _normalize_wordnet_candidate(token: Optional[str]) -> Optional[str]:
+def _normalize_wordnet_candidate(token: str | None) -> str | None:
     if not token:
         return None
     cleaned = token.replace("_", " ").replace("-", " ").strip().lower()
@@ -89,25 +89,25 @@ def _normalize_wordnet_candidate(token: Optional[str]) -> Optional[str]:
 class DomainConfig:
     """Semantic domain configuration loaded from YAML."""
 
-    domains: Dict[str, str]
-    headword_to_domains: Dict[str, List[str]]
-    headword_stopwords: Set[str]
-    wordnet_lexname_to_domains: Dict[str, List[str]] = field(default_factory=dict)
-    angelic_lexnames: Set[str] = field(default_factory=set)
-    sacred_indicators: Set[str] = field(default_factory=set)
+    domains: dict[str, str]
+    headword_to_domains: dict[str, list[str]]
+    headword_stopwords: set[str]
+    wordnet_lexname_to_domains: dict[str, list[str]] = field(default_factory=dict)
+    angelic_lexnames: set[str] = field(default_factory=set)
+    sacred_indicators: set[str] = field(default_factory=set)
     use_wordnet_gloss_similarity: bool = False
     wordnet_gloss_similarity_threshold: float = 0.0
-    _wordnet_cache: Dict[Tuple[str, Tuple[str, ...]], Tuple[List[str], Optional[str]]] = field(
+    _wordnet_cache: dict[tuple[str, tuple[str, ...]], tuple[list[str], str | None]] = field(
         default_factory=dict, init=False, repr=False
     )
     _wordnet_import_failed: bool = field(default=False, init=False, repr=False)
     _wordnet_missing_corpus: bool = field(default=False, init=False, repr=False)
-    _domain_tfidf: Dict[str, Dict[str, float]] = field(default_factory=dict, init=False, repr=False)
-    _domain_norms: Dict[str, float] = field(default_factory=dict, init=False, repr=False)
-    _domain_idf: Dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _domain_tfidf: dict[str, dict[str, float]] = field(default_factory=dict, init=False, repr=False)
+    _domain_norms: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _domain_idf: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _default_idf: float = field(default=1.0, init=False, repr=False)
     _wordnet_download_attempted: bool = field(default=False, init=False, repr=False)
-    _sacred_indicator_pattern: Optional[re.Pattern[str]] = field(
+    _sacred_indicator_pattern: re.Pattern[str] | None = field(
         default=None, init=False, repr=False
     )
 
@@ -116,7 +116,7 @@ class DomainConfig:
         cls,
         path: Path,
         *,
-        dictionary_tokens: Optional[Set[str]] = None,
+        dictionary_tokens: set[str] | None = None,
     ) -> "DomainConfig":
         data = yaml.safe_load(path.read_text())
         configured_stopwords = {
@@ -125,7 +125,7 @@ class DomainConfig:
             if token
         }
         vocab = {token.lower() for token in dictionary_tokens or set()}
-        headword_map: Dict[str, List[str]] = {}
+        headword_map: dict[str, list[str]] = {}
         for key, value in data.get("headword_to_domains", {}).items():
             hw = str(key or "").lower()
             if not hw or hw in configured_stopwords:
@@ -133,7 +133,7 @@ class DomainConfig:
             if vocab and hw not in vocab:
                 continue
             headword_map[hw] = [label.upper() for label in value]
-        lexname_mapping: Dict[str, List[str]] = {}
+        lexname_mapping: dict[str, list[str]] = {}
         for key, value in data.get("wordnet_lexname_to_domains", {}).items():
             lexname = str(key or "").strip()
             if not lexname:
@@ -176,8 +176,8 @@ class DomainConfig:
             self._initialize_domain_similarity()
 
     def lookup(
-        self, headword: Optional[str], *, heuristic_pos: Optional[Sequence[str]] = None
-    ) -> Tuple[List[str], Optional[str]]:
+        self, headword: str | None, *, heuristic_pos: Sequence[str] | None = None
+    ) -> tuple[list[str], str | None]:
         if not headword:
             return [], None
         hw = headword.lower()
@@ -197,8 +197,8 @@ class DomainConfig:
         return [], None
 
     def infer_domains_via_wordnet(
-        self, headword: Optional[str], *, heuristic_pos: Optional[Sequence[str]] = None
-    ) -> Tuple[List[str], Optional[str]]:
+        self, headword: str | None, *, heuristic_pos: Sequence[str] | None = None
+    ) -> tuple[list[str], str | None]:
         if not headword:
             return [], None
         normalized = headword.lower()
@@ -215,7 +215,7 @@ class DomainConfig:
             self._wordnet_cache[key] = ([], None)
             return [], None
 
-        pos_filters: Set[str] = set()
+        pos_filters: set[str] = set()
         for label in heuristic_pos or []:
             pos_filters.update(WORDNET_POS_BY_LABEL.get(str(label).upper(), ()))
 
@@ -233,10 +233,10 @@ class DomainConfig:
                 self._wordnet_cache[key] = ([], None)
                 return [], None
 
-        inferred: List[str] = []
-        notes: Optional[str] = None
-        candidate_tokens: Set[str] = set()
-        lexname_domains: List[str] = []
+        inferred: list[str] = []
+        notes: str | None = None
+        candidate_tokens: set[str] = set()
+        lexname_domains: list[str] = []
         for synset in synsets:
             for lemma in synset.lemma_names():
                 normalized_lemma = _normalize_wordnet_candidate(lemma)
@@ -251,7 +251,7 @@ class DomainConfig:
                 str(label).upper()
                 for label in self.wordnet_lexname_to_domains.get(synset.lexname(), [])
             ]
-            sacred_domains: List[str] = []
+            sacred_domains: list[str] = []
             if self._should_tag_as_sacred(synset):
                 sacred_domains = ["DIVINE", "CELESTIAL"]
 
@@ -266,7 +266,7 @@ class DomainConfig:
                         inferred.append(label)
 
         if not inferred and self.use_wordnet_gloss_similarity:
-            gloss_texts: List[str] = []
+            gloss_texts: list[str] = []
             for synset in synsets:
                 gloss_texts.append(synset.definition())
                 gloss_texts.extend(synset.examples())
@@ -317,9 +317,9 @@ class DomainConfig:
             return False
 
     @staticmethod
-    def _lookup_wordnet_synsets(wn, headword: str, pos_filters: Set[str]):
+    def _lookup_wordnet_synsets(wn, headword: str, pos_filters: set[str]):
         synsets = []
-        seen: Set[str] = set()
+        seen: set[str] = set()
         if pos_filters:
             for pos in pos_filters:
                 for synset in wn.synsets(headword, pos=pos):
@@ -334,7 +334,7 @@ class DomainConfig:
         return synsets
 
     def _initialize_domain_similarity(self) -> None:
-        documents: Dict[str, List[str]] = {}
+        documents: dict[str, list[str]] = {}
         for label, description in self.domains.items():
             tokens = extract_tokens(description)
             if tokens:
@@ -361,8 +361,8 @@ class DomainConfig:
         if not self._domain_tfidf:
             self.use_wordnet_gloss_similarity = False
 
-    def _tfidf_vector(self, tokens: Sequence[str]) -> Dict[str, float]:
-        vec: Dict[str, float] = {}
+    def _tfidf_vector(self, tokens: Sequence[str]) -> dict[str, float]:
+        vec: dict[str, float] = {}
         if not tokens:
             return vec
         token_counts = Counter(tokens)
@@ -372,10 +372,10 @@ class DomainConfig:
             vec[token] = (count / total) * idf
         return vec
 
-    def _infer_domains_from_glosses(self, gloss_texts: Sequence[str]) -> Tuple[List[str], Optional[str]]:
+    def _infer_domains_from_glosses(self, gloss_texts: Sequence[str]) -> tuple[list[str], str | None]:
         if not self.use_wordnet_gloss_similarity or not self._domain_tfidf:
             return [], None
-        gloss_tokens: List[str] = []
+        gloss_tokens: list[str] = []
         for text in gloss_texts:
             gloss_tokens.extend(extract_tokens(text))
         if not gloss_tokens:
@@ -385,7 +385,7 @@ class DomainConfig:
         if not gloss_norm:
             return [], None
 
-        scores: Dict[str, float] = {}
+        scores: dict[str, float] = {}
         for label, domain_vec in self._domain_tfidf.items():
             denom = gloss_norm * self._domain_norms.get(label, 0.0)
             if not denom:
@@ -422,14 +422,14 @@ def singularize(token: str) -> str:
     return token
 
 
-def _normalize_vector(vector: List[float]) -> List[float]:
+def _normalize_vector(vector: list[float]) -> list[float]:
     norm = math.sqrt(sum(value * value for value in vector))
     if not norm:
         return vector
     return [value / norm for value in vector]
 
 
-def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     if not vec_a or not vec_b:
         return 0.0
     return sum(a * b for a, b in zip(vec_a, vec_b))
@@ -438,10 +438,10 @@ def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
 class TextEmbedder:
     """Abstract text embedder interface."""
 
-    def embed(self, texts: Sequence[str]) -> List[List[float]]:
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
         raise NotImplementedError
 
-    def embed_one(self, text: str) -> List[float]:
+    def embed_one(self, text: str) -> list[float]:
         return self.embed([text])[0]
 
 
@@ -458,7 +458,7 @@ class SentenceTransformerEmbedder(TextEmbedder):
 
         self._model = SentenceTransformer(model_name)
 
-    def embed(self, texts: Sequence[str]) -> List[List[float]]:
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
         embeddings = self._model.encode(
             list(texts), show_progress_bar=False, normalize_embeddings=True
         )
@@ -479,14 +479,14 @@ class GloveAveragingEmbedder(TextEmbedder):
         self._model = api.load(model_name)
         self._dimension = int(self._model.vector_size)
 
-    def embed(self, texts: Sequence[str]) -> List[List[float]]:
-        vectors: List[List[float]] = []
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
         for text in texts:
             tokens = [token.lower() for token in extract_tokens(text)]
             if not tokens:
                 vectors.append([0.0 for _ in range(self._dimension)])
                 continue
-            summed: List[float] = [0.0 for _ in range(self._dimension)]
+            summed: list[float] = [0.0 for _ in range(self._dimension)]
             count = 0
             for token in tokens:
                 if token not in self._model:
@@ -511,13 +511,13 @@ def build_embedder(backend: str, model_name: str) -> TextEmbedder:
     raise RuntimeError(f"Unknown embedding backend '{backend}'")
 
 
-def build_domain_embeddings(domain_config: DomainConfig, embedder: TextEmbedder) -> Dict[str, List[float]]:
-    seeds: Dict[str, List[str]] = {label.upper(): [] for label in domain_config.domains}
+def build_domain_embeddings(domain_config: DomainConfig, embedder: TextEmbedder) -> dict[str, list[float]]:
+    seeds: dict[str, list[str]] = {label.upper(): [] for label in domain_config.domains}
     for headword, labels in domain_config.headword_to_domains.items():
         for label in labels:
             seeds.setdefault(label.upper(), []).append(headword)
-    domain_texts: List[str] = []
-    ordered_labels: List[str] = []
+    domain_texts: list[str] = []
+    ordered_labels: list[str] = []
     for label, description in domain_config.domains.items():
         label_upper = label.upper()
         domain_texts.append(f"{label_upper}: {description} {' '.join(seeds.get(label_upper, []))}")
@@ -526,8 +526,8 @@ def build_domain_embeddings(domain_config: DomainConfig, embedder: TextEmbedder)
     return {label: vector for label, vector in zip(ordered_labels, vectors)}
 
 
-def gather_sense_text(sense: Dict) -> str:
-    parts: List[str] = []
+def gather_sense_text(sense: dict[str, object]) -> str:
+    parts: list[str] = []
     definition = sense.get("definition")
     if isinstance(definition, str):
         parts.append(definition)
@@ -545,14 +545,14 @@ def select_embedding_domains(
     sense_text: str,
     *,
     embedder: TextEmbedder,
-    domain_embeddings: Dict[str, List[float]],
+    domain_embeddings: dict[str, list[float]],
     min_similarity: float,
     similarity_band: float,
-) -> List[str]:
+) -> list[str]:
     if not sense_text:
         return []
     sense_vector = embedder.embed_one(sense_text)
-    scored: List[Tuple[str, float]] = []
+    scored: list[tuple[str, float]] = []
     for label, vector in domain_embeddings.items():
         similarity = _cosine_similarity(sense_vector, vector)
         scored.append((label, similarity))
@@ -566,15 +566,15 @@ def select_embedding_domains(
     return [label for label, score in scored if score >= threshold]
 
 
-def extract_tokens(gloss: str) -> List[str]:
+def extract_tokens(gloss: str) -> list[str]:
     return [match.group(0).lower() for match in RE_TOKENS.finditer(gloss or "")]
 
 
 def extract_headword(
     gloss: str,
     *,
-    ignore_tokens: Optional[Sequence[str]] = None,
-) -> Optional[str]:
+    ignore_tokens: Sequence[str] | None = None,
+) -> str | None:
     tokens = extract_tokens(gloss)
     if not tokens:
         return None
@@ -603,9 +603,9 @@ def detect_compound(gloss: str, tokens: Sequence[str]) -> bool:
     return len(tokens) > 2
 
 
-def infer_pos(gloss: str, tokens: Sequence[str]) -> Tuple[List[str], bool, bool, Optional[str]]:
-    pos: List[str] = []
-    notes: Optional[str] = None
+def infer_pos(gloss: str, tokens: Sequence[str]) -> tuple[list[str], bool, bool, str | None]:
+    pos: list[str] = []
+    notes: str | None = None
     is_copula = False
 
     is_compound = detect_compound(gloss, tokens)
@@ -656,11 +656,11 @@ def infer_pos(gloss: str, tokens: Sequence[str]) -> Tuple[List[str], bool, bool,
 class CitationTagger:
     """Abstract base class for POS taggers operating on citation snippets."""
 
-    def tag_phrase(self, phrase: str) -> List[str]:
+    def tag_phrase(self, phrase: str) -> list[str]:
         raise NotImplementedError
 
-    def tag_phrases(self, phrases: Sequence[str]) -> List[str]:
-        tags: List[str] = []
+    def tag_phrases(self, phrases: Sequence[str]) -> list[str]:
+        tags: list[str] = []
         for phrase in phrases:
             if not phrase:
                 continue
@@ -688,19 +688,21 @@ class SpacyCitationTagger(CitationTagger):
                 "or choose a different model via --spacy-model."
             ) from exc
 
-    def tag_phrase(self, phrase: str) -> List[str]:
+    def tag_phrase(self, phrase: str) -> list[str]:
         doc = self._nlp(phrase)
         return [token.pos_.upper() for token in doc if token.is_alpha]
 
 
-def extract_emphasized_phrases(text: str) -> List[str]:
+def extract_emphasized_phrases(text: str) -> list[str]:
     return [match.group(1).strip() for match in RE_EMPHASIS.finditer(text or "") if match.group(1)]
 
 
-def infer_citation_votes(sense: Dict, citation_tagger: Optional[CitationTagger]) -> Counter:
+def infer_citation_votes(
+    sense: dict[str, object], citation_tagger: CitationTagger | None
+) -> Counter:
     if not citation_tagger:
         return Counter()
-    phrases: List[str] = []
+    phrases: list[str] = []
     for citation in sense.get("key_citations", []) or []:
         if not isinstance(citation, dict):
             continue
@@ -711,14 +713,14 @@ def infer_citation_votes(sense: Dict, citation_tagger: Optional[CitationTagger])
     return Counter(tag for tag in tags if tag)
 
 
-def combine_pos_labels(heuristic_pos: Sequence[str], citation_votes: Counter) -> List[str]:
+def combine_pos_labels(heuristic_pos: Sequence[str], citation_votes: Counter) -> list[str]:
     if not heuristic_pos and not citation_votes:
         return []
-    order: Dict[str, int] = {}
+    order: dict[str, int] = {}
     votes: Counter = Counter()
-    citation_sources: Set[str] = set()
+    citation_sources: set[str] = set()
 
-    def register(label: str, weight: float = 1.0, *, source: Optional[str] = None) -> None:
+    def register(label: str, weight: float = 1.0, *, source: str | None = None) -> None:
         if not label:
             return
         votes[label] += weight
@@ -732,7 +734,7 @@ def combine_pos_labels(heuristic_pos: Sequence[str], citation_votes: Counter) ->
     for label, count in citation_votes.items():
         register(label, float(count), source="citation")
 
-    def sort_key(item: Tuple[str, float]) -> Tuple[float, int, int]:
+    def sort_key(item: tuple[str, float]) -> tuple[float, int, int]:
         label, vote = item
         citation_rank = 0 if label in citation_sources else 1
         return (-vote, citation_rank, order.get(label, len(order)))
@@ -742,11 +744,11 @@ def combine_pos_labels(heuristic_pos: Sequence[str], citation_votes: Counter) ->
 
 
 def enrich_senses(
-    entry: Dict,
+    entry: dict[str, object],
     domain_config: DomainConfig,
-    citation_tagger: Optional[CitationTagger] = None,
+    citation_tagger: CitationTagger | None = None,
     *,
-    embedding_fallback: Optional[Dict] = None,
+    embedding_fallback: dict[str, object] | None = None,
 ) -> None:
     for sense in entry.get("senses", []):
         gloss = sense.get("definition", "")
@@ -765,7 +767,7 @@ def enrich_senses(
                 details.append(f"{label}({int(count)})" if count > 1 else label)
             citation_note = "citation:" + ",".join(details)
 
-        notes_components: List[str] = []
+        notes_components: list[str] = []
         if notes:
             notes_components.append(notes)
         if pos:
@@ -794,10 +796,10 @@ def enrich_senses(
         sense["notes_semantic"] = notes_semantic
 
 
-def review(enriched_entries: Sequence[Dict]) -> str:
-    copula_entries: List[str] = []
-    multi_pos: List[str] = []
-    missing_domains: List[str] = []
+def review(enriched_entries: Sequence[dict[str, object]]) -> str:
+    copula_entries: list[str] = []
+    multi_pos: list[str] = []
+    missing_domains: list[str] = []
 
     for entry in enriched_entries:
         word = entry.get("word", "<unknown>")
@@ -823,8 +825,8 @@ def review(enriched_entries: Sequence[Dict]) -> str:
     return "\n".join(lines)
 
 
-def collect_gloss_vocabulary(entries: Sequence[Dict]) -> Set[str]:
-    vocab: Set[str] = set()
+def collect_gloss_vocabulary(entries: Sequence[dict[str, object]]) -> set[str]:
+    vocab: set[str] = set()
     for entry in entries:
         top_gloss = entry.get("definition")
         if isinstance(top_gloss, str):
@@ -917,7 +919,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_citation_tagger(name: str, spacy_model: str) -> Optional[CitationTagger]:
+def build_citation_tagger(name: str, spacy_model: str) -> CitationTagger | None:
     if name == "none":
         return None
     if name == "spacy":
@@ -941,7 +943,7 @@ def main() -> None:
         args.domains, dictionary_tokens=vocab
     )
     citation_tagger = build_citation_tagger(args.citation_tagger, args.spacy_model)
-    embedding_fallback: Optional[Dict] = None
+    embedding_fallback: dict[str, object] | None = None
     if args.embedding_fallback:
         embedder = build_embedder(args.embedding_backend, args.embedding_model)
         embedding_fallback = {

@@ -1,5 +1,7 @@
 """Utilities for post-run interpretation of unseen text."""
 
+from __future__ import annotations
+
 from .decomposition import DecompositionEngine, Decomposition
 from .scoring import ScoringWeights, score_decomposition
 from .llm_synthesis import SynthesisResult, synthesize_definition

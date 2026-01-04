@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from enochian_lm.analysis.utils.sql import ensure_analysis_tables
 from enochian_lm.common.sqlite_bootstrap import sqlite3
@@ -83,7 +83,7 @@ class SubtractiveSemanticsEngine:
                 if limit is not None and processed >= limit:
                     break
 
-                payload: dict = {}
+                payload: dict[str, object] = {}
                 if callable(self.llm_responder):
                     prompt = self._render_prompt(root, residual, parent, definition)
                     response = self.llm_responder(prompt, run_id)
@@ -92,7 +92,7 @@ class SubtractiveSemanticsEngine:
                         try:
                             payload = json.loads(content)
                         except json.JSONDecodeError:
-                            payload = {}
+                            payload.clear()
 
                 evaluation = str(payload.get("evaluation") or "unknown").strip().lower()
                 definition_text = payload.get("definition") or definition

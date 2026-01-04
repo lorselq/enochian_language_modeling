@@ -8,7 +8,7 @@ from enochian_lm.common.sqlite_bootstrap import sqlite3
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Iterator
+from collections.abc import Iterator
 
 from tqdm import tqdm
 

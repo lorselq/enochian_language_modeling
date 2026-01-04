@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import pytest
