@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enochian_lm.analysis.utils.token_morphs import (
     fetch_token_morphs,
     fetch_token_segments,

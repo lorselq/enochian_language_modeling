@@ -8,8 +8,6 @@ from enochian_lm.common.sqlite_bootstrap import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
-
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.analytics_bridge import gather_morph_evidence
 from enochian_lm.analysis.utils.sql import ensure_analysis_tables
@@ -56,7 +54,7 @@ def _load_clusters(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def _choose_update(
-    analytics: dict[str, Any],
+    analytics: dict[str, object],
     *,
     root: str,
     min_delta_gap: float,
@@ -112,7 +110,7 @@ def _choose_update(
     return best
 
 
-def _definition_has_partner(defn: dict[str, Any], partner: str) -> bool:
+def _definition_has_partner(defn: dict[str, object], partner: str) -> bool:
     notes = defn.get("ANALYTICS_NOTES")
     if not isinstance(notes, list):
         return False
@@ -307,4 +305,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     raise SystemExit(main())
-

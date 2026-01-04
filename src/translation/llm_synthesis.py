@@ -14,7 +14,6 @@ callers resilient to LLM variability.
 from dataclasses import dataclass, field
 import json
 import logging
-from typing import Any
 
 from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 
@@ -68,7 +67,7 @@ class SynthesisResult:
 def synthesize_definition(
     morphs: list[str],
     meanings: list[str],
-    context: dict[str, Any],
+    context: dict[str, object],
 ) -> SynthesisResult:
     """Return an LLM-synthesized gloss for the supplied morph meanings.
 
@@ -130,7 +129,7 @@ def synthesize_definition(
 
 
 def _build_prompt(
-    morphs: list[str], meanings: list[str], context: dict[str, Any]
+    morphs: list[str], meanings: list[str], context: dict[str, object]
 ) -> str:
     coverage_ratio = _safe_float(context.get("coverage_ratio"), default=0.0)
     residual_ratio = _safe_float(context.get("residual_ratio"), default=1.0)
@@ -190,7 +189,7 @@ def _parse_response(
     payload: str,
     *,
     fallback: str,
-    context: dict[str, Any],
+    context: dict[str, object],
     max_len: int = 160,
 ) -> dict[str, str | float]:
     """Parse LLM JSON response with validation and trimming."""
@@ -242,7 +241,7 @@ def _parse_response(
 
 def _resolved_confidence(
     reported: float | None,
-    context: dict[str, Any],
+    context: dict[str, object],
     *,
     fallback_only: bool = False,
 ) -> float:

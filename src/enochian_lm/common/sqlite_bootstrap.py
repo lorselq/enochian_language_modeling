@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sqlite3 as _sqlite_std
-from typing import Iterable
+from collections.abc import Iterable
 
 if not getattr(_sqlite_std, "__enochian_bootstrapped__", False):
     try:

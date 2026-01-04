@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 import math
 import json
 import numpy as np
 import logging
-from typing import Sequence, TypedDict
+from collections.abc import Sequence
+from typing import TypedDict
 from pathlib import Path
 from functools import lru_cache
 from gensim.utils import simple_preprocess
@@ -170,7 +173,7 @@ class MorphemeCandidateFinder:
         - DF = count of distinct canonicals in ngram_membership
         - canonicals from ngram_membership
         """
-        self.ngram_index = {}
+        self.ngram_index: dict[str, list[tuple[str, int, int]]] = {}
 
         # 1) TF per ngram
         tf_map: dict[str, int] = {}

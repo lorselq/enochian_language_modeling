@@ -12,7 +12,6 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 try:  # pragma: no cover - optional dependency
     import numpy as _np
@@ -38,7 +37,7 @@ logger = logging.getLogger(__name__)
 class TableData:
     """Container describing table rows with an optional DataFrame representation."""
 
-    rows: list[dict[str, Any]]
+    rows: list[dict[str, object]]
     dataframe: "_pd.DataFrame | None"
 
 
@@ -90,7 +89,7 @@ def _load_table(conn: sqlite3.Connection, table: str) -> TableData:
     return TableData(rows, dataframe)
 
 
-def _load_baseline_metrics(path: Path) -> dict[str, Any]:
+def _load_baseline_metrics(path: Path) -> dict[str, object]:
     if not path.exists():
         return {
             "coverage_ratio_mean": None,
@@ -146,12 +145,12 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
+def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[Any]]) -> None:
+def _write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     import csv
 
@@ -212,7 +211,7 @@ def _heatmap_plot(matrix: list[list[float]], labels: list[str], title: str) -> s
     return _render_plot(fig)
 
 
-def _table_html(title: str, headers: Sequence[str], rows: Iterable[Sequence[Any]]) -> str:
+def _table_html(title: str, headers: Sequence[str], rows: Iterable[Sequence[object]]) -> str:
     html = [f"<h3>{title}</h3>"]
     html.append("<table class='data'>")
     html.append("<thead><tr>" + "".join(f"<th>{header}</th>" for header in headers) + "</tr></thead>")
@@ -223,7 +222,7 @@ def _table_html(title: str, headers: Sequence[str], rows: Iterable[Sequence[Any]
     return "\n".join(html)
 
 
-def _format_cell(value: Any) -> str:
+def _format_cell(value: object) -> str:
     if isinstance(value, float):
         return f"{value:.4f}"
     return str(value)
@@ -249,7 +248,7 @@ def _make_section(title: str, body: str) -> str:
     return f"<section><h2>{title}</h2>{body}</section>"
 
 
-def _summarize_attribution(attrib_rows: list[dict[str, Any]], out_dir: Path) -> tuple[str, dict[str, Any]]:
+def _summarize_attribution(attrib_rows: list[dict[str, object]], out_dir: Path) -> tuple[str, dict[str, object]]:
     if not attrib_rows:
         return _make_section("Attribution", "<p>No attribution data available.</p>"), {
             "pairs": 0,
@@ -326,7 +325,7 @@ def _summarize_attribution(attrib_rows: list[dict[str, Any]], out_dir: Path) -> 
     return section_html, {"pairs": len(attrib_rows), "avg_abs_delta": avg_abs_delta}
 
 
-def _summarize_collocations(colloc_rows: list[dict[str, Any]], out_dir: Path) -> tuple[str, dict[str, Any]]:
+def _summarize_collocations(colloc_rows: list[dict[str, object]], out_dir: Path) -> tuple[str, dict[str, object]]:
     if not colloc_rows:
         return _make_section("Collocations", "<p>No collocation statistics available.</p>"), {
             "pairs": 0,
@@ -444,10 +443,10 @@ def _summarize_collocations(colloc_rows: list[dict[str, Any]], out_dir: Path) ->
 
 
 def _summarize_clusters(
-    cluster_rows: list[dict[str, Any]],
-    membership_rows: list[dict[str, Any]],
+    cluster_rows: list[dict[str, object]],
+    membership_rows: list[dict[str, object]],
     out_dir: Path,
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, dict[str, object]]:
     if not cluster_rows:
         return _make_section("Residual clusters", "<p>No residual clusters available.</p>"), {
             "clusters": 0,
@@ -455,7 +454,7 @@ def _summarize_clusters(
         }
 
     clusters_by_id = {int(row["cluster_id"]): row for row in cluster_rows}
-    members_by_cluster: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    members_by_cluster: dict[int, list[dict[str, object]]] = defaultdict(list)
     for row in membership_rows:
         cluster_id = int(row.get("cluster_id", 0))
         members_by_cluster[cluster_id].append(row)
@@ -535,12 +534,12 @@ def _summarize_clusters(
 
 
 def _summarize_factorization(
-    morph_rows: list[dict[str, Any]],
-    composite_rows: list[dict[str, Any]],
-    cluster_rows: list[dict[str, Any]],
-    membership_rows: list[dict[str, Any]],
+    morph_rows: list[dict[str, object]],
+    composite_rows: list[dict[str, object]],
+    cluster_rows: list[dict[str, object]],
+    membership_rows: list[dict[str, object]],
     out_dir: Path,
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, dict[str, object]]:
     if not morph_rows or not composite_rows:
         return _make_section("Morph factorization", "<p>Factorization data unavailable.</p>"), {
             "tokens": len(composite_rows),
@@ -639,9 +638,9 @@ def _summarize_factorization(
 
 
 def _summarize_coverage(
-    composite_rows: list[dict[str, Any]],
-    baseline: dict[str, Any],
-) -> tuple[str, dict[str, Any]]:
+    composite_rows: list[dict[str, object]],
+    baseline: dict[str, object],
+) -> tuple[str, dict[str, object]]:
     if not composite_rows:
         return _make_section("Coverage", "<p>No composite reconstruction data available.</p>"), {
             "coverage_ratio_mean": None,
@@ -734,7 +733,7 @@ def _summarize_coverage(
     return section_html, summary
 
 
-def _build_metadata(db_path: Path) -> dict[str, Any]:
+def _build_metadata(db_path: Path) -> dict[str, object]:
     import platform
     import sys
 
@@ -769,7 +768,7 @@ def generate_pipeline_report(
     *,
     db_path: str,
     baseline_path: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Generate the pipeline report in *out_dir* using *conn* data."""
 
     out_path = Path(out_dir)

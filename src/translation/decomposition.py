@@ -9,7 +9,7 @@ that can be further filtered and scored in later tasks (2.2 / 2.3).
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Callable
+from collections.abc import Callable
 
 from enochian_lm.root_extraction.utils.candidate_finder import (
     CoverageSegment,

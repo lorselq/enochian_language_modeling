@@ -28,7 +28,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from collections.abc import Iterable, Sequence
 
 TOKEN_RE = re.compile(r"[A-Za-z']+")
 
@@ -38,9 +38,9 @@ class WindowRecord:
     key_id: int
     start: int
     end: int
-    enochian_tokens: List[str]
-    definition_tokens: List[str]
-    citation_tokens: List[str]
+    enochian_tokens: list[str]
+    definition_tokens: list[str]
+    citation_tokens: list[str]
 
     def to_mapping(self) -> dict:
         definition_text = " ".join(self.definition_tokens)
@@ -75,11 +75,11 @@ class Config:
 
 @dataclass
 class GlossSources:
-    definition_tokens: List[str]
-    citation_tokens: List[str]
+    definition_tokens: list[str]
+    citation_tokens: list[str]
 
 
-def tokenize(text: str, lowercase: bool = True, strip_punctuation: bool = True) -> List[str]:
+def tokenize(text: str, lowercase: bool = True, strip_punctuation: bool = True) -> list[str]:
     """Tokenize a string with optional lowercasing and punctuation stripping."""
     tokens = TOKEN_RE.findall(text)
     if lowercase:
@@ -114,7 +114,7 @@ def load_dictionary_glosses(dictionary_path: Path, lowercase: bool, strip_punctu
             definition_text, lowercase=lowercase, strip_punctuation=strip_punctuation
         )
 
-        citation_tokens: List[str] = []
+        citation_tokens: list[str] = []
         for citation in entry.get("key_citations", []) or []:
             context = citation.get("context")
             if not isinstance(context, str):
@@ -130,7 +130,7 @@ def load_dictionary_glosses(dictionary_path: Path, lowercase: bool, strip_punctu
     return mapping
 
 
-def sliding_windows(tokens: Sequence[str], window_size: int, stride: int) -> Iterable[tuple[int, int, List[str]]]:
+def sliding_windows(tokens: Sequence[str], window_size: int, stride: int) -> Iterable[tuple[int, int, list[str]]]:
     if window_size <= 0:
         raise ValueError("window_size must be positive")
     if stride <= 0:
@@ -140,14 +140,14 @@ def sliding_windows(tokens: Sequence[str], window_size: int, stride: int) -> Ite
         yield start, end, list(tokens[start:end])
 
 
-def build_records(keys_text: str, config: Config, gloss_map: dict[str, GlossSources]) -> List[WindowRecord]:
+def build_records(keys_text: str, config: Config, gloss_map: dict[str, GlossSources]) -> list[WindowRecord]:
     keys = [part for part in keys_text.split("\n\n") if part.strip()]
-    records: List[WindowRecord] = []
+    records: list[WindowRecord] = []
     for idx, key_text in enumerate(keys, start=1):
         key_tokens = tokenize(key_text, lowercase=config.lowercase, strip_punctuation=config.strip_punctuation)
         for start, end, window in sliding_windows(key_tokens, config.window_size, config.stride):
-            definition_window_tokens: List[str] = []
-            citation_window_tokens: List[str] = []
+            definition_window_tokens: list[str] = []
+            citation_window_tokens: list[str] = []
             for tok in window:
                 key = tok if not config.lowercase else tok.lower()
                 sources = gloss_map.get(key)
