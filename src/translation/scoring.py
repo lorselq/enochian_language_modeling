@@ -8,7 +8,7 @@ import math
 
 import numpy as np
 
-from enochian_lm.common.types import FastTextModel, NumberConvertible, Vector
+from enochian_lm.common.types import FastTextModel, MaybeNumber, Vector
 from .decomposition import Decomposition
 from .repository import (
     ClusterRecord,
@@ -150,7 +150,7 @@ def score_decomposition_unweighted(
     return beam_prior + avg_cluster_quality + residual_coverage + acceptance + specificity
 
 
-def _safe_number(value: NumberConvertible, default: float = 0.0) -> float:
+def _safe_number(value: MaybeNumber, default: float = 0.0) -> float:
     """Best-effort cast to float, used at the edges of the pipeline."""
     if value is None:
         return default

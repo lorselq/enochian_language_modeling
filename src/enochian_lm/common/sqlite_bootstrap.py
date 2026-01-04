@@ -31,7 +31,7 @@ if not getattr(_sqlite_std, "__enochian_bootstrapped__", False):
             )
         )
         _copy_attr(("sqlite_version", "sqlite_version_info", "version"))
-        _sqlite_std.__enochian_bootstrapped__ = True
+        setattr(_sqlite_std, "__enochian_bootstrapped__", True)
 
 sqlite3 = _sqlite_std
 
