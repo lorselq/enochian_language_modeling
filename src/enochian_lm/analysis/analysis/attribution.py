@@ -9,7 +9,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
-from typing import Dict, Iterable, Iterator, List, Tuple
+from collections.abc import Iterable, Iterator
 
 from tqdm import tqdm
 
@@ -18,8 +18,7 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback when numpy is unavailable
     _np = None
 
-if _np is not None:  # pragma: no cover - executed when numpy present
-    from numpy.typing import NDArray
+from enochian_lm.common.types import Vector
 
 from ..utils.sql import upsert_rows
 from ..utils.text import utcnow_iso
@@ -33,17 +32,11 @@ Epsilon = 1e-9
 class VectorData:
     """Container for a vector and its L2 norm."""
 
-    values: "VectorLike"
+    values: Vector
     norm: float
 
 
-if _np is not None:  # pragma: no cover - executed when numpy present
-    VectorLike = NDArray[float]
-else:  # pragma: no cover - keep type checkers satisfied when numpy missing
-    VectorLike = List[float]
-
-
-def _parse_vector(json_blob: str) -> VectorLike:
+def _parse_vector(json_blob: str) -> Vector:
     """Parse a JSON vector string into an array or list of floats."""
 
     data = json.loads(json_blob)
@@ -52,27 +45,27 @@ def _parse_vector(json_blob: str) -> VectorLike:
     return [float(x) for x in data]
 
 
-def _compute_dot(a: VectorLike, b: VectorLike) -> float:
+def _compute_dot(a: Vector, b: Vector) -> float:
     if _np is not None:
         return float(_np.dot(a, b))
     return float(sum(x * y for x, y in zip(a, b)))
 
 
-def _compute_norm(vec: VectorLike) -> float:
+def _compute_norm(vec: Vector) -> float:
     if _np is not None:
         return float(_np.linalg.norm(vec))
     return math.sqrt(sum(x * x for x in vec))
 
 
-def _subtract(a: VectorLike, b: VectorLike) -> VectorLike:
+def _subtract(a: Vector, b: Vector) -> Vector:
     if _np is not None:
         return a - b
     return [x - y for x, y in zip(a, b)]
 
 
 def compute_cosine(
-    vec_a: VectorLike,
-    vec_b: VectorLike,
+    vec_a: Vector,
+    vec_b: Vector,
     *,
     norm_a: float | None = None,
     norm_b: float | None = None,
@@ -91,7 +84,7 @@ def _canonicalize_pair(
     morph_b: str,
     delta_a_given_b: float,
     delta_b_given_a: float,
-) -> Tuple[str, str, float, float]:
+) -> tuple[str, str, float, float]:
     if morph_a <= morph_b:
         return morph_a, morph_b, delta_a_given_b, delta_b_given_a
     return morph_b, morph_a, delta_b_given_a, delta_a_given_b
@@ -119,7 +112,7 @@ class _PairStats:
     count: int = 0
 
 
-def _load_morph_vectors(conn: sqlite3.Connection) -> Dict[str, VectorData]:
+def _load_morph_vectors(conn: sqlite3.Connection) -> dict[str, VectorData]:
     rows = conn.execute(
         "SELECT morph, vector_json, l2_norm FROM morph_semantic_vectors"
     ).fetchall()
@@ -163,7 +156,7 @@ def run_leave_one_out(conn: sqlite3.Connection, limit: int | None = None) -> dic
 
     summary_timestamp = utcnow_iso()
     missing_morphs: set[str] = set()
-    pair_stats: dict[Tuple[str, str], _PairStats] = defaultdict(_PairStats)
+    pair_stats: dict[tuple[str, str], _PairStats] = defaultdict(_PairStats)
     total_abs_delta = 0.0
     delta_count = 0
     composites_processed = 0

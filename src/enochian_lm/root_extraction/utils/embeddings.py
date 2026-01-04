@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from threading import Lock
-from typing import Dict, Mapping, Optional, Sequence, TypedDict
+from typing import TypedDict
 
 from gensim.models import FastText
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from enochian_lm.common.config import get_config_paths
+from enochian_lm.common.types import Vector
 
 __all__ = [
     "cluster_definition_counts",
@@ -49,7 +51,7 @@ class FastTextWrapper:
     def __init__(self, model: FastText):
         self._model = model
 
-    def get_word_vector(self, token: str):
+    def get_word_vector(self, token: str) -> Vector:
         m = self._model
 
         # Facebook fasttext-style API
@@ -74,22 +76,22 @@ class FastTextWrapper:
 
 
 _FASTTEXT_LOCK = Lock()
-_FASTTEXT_MODEL: Optional[FastTextWrapper] = None
-_FASTTEXT_PATH: Optional[str] = None
-_SENTENCE_EMBED_CACHE: Dict[tuple[str, str], np.ndarray] = {}
+_FASTTEXT_MODEL: FastTextWrapper | None = None
+_FASTTEXT_PATH: str | None = None
+_SENTENCE_EMBED_CACHE: dict[tuple[str, str], np.ndarray] = {}
 
 _SENTENCE_LOCK = Lock()
-_SENTENCE_MODELS: Dict[str, SentenceTransformer] = {}
+_SENTENCE_MODELS: dict[str, SentenceTransformer] = {}
 
 
-def _resolve_fasttext_path(model_path: Optional[Path | str]) -> str:
+def _resolve_fasttext_path(model_path: Path | str | None) -> str:
     if model_path is not None:
         return str(model_path)
     paths = get_config_paths()
     return str(paths["model_output"])
 
 
-def get_fasttext_model(model_path: Optional[Path | str] = None) -> FastTextWrapper:
+def get_fasttext_model(model_path: Path | str | None = None) -> FastTextWrapper:
     """Return a process-wide FastText wrapper, loading the underlying model on first use."""
 
     global _FASTTEXT_MODEL, _FASTTEXT_PATH
@@ -143,10 +145,10 @@ def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
 
 def cluster_definitions(
     definitions: Sequence[str],
-    model: Optional[SentenceTransformer] = None,
+    model: SentenceTransformer | None = None,
     *,
     similarity_threshold: float = 0.8,
-    scores: Optional[Sequence[Optional[float]]] = None,
+    scores: Sequence[float | None] | None = None,
     model_name: str = "paraphrase-MiniLM-L6-v2",
 ) -> list[DefinitionCluster]:
     """Cluster definition strings by semantic similarity using sentence embeddings.
@@ -163,7 +165,7 @@ def cluster_definitions(
         raise ValueError("Scores must match the number of definitions.")
 
     embedder = model or get_sentence_transformer(model_name)
-    embeddings: list[Optional[np.ndarray]] = []
+    embeddings: list[np.ndarray | None] = []
     for definition in definitions:
         key = (model_name, definition)
         cached = _SENTENCE_EMBED_CACHE.get(key)
@@ -223,14 +225,14 @@ def cluster_definitions(
 
 
 def cluster_definition_counts(
-    definition_glosses: Mapping[str, Sequence[tuple[str, Optional[float]]]],
-    model: Optional[SentenceTransformer] = None,
+    definition_glosses: Mapping[str, Sequence[tuple[str, float | None]]],
+    model: SentenceTransformer | None = None,
     *,
     similarity_threshold: float = 0.8,
     model_name: str = "paraphrase-MiniLM-L6-v2",
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Return clustered definition counts per morph for semantic deduplication."""
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for morph, glosses in definition_glosses.items():
         if not glosses:
             continue

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
 import json
 import re
 
+from enochian_lm.common.types import NumberConvertible
 from .decomposition import Decomposition
 from .repository import ClusterRecord, WordEvidence
 
@@ -368,8 +369,14 @@ def _length_variance(morphs: Iterable[str]) -> float:
     return sum((length - mean) ** 2 for length in lengths) / float(len(lengths))
 
 
-def _safe_number(value: Any, *, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
+def _safe_number(value: NumberConvertible, *, default: float) -> float:
+    if value is None:
         return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
