@@ -33,28 +33,21 @@ Usage:
   python ingest_loagaeth.py DB.sqlite INPUT.json --export-prose "Leaf 1a"
 """
 from __future__ import annotations
-import os
+
 import json
 import re
-import json
-from enochian_lm.common.sqlite_bootstrap import sqlite3
 import unicodedata
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import (
-    Optional,
-    List,
-    Tuple,
-    Dict,
-    Any,
-    Mapping,
-    Union,
-    cast,
-    NoReturn,
-    Sequence,
-)
+from typing import NoReturn
+
+from enochian_lm.common.sqlite_bootstrap import sqlite3
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+# Type alias for sqlite3 execute parameters (sequence or named mapping)
+SqlParams = Sequence[object] | Mapping[str, object]
 
 # -----------------------------
 # Regexes / token peelers
@@ -75,8 +68,6 @@ RE_NULL     = re.compile(r'(?i)^\s*NULL\s*$')
 
 GRID_KINDS = {"square", "rectangle", "diamond", "slants"}
 
-Params = Union[Sequence[Any], Mapping[str, Any]]
-
 
 # -----------------------------
 # Small utilities
@@ -89,7 +80,7 @@ def has_capital(s: str) -> bool:
     return any(ch.isupper() and ch.lower() != ch for ch in s)
 
 
-def peel_word_flags(raw: str, uncertain_marker: str = "?") -> Tuple[str, Dict]:
+def peel_word_flags(raw: str, uncertain_marker: str = "?") -> tuple[str, dict]:
     """
     Peel markers from a prose token, returning (clean_form, attrs).
     Order:
@@ -99,7 +90,7 @@ def peel_word_flags(raw: str, uncertain_marker: str = "?") -> Tuple[str, Dict]:
       4) uncertainty marker anywhere (default '?')
     """
     t = raw
-    attrs: Dict = {}
+    attrs: dict[str, object] = {}
 
     m = RE_SIC.search(t)
     if m:
@@ -132,7 +123,7 @@ def peel_word_flags(raw: str, uncertain_marker: str = "?") -> Tuple[str, Dict]:
     return t, attrs
 
 
-def peel_grid_token(raw: str, meta: Dict) -> Tuple[bool, str, Dict, Optional[int]]:
+def peel_grid_token(raw: str, meta: dict[str, object]) -> tuple[bool, str, dict, int | None]:
     """
     Peel markers from a grid cell token.
     Returns (is_blank, char, attrs, orientation).
@@ -141,7 +132,7 @@ def peel_grid_token(raw: str, meta: Dict) -> Tuple[bool, str, Dict, Optional[int
     - [sic], trailing punctuation (repeat), trailing '*', uncertainty marker
     """
     t = raw
-    attrs: Dict = {}
+    attrs: dict[str, object] = {}
 
     # blanks via meta tokens or legacy word 'NULL'
     lac = (meta.get("lacuna_token") or "").strip()
@@ -208,7 +199,7 @@ def peel_grid_token(raw: str, meta: Dict) -> Tuple[bool, str, Dict, Optional[int
 
 
 def _die(
-    msg: str, *, sql: Optional[str] = None, params: Optional[Params] = None
+    msg: str, *, sql: str | None = None, params: SqlParams | None = None
 ) -> NoReturn:
     print(f"[FATAL] {msg}", file=sys.stderr)
     if sql is not None:
@@ -236,7 +227,7 @@ def _as_json_text(value) -> str | None:
 
 
 def insert_returning_id(
-    con: sqlite3.Connection, sql_base: str, params: Params, *, table: str
+    con: sqlite3.Connection, sql_base: str, params: SqlParams, *, table: str
 ) -> int:
     """
     Execute exactly one INSERT and guarantee an integer primary key back.
@@ -245,16 +236,17 @@ def insert_returning_id(
     """
     sql_ret = sql_base.strip() + " RETURNING id"
 
-    def _exec(sql: str) -> Tuple[int]:
+    def _exec(sql: str) -> tuple[int, ...]:
         cur = con.execute(sql, params)  # params: Sequence|Mapping → satisfies Pylance
-        row = cast(Optional[Tuple[Any]], cur.fetchone())
+        row = cur.fetchone()
         if row is None or row[0] is None:
             _die(
                 f"`{table}` insert did not return an id (no row returned).",
                 sql=sql,
                 params=params,
             )
-        return cast(Tuple[int], row)
+        # row is now guaranteed non-None with non-None first element
+        return tuple(int(v) if isinstance(v, (int, float)) else v for v in row)
 
     # Prefer RETURNING on modern SQLite
     try:
@@ -285,19 +277,19 @@ def insert_returning_id(
         _die(f"`{table}` insert failed: {de}", sql=sql_base, params=params)
 
 
-def _row_exists(con, sql: str, params=()) -> bool:
+def _row_exists(con: sqlite3.Connection, sql: str, params: SqlParams = ()) -> bool:
     return con.execute(sql, params).fetchone() is not None
 
 
 def insert_word_token(
-    con,
+    con: sqlite3.Connection,
     *,
     artifact_id: int,
     block_idx: int,
     pos_in_block: int,
     form: str,
     normalized: str | None,
-    attrs: dict | None,
+    attrs: dict[str, object] | None,
 ) -> int:
     # Preflight FK: artifact must exist
     if not _row_exists(con, "SELECT 1 FROM artifact WHERE id = ?", (artifact_id,)):
@@ -323,12 +315,12 @@ def insert_word_token(
 
 
 # Split on whitespace only; we keep hyphens and internal punctuation WITH the token.
-def tokenize_block_to_words(block: str) -> List[str]:
+def tokenize_block_to_words(block: str) -> list[str]:
     # block may contain embedded newlines; treat them as whitespace
     return [t for t in re.split(r"\s+", block.strip()) if t]
 
 
-def extract_word_attrs(token: str) -> Tuple[dict, str]:
+def extract_word_attrs(token: str) -> tuple[dict[str, object], str]:
     """
     Pulls off trailing flags from a single token and returns (attrs, core_token).
     We remove, in this order (repeating where applicable):
@@ -339,7 +331,7 @@ def extract_word_attrs(token: str) -> Tuple[dict, str]:
       5) trailing punctuation . , ; : !
     Everything left is the 'core' token (e.g., 'ubrăh-ax', 'IAN').
     """
-    attrs: dict = {}
+    attrs: dict[str, object] = {}
     core = token
 
     # [sic]
@@ -375,23 +367,23 @@ def extract_word_attrs(token: str) -> Tuple[dict, str]:
     return attrs, core
 
 
-def strip_punct_and_normalize(token: str) -> Tuple[str, str | None]:
+def strip_punct_and_normalize(token: str) -> tuple[str, str | None]:
     """
     Returns (base_form, normalized). We lower-case for normalized; we do NOT
     remove internal hyphens. Trailing flags are handled by extract_word_attrs().
     """
-    attrs, core = extract_word_attrs(token)
+    _attrs, core = extract_word_attrs(token)
     # We return ONLY the stripped base here; normalization = lowercase of base.
     # (ingester will call extract_word_attrs separately and merge attrs at word level)
     return core, core.lower() if core else core
 
 
-def _grapheme_iter(s: str) -> List[str]:
+def _grapheme_iter(s: str) -> list[str]:
     """
     Very simple grapheme splitter: base char + following combining marks stay together.
     (Good enough for these texts; no 3rd-party modules required.)
     """
-    clusters: List[str] = []
+    clusters: list[str] = []
     current = ""
     for ch in s:
         if not current:
@@ -431,16 +423,16 @@ def _classify_char(ch: str) -> str:
     return "other"
 
 
-def explode_word_to_chars(base_form: str) -> List[Tuple[str, str, int, dict]]:
+def explode_word_to_chars(base_form: str) -> list[tuple[str, str, int, dict[str, object]]]:
     """
     Turn a base word into a list of letter records:
       [(char, char_type, grapheme_len, letter_attrs), ...]
     We PRESERVE internal hyphens and punctuation as their own letter_nodes.
     """
-    letters: List[Tuple[str, str, int, dict]] = []
+    letters: list[tuple[str, str, int, dict[str, object]]] = []
     for g in _grapheme_iter(base_form):
         ctype = _classify_char(g)
-        lattrs = {}
+        lattrs: dict[str, object] = {}
         # "isCapital" per character (works for Latin). We check the first codepoint.
         # If the base is hyphen or punctuation, this will be False.
         if g[:1].isupper():
@@ -558,8 +550,8 @@ def ensure_artifact(
     *,
     kind: str,
     name: str,
-    title: Optional[str],
-    meta: Optional[Dict],
+    title: str | None,
+    meta: dict[str, object] | None,
 ) -> int:
     row = con.execute(
         "SELECT id, meta_json, title FROM artifact WHERE name=?", (name,)
@@ -590,7 +582,7 @@ def ensure_artifact(
 # Insert helpers
 # -----------------------------
 def insert_letter_node(
-    con,
+    con: sqlite3.Connection,
     *,
     artifact_id: int,
     char: str,
@@ -598,7 +590,7 @@ def insert_letter_node(
     pos_in_word: int | None,
     ctype: str,
     glen: int,
-    attrs: dict | None,
+    attrs: dict[str, object] | None,
     notes: str = "",
 ) -> int:
     # Preflight FK: artifact must exist
@@ -648,7 +640,7 @@ def insert_grid_cell(
     row: int,
     col: int,
     node_id: int,
-    orientation: Optional[int],
+    orientation: int | None,
 ) -> int:
     sql = "INSERT INTO grid_cell(artifact_id, row_idx, col_idx, node_id, orientation) VALUES (?, ?, ?, ?, ?)"
     return insert_returning_id(
@@ -656,7 +648,7 @@ def insert_grid_cell(
     )
 
 
-def insert_prose_cell(con, artifact_id: int, line_idx: int, token_idx: int, char_idx: int, node_id: int) -> int:
+def insert_prose_cell(con: sqlite3.Connection, artifact_id: int, line_idx: int, token_idx: int, char_idx: int, node_id: int) -> int:
             sql = """
             INSERT INTO prose_cell(artifact_id, line_idx, token_idx, char_idx, node_id)
             VALUES (?, ?, ?, ?, ?)
@@ -696,10 +688,9 @@ def insert_prose_cell(con, artifact_id: int, line_idx: int, token_idx: int, char
 # =========================
 # Ingest: PROSE (Leaf 1a/1b style)
 # =========================
-from typing import Dict, Any, List, Tuple, Optional
-import json
 
-def ingest_prose(con, doc: Dict[str, Any]) -> int:
+
+def ingest_prose(con: sqlite3.Connection, doc: dict[str, object]) -> int:
     """
     Load a prose artifact (Leaf 1a/1b style) from JSON:
       {
@@ -715,19 +706,24 @@ def ingest_prose(con, doc: Dict[str, Any]) -> int:
         * prose_cell row locating each letter (line_idx=block_idx, token_idx, char_idx)
     - Returns the artifact_id.
     """
-    art = doc["artifact"]
-    kind  = art.get("kind", "prose")
-    name  = art["name"]
-    title = art.get("title") or None
-    meta  = art.get("meta") or {}
+    raw_art = doc["artifact"]
+    if not isinstance(raw_art, dict):
+        raise ValueError("prose ingest: 'artifact' must be a dict")
+    art: dict[str, object] = raw_art
+    kind = str(art.get("kind") or "prose")
+    name = str(art["name"])
+    title = str(art["title"]) if art.get("title") else None
+    raw_meta = art.get("meta")
+    meta: dict[str, object] = raw_meta if isinstance(raw_meta, dict) else {}
 
     # Ensure artifact (ensure_artifact should JSON-dump meta internally)
     artifact_id = ensure_artifact(con, kind=kind, name=name, title=title, meta=meta)
 
     # Extract paragraphs/blocks
-    blocks: List[str] = doc["blocks"]
-    if not isinstance(blocks, list) or not blocks:
+    raw_blocks = doc["blocks"]
+    if not isinstance(raw_blocks, list) or not raw_blocks:
         raise ValueError("prose ingest: 'blocks' must be a non-empty list of strings")
+    blocks: list[str] = [str(b) for b in raw_blocks]
 
     # Ingest each paragraph
     for block_idx, raw_block in enumerate(blocks):
@@ -781,7 +777,7 @@ def ingest_prose(con, doc: Dict[str, Any]) -> int:
 # Ingest: GRID (Leaf 2a–48b style tables)
 # =========================
 
-def ingest_grid(con, doc: Dict[str, Any]) -> int:
+def ingest_grid(con: sqlite3.Connection, doc: dict[str, object]) -> int:
     """
     Load a grid/square/diamond artifact from JSON:
       {
@@ -813,21 +809,26 @@ def ingest_grid(con, doc: Dict[str, Any]) -> int:
       - Orientation markers ^[deg] attached to a cell are stored on grid_cell.orientation.
       - Other trailing flags (sic, ?, *) go into the node attrs_json.
     """
-    art = doc["artifact"]
-    kind  = art.get("kind", "square")
-    name  = art["name"]
-    title = art.get("title") or None
-    meta  = art.get("meta") or {}
+    raw_art = doc["artifact"]
+    if not isinstance(raw_art, dict):
+        raise ValueError("grid ingest: 'artifact' must be a dict")
+    art: dict[str, object] = raw_art
+    kind = str(art.get("kind") or "square")
+    name = str(art["name"])
+    title = str(art["title"]) if art.get("title") else None
+    raw_meta = art.get("meta")
+    meta: dict[str, object] = raw_meta if isinstance(raw_meta, dict) else {}
 
     artifact_id = ensure_artifact(con, kind=kind, name=name, title=title, meta=meta)
 
-    lines: List[str] = doc["grid_lines"]
-    if not isinstance(lines, list) or not lines:
+    raw_lines = doc["grid_lines"]
+    if not isinstance(raw_lines, list) or not raw_lines:
         raise ValueError("grid ingest: 'grid_lines' must be a non-empty list of pipe-delimited strings")
+    lines: list[str] = [str(ln) for ln in raw_lines]
 
-    delim: str = meta.get("delimiter", "|")
-    null_token: str = meta.get("intentionally_empty", "[NULL]")
-    lacuna_token: str = meta.get("lacuna_token", "[LACUNA]")
+    delim = str(meta.get("delimiter") or "|")
+    null_token = str(meta.get("intentionally_empty") or "[NULL]")
+    lacuna_token = str(meta.get("lacuna_token") or "[LACUNA]")
 
     # Helper to classify a whole cell's "char"
     def classify_cell_char(text: str) -> str:
@@ -859,10 +860,10 @@ def ingest_grid(con, doc: Dict[str, Any]) -> int:
             is_blank = (cell == "" or RE_NULL.match(cell) or cell == null_token)
             is_lacuna = (cell == lacuna_token)
 
-            orientation_val: Optional[int] = None
+            orientation_val: int | None = None
 
             # Extract trailing flags/punct/orientation if not blank/lacuna
-            cell_attrs: Dict[str, Any] = {}
+            cell_attrs: dict[str, object] = {}
             cell_core = ""
             if not (is_blank or is_lacuna):
                 cell_attrs, cell_core = extract_word_attrs(cell)  # reuses same tail rules
@@ -877,9 +878,13 @@ def ingest_grid(con, doc: Dict[str, Any]) -> int:
 
             # Pull orientation from attrs into grid_cell column
             if "orientation" in cell_attrs:
-                try:
-                    orientation_val = int(cell_attrs.pop("orientation"))
-                except Exception:
+                raw_orient = cell_attrs.pop("orientation")
+                if isinstance(raw_orient, (int, float, str)):
+                    try:
+                        orientation_val = int(raw_orient)
+                    except (ValueError, TypeError):
+                        orientation_val = 0
+                else:
                     orientation_val = 0
 
             # Safety: ensure non-empty 'char' for the node
@@ -929,14 +934,14 @@ def ingest_grid(con, doc: Dict[str, Any]) -> int:
 # -----------------------------
 # Simple prose export (sanity check)
 # -----------------------------
-def export_prose_blocks(con: sqlite3.Connection, artifact_name: str) -> List[str]:
+def export_prose_blocks(con: sqlite3.Connection, artifact_name: str) -> list[str]:
     row = con.execute(
         "SELECT id FROM artifact WHERE name=?", (artifact_name,)
     ).fetchone()
     if not row:
         raise SystemExit(f"No artifact named {artifact_name!r}")
     art_id = row[0]
-    out: List[str] = []
+    out: list[str] = []
     rows = con.execute(
         """
         SELECT block_idx, pos_in_block, form,
@@ -948,7 +953,7 @@ def export_prose_blocks(con: sqlite3.Connection, artifact_name: str) -> List[str
         (art_id,),
     )
     cur_block = -1
-    words: List[str] = []
+    words: list[str] = []
     for bidx, pos, form, trail in rows:
         if bidx != cur_block:
             if words:

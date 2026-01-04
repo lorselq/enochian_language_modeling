@@ -41,33 +41,92 @@ import re
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.common.config import get_config_paths
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Set, Tuple
+from typing import TypedDict
+
+
+class AlternateEntry(TypedDict, total=False):
+    """Alternate form entry from substitution_map.json."""
+
+    value: str
+    confidence: str
+    direction: str
+
+
+class SubstitutionSpec(TypedDict, total=False):
+    """Substitution spec from substitution_map.json."""
+
+    canonical: str
+    alternates: list[AlternateEntry]
+
+
+class SequenceRule(TypedDict, total=False):
+    """Sequence compression rule from sequence_compressions.json.
+
+    Note: The actual JSON uses 'from' as a key, which is accessed via .get("from").
+    """
+
+    direction: str
+    to: str
+    # 'from' is accessed at runtime via .get("from") since it's a reserved word
+
+
+class DictionaryEntry(TypedDict, total=False):
+    """Dictionary entry from dictionary.json."""
+
+    normalized: str
+
 
 # ---------------------- knobs ----------------------
 ALPHABET = set("ABCDEFGHIKLMNOPQRSTUVXYZ")  # manuscript alphabet; stored lowercase later
 SMOOTH_K = 0.5
 DEFAULT_POS_PRIORS = {"V": 0.34, "N": 0.33, "PART": 0.33}
 DEFAULT_POSITIONS = {"initial": 0.34, "medial": 0.33, "final": 0.33}
-APPROVED_BIGRAMS: Set[str] = set()  # e.g., {"de","bu","he","ca"} to bias greedy segmentation
+APPROVED_BIGRAMS: set[str] = set()  # e.g., {"de","bu","he","ca"} to bias greedy segmentation
 # ---------------------------------------------------
 
 # ---------------------- IO helpers ----------------------
-def read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+def _load_dictionary(path: Path) -> list[DictionaryEntry]:
+    """Load dictionary.json as a list of DictionaryEntry."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _load_substitution_map(path: Path) -> dict[str, SubstitutionSpec]:
+    """Load substitution_map.json as a mapping of canonical to spec."""
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def _load_variant_map(path: Path) -> dict[str, str]:
+    """Load variant_redirects.json as a simple string mapping."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        return {str(k): str(v) for k, v in data.items()}
+    return {}
+
 
 def letters_only_upper(s: str) -> str:
     """Keep only A..Z (Enochian alphabet here), uppercase."""
     return "".join(ch for ch in s.upper() if ch in ALPHABET)
 
-def split_paragraphs(raw: str) -> List[str]:
+
+def split_paragraphs(raw: str) -> list[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", raw.replace("\r\n", "\n")) if p.strip()]
 
-def tokenize_para(p: str, respect_pauses: bool) -> List[str]:
+
+def tokenize_para(p: str, respect_pauses: bool) -> list[str]:
     HARD_BOUNDARY = {".", "?", "!", ";"}
     PAUSE_PUNCT = {",", ":", "—", "–", "-"}
     raw_bits = re.findall(r"[A-Za-z]+|[.,;:?!\"'()–—-]", p)
-    out = []
+    out: list[str] = []
     for t in raw_bits:
         if t in ('"', "'", "(", ")", "–", "—", "-"):
             continue
@@ -82,12 +141,12 @@ def tokenize_para(p: str, respect_pauses: bool) -> List[str]:
 # ---------------------------------------------------------
 
 # ------------- rules: load & interpret for variants -------------
-def load_seq_rules(path: Path) -> List[Dict[str, Any]]:
-    """Accept list of dicts, or { "rules": [...] }. Returns list[dict]."""
+def load_seq_rules(path: Path) -> list[SequenceRule]:
+    """Accept list of dicts, or { "rules": [...] }. Returns list of SequenceRule."""
     if not path or not path.exists():
         return []
     try:
-        data = read_json(path)
+        data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return []
     if isinstance(data, list):
@@ -96,16 +155,17 @@ def load_seq_rules(path: Path) -> List[Dict[str, Any]]:
         return [r for r in data["rules"] if isinstance(r, dict)]
     return []
 
+
 def collect_letter_out_rules(
-    subst_cfg: Dict[str, Any],
-    allow_levels: Tuple[str, ...] = ("high", "medium", "low"),
-) -> List[Tuple[str, str]]:
+    subst_cfg: dict[str, SubstitutionSpec],
+    allow_levels: tuple[str, ...] = ("high", "medium", "low"),
+) -> list[tuple[str, str]]:
     """
     From substitution_map.json, collect canonical->alternate **letter** rules for variant generation.
     Only use alternates whose direction allows CANONICAL→ALT: i.e., 'from' or 'both'.
     Only single-letter alternates are used here (multi-letter belongs to sequence rules).
     """
-    out: List[Tuple[str, str]] = []
+    out: list[tuple[str, str]] = []
     for _canon_key, spec in subst_cfg.items():
         canon = str(spec.get("canonical", "")).upper()
         if not canon:
@@ -120,14 +180,15 @@ def collect_letter_out_rules(
                 out.append((canon, val))
     return out
 
-def collect_seq_out_rules(seq_rules: List[Dict[str, Any]]) -> List[Tuple[str, str]]:
+
+def collect_seq_out_rules(seq_rules: list[SequenceRule]) -> list[tuple[str, str]]:
     """
     From sequence_compressions.json, collect canonical->surface rules.
     Use entries whose 'direction' allows CANONICAL→ALT: 'to' or 'both'.
     Note: compressions are usually defined as FROM->TO (surface->canonical),
           so we invert for variant generation: canonical(TO) -> surface(FROM).
     """
-    out: List[Tuple[str, str]] = []
+    out: list[tuple[str, str]] = []
     for r in seq_rules:
         dire = str(r.get("direction", "from")).lower()
         if dire in ("to", "both"):
@@ -139,11 +200,11 @@ def collect_seq_out_rules(seq_rules: List[Dict[str, Any]]) -> List[Tuple[str, st
 
 def generate_variants_for_word(
     canon_lower: str,
-    letter_out: List[Tuple[str, str]],
-    seq_out: List[Tuple[str, str]],
+    letter_out: list[tuple[str, str]],
+    seq_out: list[tuple[str, str]],
     max_ops: int = 2,
     max_variants: int = 2000,
-) -> Set[str]:
+) -> set[str]:
     """
     Generate plausible surface variants from a canonical by applying:
       - sequence-level canonical→surface expansions
@@ -152,12 +213,12 @@ def generate_variants_for_word(
     Returns lowercase strings.
     """
     base = canon_lower.upper()
-    seen: Set[str] = {base}
-    frontier: Set[str] = {base}
+    seen: set[str] = {base}
+    frontier: set[str] = {base}
     ops = 0
 
-    def apply_once(s: str) -> Set[str]:
-        out: Set[str] = {s}
+    def apply_once(s: str) -> set[str]:
+        out: set[str] = {s}
         # sequence (multi-char) first
         for (frm, to) in seq_out:
             if frm in s:
@@ -169,7 +230,7 @@ def generate_variants_for_word(
         return {x for x in out if x}
 
     while frontier and ops < max_ops and len(seen) < max_variants:
-        nxt: Set[str] = set()
+        nxt: set[str] = set()
         for s in list(frontier):
             for t in apply_once(s):
                 if t not in seen:
@@ -192,8 +253,10 @@ def iter_ngrams(s: str, nmin: int, nmax: int) -> Iterable[str]:
         for i in range(0, L - n + 1):
             yield s[i : i + n]
 
-def find_positions(s: str, sub: str) -> List[int]:
-    starts, i = [], 0
+
+def find_positions(s: str, sub: str) -> list[int]:
+    starts: list[int] = []
+    i = 0
     while True:
         j = s.find(sub, i)
         if j == -1:
@@ -202,8 +265,10 @@ def find_positions(s: str, sub: str) -> List[int]:
         i = j + 1  # allow overlaps
     return starts
 
-def greedy_segment(token: str) -> List[str]:
-    out, i, n = [], 0, len(token)
+
+def greedy_segment(token: str) -> list[str]:
+    out: list[str] = []
+    i, n = 0, len(token)
     while i < n:
         if i + 2 <= n and token[i : i + 2] in APPROVED_BIGRAMS:
             out.append(token[i : i + 2])
@@ -213,7 +278,8 @@ def greedy_segment(token: str) -> List[str]:
             i += 1
     return out
 
-def entropy(counter: Dict[str, int]) -> float:
+
+def entropy(counter: dict[str, int]) -> float:
     total = sum(counter.values()) or 1
     return -sum((c / total) * math.log2(c / total) for c in counter.values() if c > 0)
 # -------------------------------------------------------------------
@@ -310,8 +376,8 @@ def build_sidecar(
 ) -> None:
 
     # 1) Load authoritative dictionary canonicals (letters-only, lower)
-    dictionary = read_json(dict_json)
-    dict_types: Set[str] = set()
+    dictionary = _load_dictionary(dict_json)
+    dict_types: set[str] = set()
     for entry in dictionary:
         norm = (entry.get("normalized") or "").strip()
         if not norm:
@@ -322,41 +388,42 @@ def build_sidecar(
 
     # 2) Load corpus tokens (letters-only, lower; NO rule-based normalization)
     raw = keys_txt.read_text(encoding="utf-8")
-    tokens_raw: List[str] = []
+    tokens_raw: list[str] = []
     for p in split_paragraphs(raw):
         tokens_raw.extend(tokenize_para(p, respect_pauses=respect_pauses))
-    corpus_tokens: List[str] = []
+    corpus_tokens: list[str] = []
     for t in tokens_raw:
         u = letters_only_upper(t).lower()
         if u:
             corpus_tokens.append(u)
-    corpus_types: Set[str] = set(corpus_tokens)
+    corpus_types: set[str] = set(corpus_tokens)
 
     # 3) Build variant index from dictionary canonicals using rules (canonical -> variants)
-    subst_cfg: Dict[str, Any] = read_json(subst_json) if subst_json.exists() else {}
-    seq_rules: List[Dict[str, Any]] = load_seq_rules(compress_json)
+    subst_cfg = _load_substitution_map(subst_json)
+    seq_rules = load_seq_rules(compress_json)
 
     letter_out = collect_letter_out_rules(subst_cfg, allow_levels=("high", "medium"))
     seq_out = collect_seq_out_rules(seq_rules)
 
-    variant_index: Dict[str, Set[str]] = defaultdict(set)
+    variant_index: dict[str, set[str]] = defaultdict(set)
     for canon in dict_types:
         variants = generate_variants_for_word(canon, letter_out, seq_out, max_ops=2)
         for v in variants:
             variant_index[v].add(canon)
 
     # 3b) Optional manual overrides (variant map): { "surface": "canonical" }
-    manual_map: Dict[str, str] = {}
+    manual_map: dict[str, str] = {}
     if variant_map_path and variant_map_path.exists():
         try:
-            manual_map = {k.lower(): v.lower() for k, v in read_json(variant_map_path).items()}
+            loaded = _load_variant_map(variant_map_path)
+            manual_map = {k.lower(): v.lower() for k, v in loaded.items()}
         except Exception:
             manual_map = {}
 
     # 4) Reconcile corpus types to dictionary canonicals
-    redirects: Dict[str, str] = {}
-    ambiguous: Dict[str, List[str]] = {}
-    unresolved: List[str] = []
+    redirects: dict[str, str] = {}
+    ambiguous: dict[str, list[str]] = {}
+    unresolved: list[str] = []
 
     for t in sorted(corpus_types):
         if t in dict_types:
@@ -394,23 +461,23 @@ def build_sidecar(
         raise SystemExit("\n".join(msgs))
 
     # 5) n-gram counts: TF from corpus instances; DF from dictionary types
-    tf_counts: Dict[str, int] = Counter()
+    tf_counts: dict[str, int] = Counter()
     for tok in corpus_tokens:
         for ng in iter_ngrams(tok, min_n, max_n):
             tf_counts[ng] += 1
 
-    df_sets: Dict[str, Set[str]] = defaultdict(set)
+    df_sets: dict[str, set[str]] = defaultdict(set)
     for t in dict_types:
         for ng in iter_ngrams(t, min_n, max_n):
             df_sets[ng].add(t)
-    df_counts: Dict[str, int] = {ng: len(s) for ng, s in df_sets.items()}
+    df_counts: dict[str, int] = {ng: len(s) for ng, s in df_sets.items()}
 
     all_ngrams = sorted(set(tf_counts.keys()) | set(df_counts.keys()))
 
     # 6) Segmentation and morph stats/adjacency
     # Segment ALL dictionary types for cache (classify as CORPUS or DICT_ONLY).
-    segs_corpus: Dict[str, List[str]] = {}
-    segs_dictonly: Dict[str, List[str]] = {}
+    segs_corpus: dict[str, list[str]] = {}
+    segs_dictonly: dict[str, list[str]] = {}
     for tok in sorted(corpus_types):
         segs_corpus[tok] = greedy_segment(tok)
     for tok in sorted(dict_types - corpus_types):
@@ -496,7 +563,7 @@ def build_sidecar(
     conn.commit()
 
     # morph_stats
-    def pos_json(m: str) -> Dict[str, int]:
+    def pos_json(m: str) -> dict[str, int]:
         return pos_counts[m] if m in pos_counts else {"initial": 0, "medial": 0, "final": 0}
 
     cur.executemany(
@@ -536,21 +603,21 @@ def build_sidecar(
         conn.commit()
 
     # allomorphs (conservative; corpus evidence only)
-    def js_div(p: Dict[str, int], q: Dict[str, int]) -> float:
+    def js_div(p: dict[str, int], q: dict[str, int]) -> float:
         keys = set(p.keys()) | set(q.keys())
         tp = sum(p.values()) or 1
         tq = sum(q.values()) or 1
         P = {k: p.get(k, 0) / tp for k in keys}
         Q = {k: q.get(k, 0) / tq for k in keys}
         M = {k: 0.5 * (P[k] + Q[k]) for k in keys}
-        def KL(A: Dict[str, float], B: Dict[str, float]) -> float:
+        def KL(A: dict[str, float], B: dict[str, float]) -> float:
             eps = 1e-12
             return sum(A[k] * math.log2((A[k] + eps) / (B[k] + eps)) for k in keys if A[k] > 0)
         return 0.5 * KL(P, M) + 0.5 * KL(Q, M)
 
     allo_rows = []
     bigrams = [m for m in morph_inventory if len(m) == 2]
-    buckets: Dict[str, List[str]] = defaultdict(list)
+    buckets: dict[str, list[str]] = defaultdict(list)
     for bg in bigrams:
         buckets[bg[0]].append(bg)
     for initial, bunch in buckets.items():

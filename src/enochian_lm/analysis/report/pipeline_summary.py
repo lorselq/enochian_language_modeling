@@ -9,9 +9,10 @@ import math
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 import statistics
 from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 try:  # pragma: no cover - optional dependency
     import numpy as _np

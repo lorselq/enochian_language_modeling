@@ -7,22 +7,17 @@ that can be further filtered and scored in later tasks (2.2 / 2.3).
 """
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, TypedDict, cast
-from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
+from typing import Callable
+
+from enochian_lm.root_extraction.utils.candidate_finder import (
+    CoverageSegment,
+    MorphemeCandidateFinder,
+)
 from .repository import WordEvidence
 
 LOGGER = logging.getLogger(__name__)
-
-
-class CoverageSegment(TypedDict):
-    """Coverage segment from beam search segmentation."""
-
-    start: int
-    end: int
-    ngram: str
-    canonical: str
-    tfidf: float
 
 
 @dataclass
@@ -204,14 +199,13 @@ class DecompositionEngine:
         support_lookup = _build_support_lookup(evidence)
 
         for path, score, _ngram_scores, coverage in parses:
-            if not isinstance(coverage, list):
+            if not coverage:
                 continue
-            segments = cast(list[CoverageSegment], coverage)
-            morphs, canonicals = _segment_tokens(normalized, segments, path)
+            morphs, canonicals = _segment_tokens(normalized, coverage, path)
             if not allow_whole_word and len(normalized) > 1:
                 if len(morphs) == 1 and morphs[0] == normalized:
                     continue
-            breakdown = _build_breakdown(self.candidate_finder, normalized, segments)
+            breakdown = _build_breakdown(self.candidate_finder, normalized, coverage)
 
             morph_support = {
                 morph: _classify_support(morph, support_lookup) for morph in morphs
@@ -659,6 +653,16 @@ def apply_hard_filters(
         }
 
     support_stats = _compile_support_stats(evidence)
+    # Use local counters to avoid cast() when incrementing
+    stage1_dropped = 0
+    stage2_dropped = 0
+    stage3_dropped = 0
+
+    unsupported_counts: dict[str, int] = {}
+    dictionary_support_counts: dict[str, int] = {}
+    attested_support_counts: dict[str, int] = {}
+
+    # Build diagnostics dict - counters will be updated before return
     diagnostics: dict[str, object] = {
         "stage1_dropped": 0,
         "stage2_dropped": 0,
@@ -673,9 +677,12 @@ def apply_hard_filters(
         "min_support_threshold": min_support_threshold,
         "filter_traces": [],
     }
-    unsupported_counts: dict[str, int] = {}
-    dictionary_support_counts: dict[str, int] = {}
-    attested_support_counts: dict[str, int] = {}
+
+    def _finalize_diagnostics() -> None:
+        """Update diagnostics dict with final counter values."""
+        diagnostics["stage1_dropped"] = stage1_dropped
+        diagnostics["stage2_dropped"] = stage2_dropped
+        diagnostics["stage3_dropped"] = stage3_dropped
 
     def has_support(morph: str) -> bool:
         stats = support_stats.get(morph.upper())
@@ -723,7 +730,7 @@ def apply_hard_filters(
         }
         filter_traces.append(trace)
         if missing:
-            diagnostics["stage1_dropped"] = cast(int, diagnostics["stage1_dropped"]) + 1
+            stage1_dropped += 1
             for morph in missing:
                 unsupported_counts[morph] = unsupported_counts.get(morph, 0) + 1
             LOGGER.debug(
@@ -775,6 +782,7 @@ def apply_hard_filters(
         diagnostics["attested_supported_count"] = sum(attested_support_counts.values())
 
     if not supported:
+        _finalize_diagnostics()
         return [], diagnostics
 
     # ------------------------------------------------------------------
@@ -786,7 +794,7 @@ def apply_hard_filters(
     for decomp in supported:
         ratio = _residual_ratio(decomp)
         if ratio > 0.5 and min_residual <= 0.5:
-            diagnostics["stage2_dropped"] = cast(int, diagnostics["stage2_dropped"]) + 1
+            stage2_dropped += 1
             LOGGER.debug(
                 "Discarding %s due to high residual_ratio %.3f (best=%.3f)",
                 decomp.morphs,
@@ -797,6 +805,7 @@ def apply_hard_filters(
         coverage_filtered.append(decomp)
 
     if not coverage_filtered:
+        _finalize_diagnostics()
         return [], diagnostics
 
     # ------------------------------------------------------------------
@@ -821,13 +830,14 @@ def apply_hard_filters(
     diagnostics["max_attestation_score"] = max_attestation
     if max_attestation == 0:
         # Nobody uses well-attested morphs; let soft scoring handle it.
+        _finalize_diagnostics()
         return coverage_filtered, diagnostics
 
     attested: list[Decomposition] = []
     for decomp in coverage_filtered:
         score = attestation_scores[tuple(decomp.morphs)]
         if score == 0:
-            diagnostics["stage3_dropped"] = cast(int, diagnostics["stage3_dropped"]) + 1
+            stage3_dropped += 1
             LOGGER.debug(
                 "Discarding %s due to singleton-only morph usage (best score=%d)",
                 decomp.morphs,
@@ -836,6 +846,7 @@ def apply_hard_filters(
             continue
         attested.append(decomp)
 
+    _finalize_diagnostics()
     return (attested if attested else coverage_filtered), diagnostics
 
 

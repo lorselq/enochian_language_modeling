@@ -9,7 +9,7 @@ from enochian_lm.common.sqlite_bootstrap import sqlite3
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, List
+from typing import TYPE_CHECKING
 
 from tqdm import tqdm
 
@@ -23,7 +23,14 @@ try:  # pragma: no cover - sklearn may be unavailable in minimal installs
 except Exception:  # pragma: no cover - fallback implementation will be used
     _SklearnKMeans = None
 
-KMeans: Any | None = _SklearnKMeans
+if TYPE_CHECKING:
+    from sklearn.cluster import KMeans as KMeansType
+
+    KMeans: type[KMeansType] | None
+else:
+    KMeans = _SklearnKMeans
+
+from enochian_lm.common.types import Vector
 
 from ..utils.sql import ensure_analysis_tables
 from ..utils.text import utcnow_iso
@@ -31,12 +38,6 @@ from ..utils.text import utcnow_iso
 logger = logging.getLogger(__name__)
 
 Epsilon = 1e-9
-
-
-if _np is not None:  # pragma: no cover - simplify type hints when numpy available
-    Vector = _np.ndarray
-else:  # pragma: no cover - maintain compatibility when numpy missing
-    Vector = List[float]
 
 
 @dataclass(slots=True)

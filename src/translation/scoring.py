@@ -2,12 +2,13 @@ from __future__ import annotations
 
 """Soft scoring utilities for decomposition candidates (task 2.3)."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import math
-from typing import Any, Iterable
 
 import numpy as np
 
+from enochian_lm.common.types import FastTextModel, NumberConvertible, Vector
 from .decomposition import Decomposition
 from .repository import (
     ClusterRecord,
@@ -149,12 +150,18 @@ def score_decomposition_unweighted(
     return beam_prior + avg_cluster_quality + residual_coverage + acceptance + specificity
 
 
-def _safe_number(value: Any, default: float = 0.0) -> float:
+def _safe_number(value: NumberConvertible, default: float = 0.0) -> float:
     """Best-effort cast to float, used at the edges of the pipeline."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
+    if value is None:
         return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _average_cluster_quality(
@@ -331,7 +338,7 @@ class CoherenceResult:
 
 def compute_semantic_coherence(
     morphs: list[str],
-    fasttext_model: Any,
+    fasttext_model: FastTextModel | None,
     *,
     cohesion_threshold: float = 0.3,
     diversity_threshold: float = 0.7,
@@ -380,7 +387,7 @@ def compute_semantic_coherence(
     large_morphs = [m.upper() for m in morphs if len(m) > 1]
 
     # Get vectors for all morphs
-    vectors: dict[str, np.ndarray] = {}
+    vectors: dict[str, Vector] = {}
     wv = getattr(fasttext_model, "wv", fasttext_model)
     for morph in set(singletons + large_morphs):
         try:
@@ -448,7 +455,7 @@ def compute_semantic_coherence(
 
 def _compute_avg_pairwise_similarity(
     morphs: list[str],
-    vectors: dict[str, np.ndarray],
+    vectors: dict[str, Vector],
 ) -> float:
     """Compute average pairwise cosine similarity among morphs.
 
@@ -469,7 +476,7 @@ def _compute_avg_pairwise_similarity(
     return sum(similarities) / len(similarities) if similarities else 0.0
 
 
-def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+def _cosine_similarity(vec_a: Vector, vec_b: Vector) -> float:
     """Compute cosine similarity between two vectors."""
     norm_a = np.linalg.norm(vec_a)
     norm_b = np.linalg.norm(vec_b)
@@ -481,7 +488,7 @@ def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
 def score_decomposition_with_coherence(
     decomp: Decomposition,
     evidence: WordEvidence,
-    fasttext_model: Any,
+    fasttext_model: FastTextModel | None,
     *,
     weights: ScoringWeights | None = None,
     coherence_weight: float = 0.15,
