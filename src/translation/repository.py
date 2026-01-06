@@ -539,14 +539,20 @@ class InsightsRepository:
                 if conn is None:
                     continue
                 if include_clusters:
-                    rows = conn.execute(
-                        """SELECT glossator_def, semantic_coverage, semantic_cohesion, cohesion
+                    # solo variant doesn't have semantic_cohesion column
+                    if variant == "solo":
+                        cluster_sql = """SELECT glossator_def, semantic_coverage, cohesion, cohesion
                            FROM clusters
                            WHERE TRIM(ngram) COLLATE NOCASE = ?
                              AND action = 'escalate'
-                             AND verdict = 'True'""",
-                        (morph,),
-                    ).fetchall()
+                             AND verdict = 'True'"""
+                    else:
+                        cluster_sql = """SELECT glossator_def, semantic_coverage, semantic_cohesion, cohesion
+                           FROM clusters
+                           WHERE TRIM(ngram) COLLATE NOCASE = ?
+                             AND action = 'escalate'
+                             AND verdict = 'True'"""
+                    rows = conn.execute(cluster_sql, (morph,)).fetchall()
                     for row in rows:
                         gloss = row[0]
                         if not gloss:
