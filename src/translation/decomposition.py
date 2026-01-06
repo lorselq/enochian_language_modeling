@@ -9,6 +9,7 @@ that can be further filtered and scored in later tasks (2.2 / 2.3).
 import json
 import logging
 import re
+from typing import Final, Literal, cast
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from collections.abc import Callable
@@ -95,7 +96,7 @@ class DecompositionEngine:
         n_best: int | None = None,
         definition_counts: dict[str, int] | None = None,
         definition_glosses: dict[str, list[tuple[str, float | None]]] | None = None,
-        evidence_mode: str = "all",
+        evidence_mode: str | None = "all",
     ) -> tuple[list[Decomposition], dict[str, object]]:
         """Return all plausible decompositions for ``word`` plus diagnostics.
 
@@ -368,23 +369,23 @@ def _cluster_has_definition(cluster: object) -> bool:
     )
 
 
-def _clusters_enabled(evidence_mode: str) -> bool:
-    return evidence_mode != "residuals-only"
+EvidenceMode = Literal["all", "clusters-only", "residuals-only"]
+_EVIDENCE_MODES: Final[set[str]] = {"all", "clusters-only", "residuals-only"}
 
 
-def _residuals_enabled(evidence_mode: str) -> bool:
-    return evidence_mode != "clusters-only"
-
-
-def _hypotheses_enabled(evidence_mode: str) -> bool:
-    return evidence_mode == "all"
-
-
-def _normalize_evidence_mode(evidence_mode: str) -> str:
+def _normalize_evidence_mode(evidence_mode: str | None) -> EvidenceMode:
     normalized = (evidence_mode or "all").strip().lower()
-    if normalized in {"all", "clusters-only", "residuals-only"}:
-        return normalized
+    if normalized in _EVIDENCE_MODES:
+        return cast(EvidenceMode, normalized)
     return "all"
+
+
+def _evidence_flags(evidence_mode: EvidenceMode) -> tuple[bool, bool, bool]:
+    return (
+        evidence_mode != "residuals-only",
+        evidence_mode != "clusters-only",
+        evidence_mode == "all",
+    )
 
 
 def _first_cluster_raw_definition(raw_definitions: object) -> str | None:
@@ -485,7 +486,7 @@ def _definition_from_glossator_json(payload: dict) -> str | None:
 def _build_support_lookup(
     evidence: WordEvidence,
     *,
-    evidence_mode: str = "all",
+    evidence_mode: str | None = "all",
 ) -> dict[str, str]:
     """Build a case-insensitive lookup table of morph → support label.
 
@@ -501,22 +502,25 @@ def _build_support_lookup(
     """
 
     evidence_mode = _normalize_evidence_mode(evidence_mode)
+    clusters_enabled, residuals_enabled, hypotheses_enabled = _evidence_flags(
+        evidence_mode
+    )
     # Normalize everything to uppercase for consistent lookups.
     support: dict[str, str] = {}
 
-    if _clusters_enabled(evidence_mode):
+    if clusters_enabled:
         for cluster in evidence.direct_clusters:
             if not _cluster_has_definition(cluster):
                 continue
             key = cluster.ngram.upper()
             support.setdefault(key, "cluster")
 
-    if _residuals_enabled(evidence_mode):
+    if residuals_enabled:
         for residual in evidence.residual_semantics:
             key = residual.residual.upper()
             support.setdefault(key, "residual")
 
-    if _hypotheses_enabled(evidence_mode):
+    if hypotheses_enabled:
         for hypothesis in evidence.morph_hypotheses:
             key = hypothesis.morph.upper()
             support.setdefault(key, "hypothesis")
@@ -539,7 +543,7 @@ def _build_evidence_ngrams(
     *,
     candidate_finder: MorphemeCandidateFinder,
     definition_counts: dict[str, int] | None = None,
-    evidence_mode: str = "all",
+    evidence_mode: str | None = "all",
 ) -> dict[str, list[tuple[str, int, int]]]:
     """Build an extra ngram index based on evidence-backed morphs.
 
@@ -551,16 +555,19 @@ def _build_evidence_ngrams(
     """
 
     evidence_mode = _normalize_evidence_mode(evidence_mode)
+    clusters_enabled, residuals_enabled, hypotheses_enabled = _evidence_flags(
+        evidence_mode
+    )
     morphs: set[str] = set()
-    if _clusters_enabled(evidence_mode):
+    if clusters_enabled:
         morphs.update(
             cluster.ngram
             for cluster in evidence.direct_clusters
             if _cluster_has_definition(cluster)
         )
-    if _residuals_enabled(evidence_mode):
+    if residuals_enabled:
         morphs.update(residual.residual for residual in evidence.residual_semantics)
-    if _hypotheses_enabled(evidence_mode):
+    if hypotheses_enabled:
         morphs.update(hypothesis.morph for hypothesis in evidence.morph_hypotheses)
         morphs.update(attested.source_word for attested in evidence.attested_definitions)
         morphs.update(attested.root_ngram for attested in evidence.attested_definitions)
@@ -723,11 +730,14 @@ def _residual_ratio(decomp: Decomposition) -> float:
 def _compile_support_stats(
     evidence: WordEvidence,
     *,
-    evidence_mode: str = "all",
+    evidence_mode: str | None = "all",
 ) -> dict[str, MorphSupportStats]:
     """Aggregate per-morph support details for filtering decisions."""
 
     evidence_mode = _normalize_evidence_mode(evidence_mode)
+    clusters_enabled, residuals_enabled, hypotheses_enabled = _evidence_flags(
+        evidence_mode
+    )
     stats: dict[str, MorphSupportStats] = {}
 
     def ensure(key: str) -> MorphSupportStats:
@@ -737,7 +747,7 @@ def _compile_support_stats(
         return stats[key]
 
     # Clusters
-    if _clusters_enabled(evidence_mode):
+    if clusters_enabled:
         for cluster in evidence.direct_clusters:
             if not _cluster_has_definition(cluster):
                 continue
@@ -746,14 +756,14 @@ def _compile_support_stats(
             entry.uses += 1
 
     # Residual semantics
-    if _residuals_enabled(evidence_mode):
+    if residuals_enabled:
         for residual in evidence.residual_semantics:
             entry = ensure(residual.residual)
             entry.has_residual = True
             entry.uses += 1
 
     # Hypotheses
-    if _hypotheses_enabled(evidence_mode):
+    if hypotheses_enabled:
         for hypothesis in evidence.morph_hypotheses:
             entry = ensure(hypothesis.morph)
             entry.uses += 1
@@ -764,7 +774,7 @@ def _compile_support_stats(
                 entry.hypothesis_max = float(delta)
 
     # Attested definitions
-    if _hypotheses_enabled(evidence_mode):
+    if hypotheses_enabled:
         for attested in evidence.attested_definitions:
             entry = ensure(attested.source_word)
             entry.has_attested = True
@@ -774,7 +784,7 @@ def _compile_support_stats(
             root_entry.uses += 1
 
     # Dictionary matches
-    if _hypotheses_enabled(evidence_mode):
+    if hypotheses_enabled:
         for morph in evidence.dictionary_morphs:
             entry = ensure(morph)
             entry.has_dictionary = True
@@ -788,7 +798,7 @@ def apply_hard_filters(
     evidence: WordEvidence,
     min_support_threshold: float = 0.2,
     *,
-    evidence_mode: str = "all",
+    evidence_mode: str | None = "all",
 ) -> tuple[list[Decomposition], dict[str, object]]:
     """Apply the hard-filtering rules described in task 2.2.
 
