@@ -438,7 +438,7 @@ def _extract_glossator_definition(payload: object) -> str | None:
 
 
 def _parse_glossator_json(text: str) -> dict | None:
-    for attempt in (_load_json, _load_json_from_code_fence, _load_nested_raw_text):
+    for attempt in (_load_nested_raw_text, _load_json, _load_json_from_code_fence):
         result = attempt(text)
         if isinstance(result, dict):
             return result
