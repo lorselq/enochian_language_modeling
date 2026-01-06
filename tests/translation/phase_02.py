@@ -212,7 +212,7 @@ class TestGenerateDecompositions:
                     run_id="r1",
                     ngram="NAZ",
                     cluster_index=0,
-                    glossator_def=None,
+                    glossator_def="defined",
                     residual_explained=None,
                     residual_ratio=None,
                     residual_headline=None,
@@ -382,7 +382,7 @@ class TestGenerateDecompositionsEdgeCases:
                     run_id="r1",
                     ngram="NAZ",
                     cluster_index=0,
-                    glossator_def=None,
+                    glossator_def="defined",
                     residual_explained=None,
                     residual_ratio=None,
                     residual_headline=None,
@@ -416,7 +416,7 @@ class TestGenerateDecompositionsEdgeCases:
                     run_id="r1",
                     ngram="NAZ",
                     cluster_index=0,
-                    glossator_def=None,
+                    glossator_def="defined",
                     residual_explained=None,
                     residual_ratio=None,
                     residual_headline=None,
@@ -459,6 +459,70 @@ class TestGenerateDecompositionsEdgeCases:
         # Cluster should take priority over residual
         assert naz_decomp.morph_support["NAZ"] == "cluster"
 
+    def test_clusters_only_requires_definition(self, engine: DecompositionEngine):
+        """Clusters without definitions should not count as support in clusters-only mode."""
+        evidence = WordEvidence(
+            word="NAZPSAD",
+            variants_queried=["solo"],
+            direct_clusters=[
+                ClusterRecord(
+                    variant="solo",
+                    cluster_id=1,
+                    run_id="r1",
+                    ngram="NAZ",
+                    cluster_index=0,
+                    glossator_def=None,
+                    residual_explained=None,
+                    residual_ratio=None,
+                    residual_headline=None,
+                    residual_focus_prompt=None,
+                    semantic_coverage=None,
+                    cohesion=None,
+                    semantic_cohesion=None,
+                    best_config=None,
+                    residual_details=[],
+                    raw_definitions=[],
+                ),
+                ClusterRecord(
+                    variant="solo",
+                    cluster_id=2,
+                    run_id="r1",
+                    ngram="PSAD",
+                    cluster_index=0,
+                    glossator_def="defined",
+                    residual_explained=None,
+                    residual_ratio=None,
+                    residual_headline=None,
+                    residual_focus_prompt=None,
+                    semantic_coverage=None,
+                    cohesion=None,
+                    semantic_cohesion=None,
+                    best_config=None,
+                    residual_details=[],
+                    raw_definitions=[],
+                ),
+            ],
+        )
+
+        decompositions, _ = engine.generate_decompositions(
+            "NAZPSAD", evidence, evidence_mode="clusters-only"
+        )
+        main = next((d for d in decompositions if d.morphs == ["NAZ", "PSAD"]), None)
+        assert main is not None
+        assert main.morph_support["NAZ"] == "unknown"
+        assert main.morph_support["PSAD"] == "cluster"
+
+        decompositions_all, _ = engine.generate_decompositions(
+            "NAZPSAD", evidence, evidence_mode="all"
+        )
+        main_all = next(
+            (d for d in decompositions_all if d.morphs == ["NAZ", "PSAD"]),
+            None,
+        )
+        assert main_all is not None
+        assert main_all.morph_support["NAZ"] == "unknown"
+        assert main_all.morph_support["PSAD"] == "cluster"
+
 
 class TestBuildSupportLookup:
     """Direct tests for the _build_support_lookup helper function."""
@@ -481,7 +545,7 @@ class TestBuildSupportLookup:
                     run_id="r1",
                     ngram="foo",  # lowercase
                     cluster_index=0,
-                    glossator_def=None,
+                    glossator_def="defined",
                     residual_explained=None,
                     residual_ratio=None,
                     residual_headline=None,
@@ -685,7 +749,7 @@ class TestApplyHardFilters:
             run_id="r1",
             ngram=morph,
             cluster_index=0,
-            glossator_def=None,
+            glossator_def="defined",
             residual_explained=None,
             residual_ratio=None,
             residual_headline=None,
@@ -878,7 +942,7 @@ class TestScoreDecomposition:
             run_id="r1",
             ngram=morph,
             cluster_index=0,
-            glossator_def=None,
+            glossator_def="defined",
             residual_explained=None,
             residual_ratio=None,
             residual_headline=None,
@@ -1101,7 +1165,7 @@ class TestScoreDecomposition:
                     run_id="r1",
                     ngram="TEST",
                     cluster_index=0,
-                    glossator_def=None,
+                    glossator_def="defined",
                     residual_explained=None,
                     residual_ratio=None,
                     residual_headline=None,
