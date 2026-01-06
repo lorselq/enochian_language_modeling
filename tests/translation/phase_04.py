@@ -142,7 +142,7 @@ class MockDecompositionEngine:
     def __init__(self, decomposition: Decomposition):
         self._decomposition = decomposition
 
-    def generate_decompositions(self, word: str, evidence: WordEvidence):
+    def generate_decompositions(self, word: str, evidence: WordEvidence, **_kwargs):
         return [self._decomposition], {"decomposition_count": 1}
 
 
