@@ -6,7 +6,9 @@ This module wraps MorphemeCandidateFinder to produce Decomposition objects
 that can be further filtered and scored in later tasks (2.2 / 2.3).
 """
 
+import json
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from collections.abc import Callable
@@ -93,6 +95,7 @@ class DecompositionEngine:
         n_best: int | None = None,
         definition_counts: dict[str, int] | None = None,
         definition_glosses: dict[str, list[tuple[str, float | None]]] | None = None,
+        evidence_mode: str = "all",
     ) -> tuple[list[Decomposition], dict[str, object]]:
         """Return all plausible decompositions for ``word`` plus diagnostics.
 
@@ -132,6 +135,7 @@ class DecompositionEngine:
             evidence,
             candidate_finder=self.candidate_finder,
             definition_counts=definition_counts,
+            evidence_mode=evidence_mode,
         )
         diagnostics["extra_ngram_keys"] = len(extra_ngrams)
         diagnostics["extra_ngram_entries"] = sum(
@@ -196,7 +200,7 @@ class DecompositionEngine:
             diagnostics["decomposition_count"] = len(decompositions)
             return decompositions, diagnostics
 
-        support_lookup = _build_support_lookup(evidence)
+        support_lookup = _build_support_lookup(evidence, evidence_mode=evidence_mode)
 
         for path, score, _ngram_scores, coverage in parses:
             if not coverage:
@@ -349,7 +353,140 @@ def _normalize_beam_scores(decompositions: list[Decomposition]) -> None:
         decomp.beam_score_normalized = (adjusted - min_score) / span
 
 
-def _build_support_lookup(evidence: WordEvidence) -> dict[str, str]:
+def _cluster_has_definition(cluster: object) -> bool:
+    glossator_def = getattr(cluster, "glossator_def", None)
+    raw_definitions = getattr(cluster, "raw_definitions", None)
+    residual_headline = getattr(cluster, "residual_headline", None)
+
+    return (
+        _first_non_empty(
+            _extract_glossator_definition(glossator_def),
+            _first_cluster_raw_definition(raw_definitions),
+            residual_headline,
+        )
+        is not None
+    )
+
+
+def _clusters_enabled(evidence_mode: str) -> bool:
+    return evidence_mode != "residuals-only"
+
+
+def _residuals_enabled(evidence_mode: str) -> bool:
+    return evidence_mode != "clusters-only"
+
+
+def _hypotheses_enabled(evidence_mode: str) -> bool:
+    return evidence_mode == "all"
+
+
+def _normalize_evidence_mode(evidence_mode: str) -> str:
+    normalized = (evidence_mode or "all").strip().lower()
+    if normalized in {"all", "clusters-only", "residuals-only"}:
+        return normalized
+    return "all"
+
+
+def _first_cluster_raw_definition(raw_definitions: object) -> str | None:
+    if not isinstance(raw_definitions, list):
+        return None
+    for raw in raw_definitions:
+        enhanced_def = getattr(raw, "enhanced_def", None)
+        definition = getattr(raw, "definition", None)
+        text = _first_non_empty(enhanced_def, definition)
+        if text is not None:
+            return text
+    return None
+
+
+def _first_non_empty(*values: object) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        try:
+            if value:
+                text = str(value).strip()
+                if text:
+                    return text
+        except Exception:
+            continue
+    return None
+
+
+def _extract_glossator_definition(payload: object) -> str | None:
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        return _definition_from_glossator_json(payload)
+    if not isinstance(payload, str):
+        return None
+
+    text = payload.strip()
+    if not text:
+        return None
+
+    parsed = _parse_glossator_json(text)
+    if isinstance(parsed, dict):
+        return _definition_from_glossator_json(parsed)
+    return text if text else None
+
+
+def _parse_glossator_json(text: str) -> dict | None:
+    for attempt in (_load_json, _load_json_from_code_fence, _load_nested_raw_text):
+        result = attempt(text)
+        if isinstance(result, dict):
+            return result
+    return None
+
+
+def _load_json(text: str) -> dict | None:
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _load_json_from_code_fence(text: str) -> dict | None:
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if not match:
+        return None
+    return _load_json(match.group(1).strip())
+
+
+def _load_nested_raw_text(text: str) -> dict | None:
+    data = _load_json(text)
+    if not isinstance(data, dict):
+        return None
+    raw_text = data.get("RAW_TEXT")
+    if not isinstance(raw_text, str):
+        return None
+    raw_text = raw_text.strip()
+    if not raw_text:
+        return None
+    return _load_json_from_code_fence(raw_text) or _load_json(raw_text)
+
+
+def _definition_from_glossator_json(payload: dict) -> str | None:
+    for key in ("DEFINITION", "Definition", "definition", "gloss", "GLOSS"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _build_support_lookup(
+    evidence: WordEvidence,
+    *,
+    evidence_mode: str = "all",
+) -> dict[str, str]:
     """Build a case-insensitive lookup table of morph → support label.
 
     Priority is:
@@ -363,29 +500,35 @@ def _build_support_lookup(evidence: WordEvidence) -> dict[str, str]:
     Later sources never overwrite earlier ones for the same morph key.
     """
 
+    evidence_mode = _normalize_evidence_mode(evidence_mode)
     # Normalize everything to uppercase for consistent lookups.
     support: dict[str, str] = {}
 
-    for cluster in evidence.direct_clusters:
-        key = cluster.ngram.upper()
-        support.setdefault(key, "cluster")
+    if _clusters_enabled(evidence_mode):
+        for cluster in evidence.direct_clusters:
+            if not _cluster_has_definition(cluster):
+                continue
+            key = cluster.ngram.upper()
+            support.setdefault(key, "cluster")
 
-    for residual in evidence.residual_semantics:
-        key = residual.residual.upper()
-        support.setdefault(key, "residual")
+    if _residuals_enabled(evidence_mode):
+        for residual in evidence.residual_semantics:
+            key = residual.residual.upper()
+            support.setdefault(key, "residual")
 
-    for hypothesis in evidence.morph_hypotheses:
-        key = hypothesis.morph.upper()
-        support.setdefault(key, "hypothesis")
+    if _hypotheses_enabled(evidence_mode):
+        for hypothesis in evidence.morph_hypotheses:
+            key = hypothesis.morph.upper()
+            support.setdefault(key, "hypothesis")
 
-    for attested in evidence.attested_definitions:
-        key = attested.source_word.upper()
-        support.setdefault(key, "attested")
-        root_key = attested.root_ngram.upper()
-        support.setdefault(root_key, "attested")
+        for attested in evidence.attested_definitions:
+            key = attested.source_word.upper()
+            support.setdefault(key, "attested")
+            root_key = attested.root_ngram.upper()
+            support.setdefault(root_key, "attested")
 
-    for morph in evidence.dictionary_morphs:
-        support.setdefault(morph.upper(), "dictionary")
+        for morph in evidence.dictionary_morphs:
+            support.setdefault(morph.upper(), "dictionary")
 
     return support
 
@@ -396,6 +539,7 @@ def _build_evidence_ngrams(
     *,
     candidate_finder: MorphemeCandidateFinder,
     definition_counts: dict[str, int] | None = None,
+    evidence_mode: str = "all",
 ) -> dict[str, list[tuple[str, int, int]]]:
     """Build an extra ngram index based on evidence-backed morphs.
 
@@ -406,13 +550,21 @@ def _build_evidence_ngrams(
       except when the 1-char morph is explicitly dictionary-backed.
     """
 
+    evidence_mode = _normalize_evidence_mode(evidence_mode)
     morphs: set[str] = set()
-    morphs.update(cluster.ngram for cluster in evidence.direct_clusters)
-    morphs.update(residual.residual for residual in evidence.residual_semantics)
-    morphs.update(hypothesis.morph for hypothesis in evidence.morph_hypotheses)
-    morphs.update(attested.source_word for attested in evidence.attested_definitions)
-    morphs.update(attested.root_ngram for attested in evidence.attested_definitions)
-    morphs.update(evidence.dictionary_morphs.keys())
+    if _clusters_enabled(evidence_mode):
+        morphs.update(
+            cluster.ngram
+            for cluster in evidence.direct_clusters
+            if _cluster_has_definition(cluster)
+        )
+    if _residuals_enabled(evidence_mode):
+        morphs.update(residual.residual for residual in evidence.residual_semantics)
+    if _hypotheses_enabled(evidence_mode):
+        morphs.update(hypothesis.morph for hypothesis in evidence.morph_hypotheses)
+        morphs.update(attested.source_word for attested in evidence.attested_definitions)
+        morphs.update(attested.root_ngram for attested in evidence.attested_definitions)
+        morphs.update(evidence.dictionary_morphs.keys())
 
     if not morphs or not word:
         return {}
@@ -430,7 +582,7 @@ def _build_evidence_ngrams(
     df_edge = 1  # strongest boost for prefix/suffix candidates (NAZ, PSAD)
     df_inner = max(1, int(total_docs * 0.02))  # still strong, but not insane
 
-    support_stats = _compile_support_stats(evidence)
+    support_stats = _compile_support_stats(evidence, evidence_mode=evidence_mode)
 
     candidates: list[tuple[int, int, int, str]] = []
     # rank tuple = (edge_bonus, length, uses, morph)
@@ -568,9 +720,14 @@ def _residual_ratio(decomp: Decomposition) -> float:
     return 1.0
 
 
-def _compile_support_stats(evidence: WordEvidence) -> dict[str, MorphSupportStats]:
+def _compile_support_stats(
+    evidence: WordEvidence,
+    *,
+    evidence_mode: str = "all",
+) -> dict[str, MorphSupportStats]:
     """Aggregate per-morph support details for filtering decisions."""
 
+    evidence_mode = _normalize_evidence_mode(evidence_mode)
     stats: dict[str, MorphSupportStats] = {}
 
     def ensure(key: str) -> MorphSupportStats:
@@ -580,41 +737,48 @@ def _compile_support_stats(evidence: WordEvidence) -> dict[str, MorphSupportStat
         return stats[key]
 
     # Clusters
-    for cluster in evidence.direct_clusters:
-        entry = ensure(cluster.ngram)
-        entry.has_cluster = True
-        entry.uses += 1
+    if _clusters_enabled(evidence_mode):
+        for cluster in evidence.direct_clusters:
+            if not _cluster_has_definition(cluster):
+                continue
+            entry = ensure(cluster.ngram)
+            entry.has_cluster = True
+            entry.uses += 1
 
     # Residual semantics
-    for residual in evidence.residual_semantics:
-        entry = ensure(residual.residual)
-        entry.has_residual = True
-        entry.uses += 1
+    if _residuals_enabled(evidence_mode):
+        for residual in evidence.residual_semantics:
+            entry = ensure(residual.residual)
+            entry.has_residual = True
+            entry.uses += 1
 
     # Hypotheses
-    for hypothesis in evidence.morph_hypotheses:
-        entry = ensure(hypothesis.morph)
-        entry.uses += 1
-        delta = hypothesis.delta_cosine
-        if delta is None:
-            continue
-        if entry.hypothesis_max is None or delta > entry.hypothesis_max:
-            entry.hypothesis_max = float(delta)
+    if _hypotheses_enabled(evidence_mode):
+        for hypothesis in evidence.morph_hypotheses:
+            entry = ensure(hypothesis.morph)
+            entry.uses += 1
+            delta = hypothesis.delta_cosine
+            if delta is None:
+                continue
+            if entry.hypothesis_max is None or delta > entry.hypothesis_max:
+                entry.hypothesis_max = float(delta)
 
     # Attested definitions
-    for attested in evidence.attested_definitions:
-        entry = ensure(attested.source_word)
-        entry.has_attested = True
-        entry.uses += 1
-        root_entry = ensure(attested.root_ngram)
-        root_entry.has_attested = True
-        root_entry.uses += 1
+    if _hypotheses_enabled(evidence_mode):
+        for attested in evidence.attested_definitions:
+            entry = ensure(attested.source_word)
+            entry.has_attested = True
+            entry.uses += 1
+            root_entry = ensure(attested.root_ngram)
+            root_entry.has_attested = True
+            root_entry.uses += 1
 
     # Dictionary matches
-    for morph in evidence.dictionary_morphs:
-        entry = ensure(morph)
-        entry.has_dictionary = True
-        entry.uses += 1
+    if _hypotheses_enabled(evidence_mode):
+        for morph in evidence.dictionary_morphs:
+            entry = ensure(morph)
+            entry.has_dictionary = True
+            entry.uses += 1
 
     return stats
 
@@ -623,6 +787,8 @@ def apply_hard_filters(
     decompositions: list[Decomposition],
     evidence: WordEvidence,
     min_support_threshold: float = 0.2,
+    *,
+    evidence_mode: str = "all",
 ) -> tuple[list[Decomposition], dict[str, object]]:
     """Apply the hard-filtering rules described in task 2.2.
 
@@ -652,7 +818,7 @@ def apply_hard_filters(
             "filter_traces": [],
         }
 
-    support_stats = _compile_support_stats(evidence)
+    support_stats = _compile_support_stats(evidence, evidence_mode=evidence_mode)
     # Use local counters to avoid cast() when incrementing
     stage1_dropped = 0
     stage2_dropped = 0
