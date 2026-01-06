@@ -543,6 +543,7 @@ class SingleWordTranslationService:
             n_best=n_best,
             definition_counts=definition_counts,
             definition_glosses=definition_glosses,
+            evidence_mode=evidence_mode.value,
         )
 
         # Second pass: generate singleton-enabled decompositions for all words
@@ -558,6 +559,7 @@ class SingleWordTranslationService:
                 n_best=n_best,
                 definition_counts=definition_counts,
                 definition_glosses=definition_glosses,
+                evidence_mode=evidence_mode.value,
             )
             diagnostics["singleton_pass"] = {
                 "used": True,
@@ -592,7 +594,11 @@ class SingleWordTranslationService:
                     support_hypotheses,
                 )
         # Evidence mode already applied at the start - hard filter respects it
-        filtered, filter_diagnostics = apply_hard_filters(decompositions, evidence)
+        filtered, filter_diagnostics = apply_hard_filters(
+            decompositions,
+            evidence,
+            evidence_mode=evidence_mode.value,
+        )
         fallback_decompositions: list[Decomposition] = []
         fallback_used = False
         fallback_mode: str | None = None
@@ -608,6 +614,7 @@ class SingleWordTranslationService:
                     n_best=n_best,
                     definition_counts=definition_counts,
                     definition_glosses=definition_glosses,
+                    evidence_mode=evidence_mode.value,
                 )
             )
             diagnostics["dictionary_fallback"] = fallback_diag
@@ -640,7 +647,9 @@ class SingleWordTranslationService:
                     )
                 # Evidence mode already applied - hard filter respects it
                 filtered, filter_diagnostics = apply_hard_filters(
-                    fallback_decompositions, evidence
+                    fallback_decompositions,
+                    evidence,
+                    evidence_mode=evidence_mode.value,
                 )
 
         if not filtered:
