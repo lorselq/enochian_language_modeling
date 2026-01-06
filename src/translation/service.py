@@ -403,7 +403,7 @@ class SingleWordTranslationService:
         top_k: int = 3,
         llm: bool | None = None,
         fallback_top_n: int = 5,
-        evidence_mode: EvidenceMode = EvidenceMode.ALL,
+        evidence_mode: EvidenceMode = EvidenceMode.CLUSTERS_ONLY,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
     ) -> dict[str, object]:
@@ -424,192 +424,126 @@ class SingleWordTranslationService:
         if active_variants:
             self.repository.require_variants(active_variants)
 
-        evidence = self.repository.fetch_word_evidence(
-            normalized,
-            variants=active_variants,
-            dictionary_entries=self.candidate_finder.dictionary,
-            min_n=self.candidate_finder.min_n,
-            max_n=self.candidate_finder.max_n,
-        )
-        if not evidence or not getattr(evidence, "word", None):
-            fallback_morphs = self._fallback_morph_hints(normalized)
-            llm_enabled = self.llm_enabled if llm is None else bool(llm)
-            return {
-                "word": normalized,
-                "variants_queried": active_variants or [],
-                "strategy": strategy,
-                "evidence_mode": evidence_mode.value,
-                "weighting_enabled": weight_enabled,
-                "llm_enabled": llm_enabled,
-                "llm_mode": (
-                    "remote"
-                    if llm_enabled and self.llm_use_remote
-                    else "local"
-                    if llm_enabled
-                    else None
-                ),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "candidates": [],
-                "evidence": {},
-                "fallback_morphs": fallback_morphs,
-                "diagnostics": {
-                    "evidence_missing": True,
-                    "substring_support": [],
-                    "fasttext": self.repository.fasttext_diagnostics(),
-                    "repository": self.repository.path_diagnostics(),
-                    "word_lookup": self.repository.word_lookup_diagnostics(
-                        normalized, variants=active_variants
-                    ),
-                    "scoring_weights": (
-                        asdict(self.scoring_weights.normalized())
-                        if weight_enabled
+        dictionary_snapshot = self.candidate_finder.dictionary
+        self.candidate_finder.dictionary = {}
+        try:
+            evidence = self.repository.fetch_word_evidence(
+                normalized,
+                variants=active_variants,
+                dictionary_entries=None,
+                min_n=self.candidate_finder.min_n,
+                max_n=self.candidate_finder.max_n,
+            )
+            if not evidence or not getattr(evidence, "word", None):
+                llm_enabled = self.llm_enabled if llm is None else bool(llm)
+                return {
+                    "word": normalized,
+                    "variants_queried": active_variants or [],
+                    "strategy": strategy,
+                    "evidence_mode": evidence_mode.value,
+                    "weighting_enabled": weight_enabled,
+                    "llm_enabled": llm_enabled,
+                    "llm_mode": (
+                        "remote"
+                        if llm_enabled and self.llm_use_remote
+                        else "local"
+                        if llm_enabled
                         else None
                     ),
-                    "weighting_enabled": weight_enabled,
-                    "hard_filters": {},
-                    "decomposition": {
-                        "generated": 0,
-                        "filtered": 0,
-                        "selected": 0,
-                        "fallback_generated": 0,
-                        "fallback_used": False,
-                        "fallback_mode": None,
-                        "fallback_min_coverage_ratio": None,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "candidates": [],
+                    "evidence": {},
+                    "fallback_morphs": [],
+                    "diagnostics": {
+                        "evidence_missing": True,
+                        "substring_support": [],
+                        "fasttext": self.repository.fasttext_diagnostics(),
+                        "repository": self.repository.path_diagnostics(),
+                        "word_lookup": self.repository.word_lookup_diagnostics(
+                            normalized, variants=active_variants
+                        ),
+                        "scoring_weights": (
+                            asdict(self.scoring_weights.normalized())
+                            if weight_enabled
+                            else None
+                        ),
+                        "weighting_enabled": weight_enabled,
+                        "hard_filters": {},
+                        "decomposition": {
+                            "generated": 0,
+                            "filtered": 0,
+                            "selected": 0,
+                            "fallback_generated": 0,
+                            "fallback_used": False,
+                            "fallback_mode": None,
+                            "fallback_min_coverage_ratio": None,
+                        },
                     },
-                },
-            }
-        substring_support: list[str] = []
-        substrings = self._substring_candidates(normalized)
-        if substrings:
-            (
-                support_clusters,
-                support_residuals,
-                support_hypotheses,
-            ) = self.repository.fetch_morph_support(
-                substrings, variants=active_variants
-            )
-            if support_clusters or support_residuals or support_hypotheses:
-                substring_support = sorted(
-                    {
-                        item.ngram.upper() for item in support_clusters
-                    }
-                    | {item.residual.upper() for item in support_residuals}
-                    | {item.morph.upper() for item in support_hypotheses}
-                )
-                self._merge_support_evidence(
-                    evidence,
-                    support_clusters,
-                    support_residuals,
-                    support_hypotheses,
-                )
-
-        # Apply evidence mode EARLY so that decomposition generation, morph_support
-        # labeling, and hard filtering all respect the mode.
-        # In clusters-only mode, only cluster evidence is used.
-        self._apply_evidence_mode(evidence, mode=evidence_mode)
-
-        beam_width = getattr(self.candidate_finder, "beam_width", 10)
-        if beam_width is None:
-            beam_width = 10
-        n_best = max(top_k * 5, beam_width)
-
-        # Fetch accepted definition counts for all possible substrings
-        # This is used to penalize ambiguous morphs (many definitions) during beam search
-        all_substrings = self._substring_candidates(normalized, include_singletons=True)
-        definition_counts: dict[str, int] = {}
-        if evidence_mode != self.EvidenceMode.RESIDUALS_ONLY:
-            definition_counts = self.repository.fetch_accepted_definition_counts(
-                all_substrings, variants=active_variants
-            )
-        definition_glosses = self.repository.fetch_accepted_definition_glosses(
-            all_substrings,
-            variants=active_variants,
-            include_clusters=evidence_mode != self.EvidenceMode.RESIDUALS_ONLY,
-            include_residuals=evidence_mode != self.EvidenceMode.CLUSTERS_ONLY,
-        )
-        clustered_counts = cluster_definition_counts(
-            definition_glosses,
-            get_sentence_transformer("paraphrase-MiniLM-L6-v2"),
-        )
-        if clustered_counts:
-            definition_counts = {**definition_counts, **clustered_counts}
-
-        # Two-pass decomposition: first with min_n=2 (chunky), then with min_n=1 (singletons)
-        # This ensures we generate both chunky and singleton-based decompositions
-        decompositions, diagnostics = self._decomposition_engine.generate_decompositions(
-            normalized,
-            evidence,
-            allow_whole_word=allow_whole_word,
-            n_best=n_best,
-            definition_counts=definition_counts,
-            definition_glosses=definition_glosses,
-            evidence_mode=evidence_mode.value,
-        )
-
-        # Second pass: generate singleton-enabled decompositions for all words
-        # Even short words like OD (O+D) or ITA (I+TA) can have meaningful singleton splits
-        singleton_decomps: list[Decomposition] = []
-        if self.candidate_finder.min_n > 1:
-            singleton_decomps, singleton_diag = self._with_min_n(
-                1,
-                self._decomposition_engine.generate_decompositions,
-                normalized,
-                evidence,
-                allow_whole_word=allow_whole_word,
-                n_best=n_best,
-                definition_counts=definition_counts,
-                definition_glosses=definition_glosses,
-                evidence_mode=evidence_mode.value,
-            )
-            diagnostics["singleton_pass"] = {
-                "used": True,
-                "generated": len(singleton_decomps),
-            }
-
-        # Merge decompositions from both passes
-        if singleton_decomps:
-            decompositions = self._merge_decompositions(decompositions, singleton_decomps)
-            diagnostics["merged_count"] = len(decompositions)
-        if decompositions:
-            morphs = {morph for decomp in decompositions for morph in decomp.morphs}
-            if morphs:
+                }
+            substring_support: list[str] = []
+            substrings = self._substring_candidates(normalized)
+            if substrings:
                 (
                     support_clusters,
                     support_residuals,
                     support_hypotheses,
                 ) = self.repository.fetch_morph_support(
-                    morphs, variants=active_variants
+                    substrings, variants=active_variants
                 )
-                # Filter support data based on evidence mode before merging
-                if evidence_mode == self.EvidenceMode.CLUSTERS_ONLY:
-                    support_residuals = []
-                    support_hypotheses = []
-                elif evidence_mode == self.EvidenceMode.RESIDUALS_ONLY:
-                    support_clusters = []
-                    support_hypotheses = []
-                self._merge_support_evidence(
-                    evidence,
-                    support_clusters,
-                    support_residuals,
-                    support_hypotheses,
-                )
-        # Evidence mode already applied at the start - hard filter respects it
-        filtered, filter_diagnostics = apply_hard_filters(
-            decompositions,
-            evidence,
-            evidence_mode=evidence_mode.value,
-        )
-        fallback_decompositions: list[Decomposition] = []
-        fallback_used = False
-        fallback_mode: str | None = None
-        fallback_min_coverage: float | None = None
+                if support_clusters or support_residuals or support_hypotheses:
+                    substring_support = sorted(
+                        {
+                            item.ngram.upper() for item in support_clusters
+                        }
+                        | {item.residual.upper() for item in support_residuals}
+                        | {item.morph.upper() for item in support_hypotheses}
+                    )
+                    self._merge_support_evidence(
+                        evidence,
+                        support_clusters,
+                        support_residuals,
+                        support_hypotheses,
+                    )
 
-        if not filtered:
-            fallback_decompositions, fallback_diag = (
+            # Apply evidence mode EARLY so that decomposition generation, morph_support
+            # labeling, and hard filtering all respect the mode.
+            # In clusters-only mode, only cluster evidence is used.
+            self._apply_evidence_mode(evidence, mode=evidence_mode)
+
+            beam_width = getattr(self.candidate_finder, "beam_width", 10)
+            if beam_width is None:
+                beam_width = 10
+            n_best = max(top_k * 5, beam_width)
+
+            # Fetch accepted definition counts for all possible substrings
+            # This is used to penalize ambiguous morphs (many definitions) during beam search
+            all_substrings = self._substring_candidates(
+                normalized, include_singletons=True
+            )
+            definition_counts: dict[str, int] = {}
+            if evidence_mode != self.EvidenceMode.RESIDUALS_ONLY:
+                definition_counts = self.repository.fetch_accepted_definition_counts(
+                    all_substrings, variants=active_variants
+                )
+            definition_glosses = self.repository.fetch_accepted_definition_glosses(
+                all_substrings,
+                variants=active_variants,
+                include_clusters=evidence_mode != self.EvidenceMode.RESIDUALS_ONLY,
+                include_residuals=evidence_mode != self.EvidenceMode.CLUSTERS_ONLY,
+            )
+            clustered_counts = cluster_definition_counts(
+                definition_glosses,
+                get_sentence_transformer("paraphrase-MiniLM-L6-v2"),
+            )
+            if clustered_counts:
+                definition_counts = {**definition_counts, **clustered_counts}
+
+            # Two-pass decomposition: first with min_n=2 (chunky), then with min_n=1 (singletons)
+            # This ensures we generate both chunky and singleton-based decompositions
+            decompositions, diagnostics = (
                 self._decomposition_engine.generate_decompositions(
                     normalized,
                     evidence,
-                    force_dictionary=True,
                     allow_whole_word=allow_whole_word,
                     n_best=n_best,
                     definition_counts=definition_counts,
@@ -617,20 +551,42 @@ class SingleWordTranslationService:
                     evidence_mode=evidence_mode.value,
                 )
             )
-            diagnostics["dictionary_fallback"] = fallback_diag
-            if fallback_decompositions:
-                fallback_used = True
-                fallback_mode = "dictionary"
-                decomp_morphs = {
-                    morph for decomp in fallback_decompositions for morph in decomp.morphs
+
+            # Second pass: generate singleton-enabled decompositions for all words
+            # Even short words like OD (O+D) or ITA (I+TA) can have meaningful singleton splits
+            singleton_decomps: list[Decomposition] = []
+            if self.candidate_finder.min_n > 1:
+                singleton_decomps, singleton_diag = self._with_min_n(
+                    1,
+                    self._decomposition_engine.generate_decompositions,
+                    normalized,
+                    evidence,
+                    allow_whole_word=allow_whole_word,
+                    n_best=n_best,
+                    definition_counts=definition_counts,
+                    definition_glosses=definition_glosses,
+                    evidence_mode=evidence_mode.value,
+                )
+                diagnostics["singleton_pass"] = {
+                    "used": True,
+                    "generated": len(singleton_decomps),
                 }
-                if decomp_morphs:
+
+            # Merge decompositions from both passes
+            if singleton_decomps:
+                decompositions = self._merge_decompositions(
+                    decompositions, singleton_decomps
+                )
+                diagnostics["merged_count"] = len(decompositions)
+            if decompositions:
+                morphs = {morph for decomp in decompositions for morph in decomp.morphs}
+                if morphs:
                     (
                         support_clusters,
                         support_residuals,
                         support_hypotheses,
                     ) = self.repository.fetch_morph_support(
-                        decomp_morphs, variants=active_variants
+                        morphs, variants=active_variants
                     )
                     # Filter support data based on evidence mode before merging
                     if evidence_mode == self.EvidenceMode.CLUSTERS_ONLY:
@@ -645,141 +601,128 @@ class SingleWordTranslationService:
                         support_residuals,
                         support_hypotheses,
                     )
-                # Evidence mode already applied - hard filter respects it
-                filtered, filter_diagnostics = apply_hard_filters(
-                    fallback_decompositions,
-                    evidence,
-                    evidence_mode=evidence_mode.value,
-                )
+            # Evidence mode already applied at the start - hard filter respects it
+            filtered, filter_diagnostics = apply_hard_filters(
+                decompositions,
+                evidence,
+                evidence_mode=evidence_mode.value,
+            )
+            fallback_decompositions: list[Decomposition] = []
+            fallback_used = False
+            fallback_mode: str | None = None
+            fallback_min_coverage: float | None = None
 
-        if not filtered:
-            relaxed_source = (
-                fallback_decompositions if fallback_decompositions else decompositions
-            )
-            relaxed, relaxed_min_coverage = _relaxed_fallback(
-                relaxed_source,
-                top_n=fallback_top_n,
-            )
-            if relaxed:
-                fallback_used = True
-                if fallback_mode is None:
-                    fallback_mode = "relaxed"
+            ranked: list[tuple[Decomposition, float]] = []
+            coherence_results: dict[tuple[str, ...], CoherenceResult] = {}
+            fasttext_model = getattr(self.candidate_finder, "fasttext_model", None)
+
+            for decomp in filtered:
+                # Check if decomposition has singletons and compute coherence
+                has_singletons = any(len(m) == 1 for m in decomp.morphs)
+
+                if has_singletons and fasttext_model is not None:
+                    # Use coherence-aware scoring for singleton decompositions
+                    if weight_enabled:
+                        score, coherence = score_decomposition_with_coherence(
+                            decomp,
+                            evidence,
+                            fasttext_model,
+                            weights=self.scoring_weights,
+                            coherence_weight=0.15,
+                        )
+                    else:
+                        base_score = score_decomposition_unweighted(decomp, evidence)
+                        coherence = compute_semantic_coherence(
+                            decomp.morphs, fasttext_model
+                        )
+                        score = 0.85 * base_score + 0.15 * coherence.score
+                    coherence_results[tuple(decomp.morphs)] = coherence
                 else:
-                    fallback_mode = f"{fallback_mode}+relaxed"
-                fallback_min_coverage = relaxed_min_coverage
-                filtered = relaxed
-                filter_diagnostics["relaxed_fallback"] = {
-                    "top_n": fallback_top_n,
-                    "min_coverage_ratio": relaxed_min_coverage,
+                    # Standard scoring for non-singleton decompositions
+                    if weight_enabled:
+                        score = score_decomposition(
+                            decomp, evidence, weights=self.scoring_weights
+                        )
+                    else:
+                        score = score_decomposition_unweighted(decomp, evidence)
+
+                ranked.append((decomp, score))
+
+            if coherence_results:
+                diagnostics["coherence_scores"] = {
+                    " + ".join(morphs): {
+                        "score": result.score,
+                        "singleton_cohesion": result.singleton_cohesion,
+                        "large_morph_diversity": result.large_morph_diversity,
+                        "singleton_count": result.singleton_count,
+                        "large_morph_count": result.large_morph_count,
+                    }
+                    for morphs, result in coherence_results.items()
                 }
 
-        ranked: list[tuple[Decomposition, float]] = []
-        coherence_results: dict[tuple[str, ...], CoherenceResult] = {}
-        fasttext_model = getattr(self.candidate_finder, "fasttext_model", None)
+            reranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
+            selected = select_top_k(
+                reranked,
+                k=top_k,
+                evidence=evidence,
+            )
 
-        for decomp in filtered:
-            # Check if decomposition has singletons and compute coherence
-            has_singletons = any(len(m) == 1 for m in decomp.morphs)
+            fallback_morphs: list[dict[str, object]] = []
 
-            if has_singletons and fasttext_model is not None:
-                # Use coherence-aware scoring for singleton decompositions
-                if weight_enabled:
-                    score, coherence = score_decomposition_with_coherence(
-                        decomp,
-                        evidence,
-                        fasttext_model,
-                        weights=self.scoring_weights,
-                        coherence_weight=0.15,
-                    )
-                else:
-                    base_score = score_decomposition_unweighted(decomp, evidence)
-                    coherence = compute_semantic_coherence(decomp.morphs, fasttext_model)
-                    score = 0.85 * base_score + 0.15 * coherence.score
-                coherence_results[tuple(decomp.morphs)] = coherence
-            else:
-                # Standard scoring for non-singleton decompositions
-                if weight_enabled:
-                    score = score_decomposition(
-                        decomp, evidence, weights=self.scoring_weights
-                    )
-                else:
-                    score = score_decomposition_unweighted(decomp, evidence)
+            llm_enabled = self.llm_enabled if llm is None else bool(llm)
+            enriched = self._enrich_candidates(
+                selected,
+                evidence=evidence,
+                strategy=strategy,
+                llm_enabled=llm_enabled,
+            )
 
-            ranked.append((decomp, score))
-
-        if coherence_results:
-            diagnostics["coherence_scores"] = {
-                " + ".join(morphs): {
-                    "score": result.score,
-                    "singleton_cohesion": result.singleton_cohesion,
-                    "large_morph_diversity": result.large_morph_diversity,
-                    "singleton_count": result.singleton_count,
-                    "large_morph_count": result.large_morph_count,
-                }
-                for morphs, result in coherence_results.items()
-            }
-
-        reranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
-        selected = select_top_k(
-            reranked,
-            k=top_k,
-            evidence=evidence,
-        )
-
-        fallback_morphs: list[dict[str, object]] = []
-        if not selected:
-            fallback_morphs = self._fallback_morph_hints(normalized)
-
-        llm_enabled = self.llm_enabled if llm is None else bool(llm)
-        enriched = self._enrich_candidates(
-            selected,
-            evidence=evidence,
-            strategy=strategy,
-            llm_enabled=llm_enabled,
-        )
-
-        return {
-            "word": normalized,
-            "variants_queried": evidence.variants_queried,
-            "strategy": strategy,
-            "evidence_mode": evidence_mode.value,
-            "weighting_enabled": weight_enabled,
-            "llm_enabled": llm_enabled,
-            "llm_mode": (
-                "remote"
-                if llm_enabled and self.llm_use_remote
-                else "local"
-                if llm_enabled
-                else None
-            ),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "candidates": enriched,
-            "evidence": self._summarize_evidence(evidence),
-            "fallback_morphs": fallback_morphs,
-            "diagnostics": {
-                **diagnostics,
-                "substring_support": substring_support,
-                "fasttext": self.repository.fasttext_diagnostics(),
-                "repository": self.repository.path_diagnostics(),
-                "word_lookup": self.repository.word_lookup_diagnostics(
-                    normalized, variants=active_variants
-                ),
-                "scoring_weights": (
-                    asdict(self.scoring_weights.normalized()) if weight_enabled else None
-                ),
+            return {
+                "word": normalized,
+                "variants_queried": evidence.variants_queried,
+                "strategy": strategy,
+                "evidence_mode": evidence_mode.value,
                 "weighting_enabled": weight_enabled,
-                "hard_filters": filter_diagnostics,
-                "decomposition": {
-                    "generated": len(decompositions),
-                    "filtered": len(filtered),
-                    "selected": len(selected),
-                    "fallback_generated": len(fallback_decompositions),
-                    "fallback_used": fallback_used,
-                    "fallback_mode": fallback_mode,
-                    "fallback_min_coverage_ratio": fallback_min_coverage,
+                "llm_enabled": llm_enabled,
+                "llm_mode": (
+                    "remote"
+                    if llm_enabled and self.llm_use_remote
+                    else "local"
+                    if llm_enabled
+                    else None
+                ),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "candidates": enriched,
+                "evidence": self._summarize_evidence(evidence),
+                "fallback_morphs": fallback_morphs,
+                "diagnostics": {
+                    **diagnostics,
+                    "substring_support": substring_support,
+                    "fasttext": self.repository.fasttext_diagnostics(),
+                    "repository": self.repository.path_diagnostics(),
+                    "word_lookup": self.repository.word_lookup_diagnostics(
+                        normalized, variants=active_variants
+                    ),
+                    "scoring_weights": (
+                        asdict(self.scoring_weights.normalized())
+                        if weight_enabled
+                        else None
+                    ),
+                    "weighting_enabled": weight_enabled,
+                    "hard_filters": filter_diagnostics,
+                    "decomposition": {
+                        "generated": len(decompositions),
+                        "filtered": len(filtered),
+                        "selected": len(selected),
+                        "fallback_generated": len(fallback_decompositions),
+                        "fallback_used": fallback_used,
+                        "fallback_mode": fallback_mode,
+                        "fallback_min_coverage_ratio": fallback_min_coverage,
+                    },
                 },
-            },
-        }
+            }
+        finally:
+            self.candidate_finder.dictionary = dictionary_snapshot
 
     def _enrich_candidates(
         self,
