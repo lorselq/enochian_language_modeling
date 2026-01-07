@@ -228,6 +228,7 @@ class MorphemeCandidateFinder:
         target: str,
         *,
         extra_ngrams: dict[str, list[tuple[str, int, int]]] | None = None,
+        restrict_to_attested: bool = False,
         min_n: int | None = None,
         n_best: int | None = None,
         definition_counts: dict[str, int] | None = None,
@@ -294,9 +295,12 @@ class MorphemeCandidateFinder:
                 # try next n-grams
                 for n in range(min_len, min(self.max_n, len(tgt) - pos) + 1):
                     ng = tgt[pos : pos + n]
-                    entries = self.ngram_index.get(ng, [])
-                    if extra_ngrams:
-                        entries = entries + extra_ngrams.get(ng, [])
+                    if restrict_to_attested:
+                        entries = extra_ngrams.get(ng, []) if extra_ngrams else []
+                    else:
+                        entries = self.ngram_index.get(ng, [])
+                        if extra_ngrams:
+                            entries = entries + extra_ngrams.get(ng, [])
                     if definition_glosses:
                         cluster_count = _cluster_count(ng)
                         if cluster_count > 0 and len(entries) > cluster_count:

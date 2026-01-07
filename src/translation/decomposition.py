@@ -131,6 +131,9 @@ class DecompositionEngine:
         if not word:
             return [], diagnostics
 
+        normalized_evidence_mode = _normalize_evidence_mode(evidence_mode)
+        attested_only = normalized_evidence_mode != "all"
+
         normalized = word.upper()
         extra_ngrams = _build_evidence_ngrams(
             normalized,
@@ -138,13 +141,14 @@ class DecompositionEngine:
             candidate_finder=self.candidate_finder,
             definition_counts=definition_counts,
             evidence_mode=evidence_mode,
+            attested_only=attested_only,
         )
         diagnostics["extra_ngram_keys"] = len(extra_ngrams)
         diagnostics["extra_ngram_entries"] = sum(
             len(entries) for entries in extra_ngrams.values()
         )
         dictionary_ngrams: dict[str, list[tuple[str, int, int]]] = {}
-        if force_dictionary:
+        if force_dictionary and not attested_only:
             dictionary_ngrams = _build_dictionary_ngrams(
                 normalized, candidate_finder=self.candidate_finder
             )
@@ -164,10 +168,11 @@ class DecompositionEngine:
             n_best=n_best,
             definition_counts=definition_counts,
             definition_glosses=definition_glosses,
+            restrict_to_attested=attested_only,
         )
         diagnostics["parse_count"] = len(parses)
 
-        if not parses and not force_dictionary:
+        if not parses and not force_dictionary and not attested_only:
             dictionary_ngrams = _build_dictionary_ngrams(
                 normalized, candidate_finder=self.candidate_finder
             )
@@ -183,6 +188,7 @@ class DecompositionEngine:
                     n_best=n_best,
                     definition_counts=definition_counts,
                     definition_glosses=definition_glosses,
+                    restrict_to_attested=attested_only,
                 )
                 diagnostics["parse_count"] = len(parses)
                 if parses:
@@ -488,6 +494,39 @@ def _build_support_lookup(
     return support
 
 
+def _collect_attested_pieces(
+    evidence: WordEvidence,
+    *,
+    evidence_mode: str | None = "all",
+) -> set[str]:
+    """Collect attested morph pieces from clusters/residuals only."""
+    evidence_mode = _normalize_evidence_mode(evidence_mode)
+    clusters_enabled, residuals_enabled = _evidence_flags(evidence_mode)
+    pieces: set[str] = set()
+
+    if clusters_enabled:
+        for cluster in evidence.direct_clusters:
+            if not _cluster_has_definition(cluster):
+                continue
+            ngram = getattr(cluster, "ngram", None)
+            if isinstance(ngram, str):
+                normalized = ngram.strip().upper()
+                if normalized:
+                    pieces.add(normalized)
+
+    if residuals_enabled:
+        for residual in evidence.residual_semantics:
+            if _extract_glossator_definition(residual.glossator_def) is None:
+                continue
+            residual_text = getattr(residual, "residual", None)
+            if isinstance(residual_text, str):
+                normalized = residual_text.strip().upper()
+                if normalized:
+                    pieces.add(normalized)
+
+    return pieces
+
+
 def _build_evidence_ngrams(
     word: str,
     evidence: WordEvidence,
@@ -495,6 +534,7 @@ def _build_evidence_ngrams(
     candidate_finder: MorphemeCandidateFinder,
     definition_counts: dict[str, int] | None = None,
     evidence_mode: str | None = "all",
+    attested_only: bool = False,
 ) -> dict[str, list[tuple[str, int, int]]]:
     """Build an extra ngram index based on evidence-backed morphs.
 
@@ -505,21 +545,13 @@ def _build_evidence_ngrams(
       except when the 1-char morph is explicitly dictionary-backed.
     """
 
-    evidence_mode = _normalize_evidence_mode(evidence_mode)
-    clusters_enabled, residuals_enabled = _evidence_flags(evidence_mode)
-    morphs: set[str] = set()
-    if clusters_enabled:
-        morphs.update(
-            cluster.ngram
-            for cluster in evidence.direct_clusters
-            if _cluster_has_definition(cluster)
-        )
-    if residuals_enabled:
-        morphs.update(residual.residual for residual in evidence.residual_semantics)
-    morphs.update(hypothesis.morph for hypothesis in evidence.morph_hypotheses)
-    morphs.update(attested.source_word for attested in evidence.attested_definitions)
-    morphs.update(attested.root_ngram for attested in evidence.attested_definitions)
-    morphs.update(evidence.dictionary_morphs.keys())
+    attested_pieces = _collect_attested_pieces(evidence, evidence_mode=evidence_mode)
+    morphs: set[str] = set(attested_pieces)
+    if not attested_only:
+        morphs.update(hypothesis.morph for hypothesis in evidence.morph_hypotheses)
+        morphs.update(attested.source_word for attested in evidence.attested_definitions)
+        morphs.update(attested.root_ngram for attested in evidence.attested_definitions)
+        morphs.update(evidence.dictionary_morphs.keys())
 
     if not morphs or not word:
         return {}
@@ -550,7 +582,9 @@ def _build_evidence_ngrams(
         if normalized not in word:
             continue
         if len(normalized) < min_len:
-            if len(normalized) != 1 or normalized not in evidence.dictionary_morphs:
+            if len(normalized) != 1:
+                continue
+            if not attested_only and normalized not in evidence.dictionary_morphs:
                 continue
         if len(normalized) > max_len:
             continue
