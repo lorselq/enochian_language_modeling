@@ -36,9 +36,8 @@ from .scoring import (
     CoherenceResult,
     ScoringWeights,
     compute_semantic_coherence,
-    score_decomposition,
-    score_decomposition_unweighted,
-    score_decomposition_with_coherence,
+    score_decomposition_breakdown,
+    score_decomposition_with_coherence_breakdown,
 )
 from .strategies import apply_strategy, select_top_k
 from .tokenization import expand_sentence_ngrams, tokenize_words
@@ -538,6 +537,9 @@ class SingleWordTranslationService:
             if clustered_counts:
                 definition_counts = {**definition_counts, **clustered_counts}
 
+            evidence.definition_counts = definition_counts
+            evidence.definition_glosses = definition_glosses
+
             # Two-pass decomposition: first with min_n=2 (chunky), then with min_n=1 (singletons)
             # This ensures we generate both chunky and singleton-based decompositions
             decompositions, diagnostics = (
@@ -623,28 +625,57 @@ class SingleWordTranslationService:
                 if has_singletons and fasttext_model is not None:
                     # Use coherence-aware scoring for singleton decompositions
                     if weight_enabled:
-                        score, coherence = score_decomposition_with_coherence(
+                        score, coherence, breakdown = (
+                            score_decomposition_with_coherence_breakdown(
+                                decomp,
+                                evidence,
+                                fasttext_model,
+                                weights=self.scoring_weights,
+                                coherence_weight=0.05,
+                                weighted=True,
+                            )
+                        )
+                        decomp.score_breakdown = breakdown
+                    else:
+                        base_score, breakdown = score_decomposition_breakdown(
                             decomp,
                             evidence,
-                            fasttext_model,
-                            weights=self.scoring_weights,
-                            coherence_weight=0.15,
+                            weighted=False,
                         )
-                    else:
-                        base_score = score_decomposition_unweighted(decomp, evidence)
                         coherence = compute_semantic_coherence(
                             decomp.morphs, fasttext_model
                         )
-                        score = 0.85 * base_score + 0.15 * coherence.score
+                        score = 0.95 * base_score + 0.05 * coherence.score
+                        breakdown["base_score"] = base_score
+                        breakdown["coherence"] = {
+                            "raw": coherence.score,
+                            "weight": 0.05,
+                            "weighted": 0.05 * coherence.score,
+                            "singleton_cohesion": coherence.singleton_cohesion,
+                            "large_morph_diversity": coherence.large_morph_diversity,
+                            "singleton_count": coherence.singleton_count,
+                            "large_morph_count": coherence.large_morph_count,
+                        }
+                        breakdown["total"] = score
+                        decomp.score_breakdown = breakdown
                     coherence_results[tuple(decomp.morphs)] = coherence
                 else:
                     # Standard scoring for non-singleton decompositions
                     if weight_enabled:
-                        score = score_decomposition(
-                            decomp, evidence, weights=self.scoring_weights
+                        score, breakdown = score_decomposition_breakdown(
+                            decomp,
+                            evidence,
+                            weights=self.scoring_weights,
+                            weighted=True,
                         )
+                        decomp.score_breakdown = breakdown
                     else:
-                        score = score_decomposition_unweighted(decomp, evidence)
+                        score, breakdown = score_decomposition_breakdown(
+                            decomp,
+                            evidence,
+                            weighted=False,
+                        )
+                        decomp.score_breakdown = breakdown
 
                 ranked.append((decomp, score))
 

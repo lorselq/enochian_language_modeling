@@ -72,6 +72,7 @@ class Decomposition:
     breakdown: dict[str, object] = field(default_factory=dict)
     beam_score_normalized: float | None = None
     morph_support: dict[str, str] = field(default_factory=dict)
+    score_breakdown: dict[str, object] = field(default_factory=dict)
 
 
 class DecompositionEngine:

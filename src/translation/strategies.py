@@ -155,6 +155,9 @@ def select_top_k(
                 "canonicals": canonicals,
                 "score": score,
                 "breakdown": decomp.breakdown,
+                "score_breakdown": dict(decomp.score_breakdown)
+                if decomp.score_breakdown
+                else None,
                 "meanings": _extract_meanings(decomp=decomp, evidence=evidence),
                 "warnings": warnings,
             }
