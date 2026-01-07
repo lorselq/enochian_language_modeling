@@ -27,11 +27,12 @@ class ScoringWeights:
     across configurations.
     """
 
-    beam_prior: float = 0.25
+    beam_prior: float = 0.20
     avg_cluster_quality: float = 0.20
     residual_coverage: float = 0.20
     acceptance_bonus: float = 0.15
-    specificity_bonus: float = 0.20  # Reward morphs with fewer definitions
+    specificity_bonus: float = 0.15  # Reward morphs with fewer definitions
+    ambiguity_penalty: float = 0.10  # Penalize morphs with many definitions
 
     def normalized(self) -> "ScoringWeights":
         total = (
@@ -40,11 +41,12 @@ class ScoringWeights:
             + self.residual_coverage
             + self.acceptance_bonus
             + self.specificity_bonus
+            + self.ambiguity_penalty
         )
         if total <= 0:
             # Fall back to equal weights to avoid division by zero and keep the
             # scoring function usable.
-            return ScoringWeights(0.2, 0.2, 0.2, 0.2, 0.2)
+            return ScoringWeights(1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6)
 
         scale = 1.0 / total
         return ScoringWeights(
@@ -53,6 +55,7 @@ class ScoringWeights:
             residual_coverage=self.residual_coverage * scale,
             acceptance_bonus=self.acceptance_bonus * scale,
             specificity_bonus=self.specificity_bonus * scale,
+            ambiguity_penalty=self.ambiguity_penalty * scale,
         )
 
 
@@ -72,43 +75,12 @@ def score_decomposition(
     - acceptance_bonus: counts of clusters, residuals, and hypotheses aligned
       with the morphs (weighted 1.0 / 0.5 / 0.3).
     - specificity_bonus: rewards morphs with fewer definitions (more specific).
+    - ambiguity_penalty: penalizes morphs with many accepted definitions.
     """
 
+    components = _score_components(decomp, evidence)
     active = (weights or ScoringWeights()).normalized()
-
-    beam_raw = (
-        decomp.beam_score_normalized
-        if decomp.beam_score_normalized is not None
-        else decomp.beam_score
-    )
-    beam_prior = _safe_number(beam_raw, default=0.0)
-    avg_cluster_quality = _average_cluster_quality(
-        decomp.morphs,
-        evidence.direct_clusters,
-    )
-
-    residual_ratio = _safe_number(decomp.breakdown.get("residual_ratio"), default=1.0)
-    residual_coverage = max(0.0, min(1.0, 1.0 - residual_ratio))
-
-    acceptance = _acceptance_bonus(
-        decomp.morphs,
-        evidence.direct_clusters,
-        evidence.residual_semantics,
-        evidence.morph_hypotheses,
-    )
-
-    specificity = _specificity_bonus(
-        decomp.morphs,
-        evidence.direct_clusters,
-    )
-
-    return (
-        active.beam_prior * beam_prior
-        + active.avg_cluster_quality * avg_cluster_quality
-        + active.residual_coverage * residual_coverage
-        + active.acceptance_bonus * acceptance
-        + active.specificity_bonus * specificity
-    )
+    return _weighted_score(components, active)
 
 
 def score_decomposition_unweighted(
@@ -121,33 +93,27 @@ def score_decomposition_unweighted(
     ScoringWeights multipliers.
     """
 
-    beam_raw = (
-        decomp.beam_score_normalized
-        if decomp.beam_score_normalized is not None
-        else decomp.beam_score
-    )
-    beam_prior = _safe_number(beam_raw, default=0.0)
-    avg_cluster_quality = _average_cluster_quality(
+    components = _score_components(decomp, evidence)
+    return _unweighted_score(components)
+
+
+def score_decomposition_breakdown(
+    decomp: Decomposition,
+    evidence: WordEvidence,
+    *,
+    weights: ScoringWeights | None = None,
+    weighted: bool = True,
+) -> tuple[float, dict[str, object]]:
+    """Return a score and a per-component breakdown for explainability."""
+    components = _score_components(decomp, evidence)
+    active = (weights or ScoringWeights()).normalized() if weighted else None
+    breakdown = _score_breakdown(components, active)
+    breakdown["definition_counts"] = _definition_counts_for_morphs(
         decomp.morphs,
         evidence.direct_clusters,
+        evidence.definition_counts,
     )
-
-    residual_ratio = _safe_number(decomp.breakdown.get("residual_ratio"), default=1.0)
-    residual_coverage = max(0.0, min(1.0, 1.0 - residual_ratio))
-
-    acceptance = _acceptance_bonus(
-        decomp.morphs,
-        evidence.direct_clusters,
-        evidence.residual_semantics,
-        evidence.morph_hypotheses,
-    )
-
-    specificity = _specificity_bonus(
-        decomp.morphs,
-        evidence.direct_clusters,
-    )
-
-    return beam_prior + avg_cluster_quality + residual_coverage + acceptance + specificity
+    return breakdown["total"], breakdown
 
 
 def _safe_number(value: MaybeNumber, default: float = 0.0) -> float:
@@ -162,6 +128,135 @@ def _safe_number(value: MaybeNumber, default: float = 0.0) -> float:
         except ValueError:
             return default
     return default
+
+
+def _score_components(
+    decomp: Decomposition,
+    evidence: WordEvidence,
+) -> dict[str, float]:
+    beam_raw = (
+        decomp.beam_score_normalized
+        if decomp.beam_score_normalized is not None
+        else decomp.beam_score
+    )
+    beam_prior = _safe_number(beam_raw, default=0.0)
+    avg_cluster_quality = _average_cluster_quality(
+        decomp.morphs,
+        evidence.direct_clusters,
+    )
+
+    residual_ratio = _safe_number(decomp.breakdown.get("residual_ratio"), default=1.0)
+    residual_coverage = max(0.0, min(1.0, 1.0 - residual_ratio))
+
+    acceptance = _acceptance_bonus(
+        decomp.morphs,
+        evidence.direct_clusters,
+        evidence.residual_semantics,
+        evidence.morph_hypotheses,
+    )
+
+    definition_counts = _definition_counts_for_morphs(
+        decomp.morphs,
+        evidence.direct_clusters,
+        evidence.definition_counts,
+    )
+
+    specificity = _specificity_bonus(
+        decomp.morphs,
+        definition_counts,
+    )
+
+    ambiguity = _ambiguity_penalty(
+        decomp.morphs,
+        definition_counts,
+    )
+
+    return {
+        "beam_prior": beam_prior,
+        "avg_cluster_quality": avg_cluster_quality,
+        "residual_coverage": residual_coverage,
+        "acceptance_bonus": acceptance,
+        "specificity_bonus": specificity,
+        "ambiguity_penalty": ambiguity,
+    }
+
+
+def _weighted_score(components: dict[str, float], weights: ScoringWeights) -> float:
+    return (
+        weights.beam_prior * components["beam_prior"]
+        + weights.avg_cluster_quality * components["avg_cluster_quality"]
+        + weights.residual_coverage * components["residual_coverage"]
+        + weights.acceptance_bonus * components["acceptance_bonus"]
+        + weights.specificity_bonus * components["specificity_bonus"]
+        - weights.ambiguity_penalty * components["ambiguity_penalty"]
+    )
+
+
+def _unweighted_score(components: dict[str, float]) -> float:
+    return (
+        components["beam_prior"]
+        + components["avg_cluster_quality"]
+        + components["residual_coverage"]
+        + components["acceptance_bonus"]
+        + components["specificity_bonus"]
+        - components["ambiguity_penalty"]
+    )
+
+
+def _score_breakdown(
+    components: dict[str, float],
+    weights: ScoringWeights | None,
+) -> dict[str, object]:
+    if weights is None:
+        weights_payload = {
+            "beam_prior": 1.0,
+            "avg_cluster_quality": 1.0,
+            "residual_coverage": 1.0,
+            "acceptance_bonus": 1.0,
+            "specificity_bonus": 1.0,
+            "ambiguity_penalty": 1.0,
+        }
+    else:
+        weights_payload = {
+            "beam_prior": weights.beam_prior,
+            "avg_cluster_quality": weights.avg_cluster_quality,
+            "residual_coverage": weights.residual_coverage,
+            "acceptance_bonus": weights.acceptance_bonus,
+            "specificity_bonus": weights.specificity_bonus,
+            "ambiguity_penalty": weights.ambiguity_penalty,
+        }
+
+    weighted = {
+        "beam_prior": weights_payload["beam_prior"] * components["beam_prior"],
+        "avg_cluster_quality": (
+            weights_payload["avg_cluster_quality"] * components["avg_cluster_quality"]
+        ),
+        "residual_coverage": (
+            weights_payload["residual_coverage"] * components["residual_coverage"]
+        ),
+        "acceptance_bonus": (
+            weights_payload["acceptance_bonus"] * components["acceptance_bonus"]
+        ),
+        "specificity_bonus": (
+            weights_payload["specificity_bonus"] * components["specificity_bonus"]
+        ),
+        "ambiguity_penalty": -weights_payload["ambiguity_penalty"]
+        * components["ambiguity_penalty"],
+    }
+
+    total = sum(weighted.values())
+
+    return {
+        "components": {
+            key: {
+                "raw": components[key],
+                "weight": weights_payload[key],
+                "weighted": weighted[key],
+            }
+            for key in components
+        },
+        "total": total,
+    }
 
 
 def _average_cluster_quality(
@@ -262,9 +357,33 @@ def _acceptance_bonus(
     return min(1.5, normalized)
 
 
-def _specificity_bonus(
+def _definition_counts_for_morphs(
     morphs: Iterable[str],
     clusters: list[ClusterRecord],
+    definition_counts: dict[str, int] | None,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for cluster in clusters:
+        key = cluster.ngram.upper()
+        counts[key] = counts.get(key, 0) + 1
+
+    if definition_counts:
+        for morph in morphs:
+            key = morph.upper()
+            if key not in definition_counts:
+                continue
+            try:
+                value = int(definition_counts[key])
+            except (TypeError, ValueError):
+                continue
+            counts[key] = max(counts.get(key, 0), max(0, value))
+
+    return counts
+
+
+def _specificity_bonus(
+    morphs: Iterable[str],
+    definition_counts: dict[str, int],
 ) -> float:
     """Calculate specificity bonus rewarding morphs with fewer definitions.
 
@@ -273,12 +392,6 @@ def _specificity_bonus(
 
     Returns a score in [0, 1] where higher means more specific.
     """
-    # Count distinct definitions per morph
-    morph_def_counts: dict[str, int] = {}
-    for cluster in clusters:
-        key = cluster.ngram.upper()
-        morph_def_counts[key] = morph_def_counts.get(key, 0) + 1
-
     morph_list = [m.upper() for m in morphs]
     if not morph_list:
         return 0.0
@@ -292,7 +405,7 @@ def _specificity_bonus(
     # This gives: 1 def -> 1.0, 2 defs -> 0.59, 5 defs -> 0.38, 10 defs -> 0.30
     weighted_specificity = 0.0
     for morph in morph_list:
-        num_defs = morph_def_counts.get(morph, 0)
+        num_defs = definition_counts.get(morph, 0)
         if num_defs == 0:
             # No definitions = unknown, neutral specificity
             specificity = 0.5
@@ -302,6 +415,35 @@ def _specificity_bonus(
         weighted_specificity += len(morph) * specificity
 
     return weighted_specificity / float(total_len)
+
+
+def _ambiguity_penalty(
+    morphs: Iterable[str],
+    definition_counts: dict[str, int],
+) -> float:
+    """Penalize morphs with many accepted definitions.
+
+    Returns a score in [0, 1] where higher means more ambiguous.
+    """
+    morph_list = [m.upper() for m in morphs]
+    if not morph_list:
+        return 0.0
+
+    total_len = sum(len(m) for m in morph_list)
+    if total_len <= 0:
+        return 0.0
+
+    weighted_penalty = 0.0
+    normalizer = math.log1p(8.0)
+    for morph in morph_list:
+        num_defs = definition_counts.get(morph, 0)
+        if num_defs <= 1:
+            penalty = 0.0
+        else:
+            penalty = min(1.0, math.log1p(num_defs - 1) / normalizer)
+        weighted_penalty += len(morph) * penalty
+
+    return weighted_penalty / float(total_len)
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +633,7 @@ def score_decomposition_with_coherence(
     fasttext_model: FastTextModel | None,
     *,
     weights: ScoringWeights | None = None,
-    coherence_weight: float = 0.15,
+    coherence_weight: float = 0.05,
 ) -> tuple[float, CoherenceResult]:
     """Score a decomposition including semantic coherence.
 
@@ -510,7 +652,7 @@ def score_decomposition_with_coherence(
     weights:
         Optional scoring weights for the base score.
     coherence_weight:
-        Weight for the coherence component (default 0.15).
+        Weight for the coherence component (default 0.05).
         The base score weight is (1 - coherence_weight).
 
     Returns
@@ -525,3 +667,35 @@ def score_decomposition_with_coherence(
     combined = (1.0 - coherence_weight) * base_score + coherence_weight * coherence.score
 
     return combined, coherence
+
+
+def score_decomposition_with_coherence_breakdown(
+    decomp: Decomposition,
+    evidence: WordEvidence,
+    fasttext_model: FastTextModel | None,
+    *,
+    weights: ScoringWeights | None = None,
+    coherence_weight: float = 0.05,
+    weighted: bool = True,
+) -> tuple[float, CoherenceResult, dict[str, object]]:
+    base_score, breakdown = score_decomposition_breakdown(
+        decomp,
+        evidence,
+        weights=weights,
+        weighted=weighted,
+    )
+    coherence = compute_semantic_coherence(decomp.morphs, fasttext_model)
+    combined = (1.0 - coherence_weight) * base_score + coherence_weight * coherence.score
+
+    breakdown["base_score"] = base_score
+    breakdown["coherence"] = {
+        "raw": coherence.score,
+        "weight": coherence_weight,
+        "weighted": coherence_weight * coherence.score,
+        "singleton_cohesion": coherence.singleton_cohesion,
+        "large_morph_diversity": coherence.large_morph_diversity,
+        "singleton_count": coherence.singleton_count,
+        "large_morph_count": coherence.large_morph_count,
+    }
+    breakdown["total"] = combined
+    return combined, coherence, breakdown
