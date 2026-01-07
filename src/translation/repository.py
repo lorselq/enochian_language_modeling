@@ -334,12 +334,16 @@ class InsightsRepository:
         # Non-accepted clusters are either skipped or rejected definitions
         supports_json = _sqlite_supports_json(conn)
         if supports_json:
-            query = """SELECT * FROM clusters
+            query = """SELECT *, json_valid(glossator_def) AS glossator_valid FROM clusters
                WHERE TRIM(ngram) COLLATE NOCASE = ?
                  AND action = 'escalate'
                  AND verdict = 'True'
-                 AND COALESCE(TRIM(json_extract(glossator_def, '$.DEFINITION')), '') <> ''
-                 AND COALESCE(LOWER(CAST(json_extract(glossator_def, '$.REJECTED') AS TEXT)), '') NOT IN ('1', 'true', 'yes')
+                 AND (
+                   (json_valid(glossator_def)
+                     AND COALESCE(TRIM(json_extract(glossator_def, '$.DEFINITION')), '') <> ''
+                     AND COALESCE(LOWER(CAST(json_extract(glossator_def, '$.REJECTED') AS TEXT)), '') NOT IN ('1', 'true', 'yes'))
+                   OR NOT json_valid(glossator_def)
+                 )
                ORDER BY cluster_index ASC;"""
         else:
             query = """SELECT * FROM clusters
@@ -349,12 +353,20 @@ class InsightsRepository:
                ORDER BY cluster_index ASC;"""
         cursor = conn.execute(query, (ngram,))
         cluster_rows = cursor.fetchall()
-        if cluster_rows and not supports_json:
-            cluster_rows = [
-                row
-                for row in cluster_rows
-                if _glossator_definition_is_accepted(row["glossator_def"])
-            ]
+        if cluster_rows:
+            if supports_json:
+                cluster_rows = [
+                    row
+                    for row in cluster_rows
+                    if row["glossator_valid"]
+                    or _glossator_definition_is_accepted(row["glossator_def"])
+                ]
+            else:
+                cluster_rows = [
+                    row
+                    for row in cluster_rows
+                    if _glossator_definition_is_accepted(row["glossator_def"])
+                ]
         if not cluster_rows:
             return []
 
@@ -678,22 +690,34 @@ class InsightsRepository:
                 continue
             supports_json = _sqlite_supports_json(conn)
             if supports_json:
-                query = """SELECT * FROM root_residual_semantics
+                query = """SELECT *, json_valid(glossator_def) AS glossator_valid FROM root_residual_semantics
                     WHERE TRIM(residual) COLLATE NOCASE = ?
-                      AND COALESCE(TRIM(json_extract(glossator_def, '$.DEFINITION')), '') <> ''
-                      AND COALESCE(LOWER(CAST(json_extract(glossator_def, '$.REJECTED') AS TEXT)), '') NOT IN ('1', 'true', 'yes')
+                      AND (
+                        (json_valid(glossator_def)
+                          AND COALESCE(TRIM(json_extract(glossator_def, '$.DEFINITION')), '') <> ''
+                          AND COALESCE(LOWER(CAST(json_extract(glossator_def, '$.REJECTED') AS TEXT)), '') NOT IN ('1', 'true', 'yes'))
+                        OR NOT json_valid(glossator_def)
+                      )
                     ORDER BY group_idx;"""
             else:
                 query = """SELECT * FROM root_residual_semantics
                     WHERE TRIM(residual) COLLATE NOCASE = ?
                     ORDER BY group_idx;"""
             rows = conn.execute(query, (residual,)).fetchall()
-            if rows and not supports_json:
-                rows = [
-                    row
-                    for row in rows
-                    if _glossator_definition_is_accepted(row["glossator_def"])
-                ]
+            if rows:
+                if supports_json:
+                    rows = [
+                        row
+                        for row in rows
+                        if row["glossator_valid"]
+                        or _glossator_definition_is_accepted(row["glossator_def"])
+                    ]
+                else:
+                    rows = [
+                        row
+                        for row in rows
+                        if _glossator_definition_is_accepted(row["glossator_def"])
+                    ]
             for row in rows:
                 data = {key: row[key] for key in row.keys()}
                 records.append(
