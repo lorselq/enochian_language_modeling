@@ -356,17 +356,7 @@ def _normalize_beam_scores(decompositions: list[Decomposition]) -> None:
 
 def _cluster_has_definition(cluster: object) -> bool:
     glossator_def = getattr(cluster, "glossator_def", None)
-    raw_definitions = getattr(cluster, "raw_definitions", None)
-    residual_headline = getattr(cluster, "residual_headline", None)
-
-    return (
-        _first_non_empty(
-            _extract_glossator_definition(glossator_def),
-            _first_cluster_raw_definition(raw_definitions),
-            residual_headline,
-        )
-        is not None
-    )
+    return _extract_glossator_definition(glossator_def) is not None
 
 
 EvidenceMode = Literal["all", "clusters-only", "residuals-only"]
@@ -387,37 +377,6 @@ def _evidence_flags(evidence_mode: EvidenceMode) -> tuple[bool, bool]:
     )
 
 
-def _first_cluster_raw_definition(raw_definitions: object) -> str | None:
-    if not isinstance(raw_definitions, list):
-        return None
-    for raw in raw_definitions:
-        enhanced_def = getattr(raw, "enhanced_def", None)
-        definition = getattr(raw, "definition", None)
-        text = _first_non_empty(enhanced_def, definition)
-        if text is not None:
-            return text
-    return None
-
-
-def _first_non_empty(*values: object) -> str | None:
-    for value in values:
-        if value is None:
-            continue
-        if isinstance(value, str):
-            text = value.strip()
-            if text:
-                return text
-            continue
-        try:
-            if value:
-                text = str(value).strip()
-                if text:
-                    return text
-        except Exception:
-            continue
-    return None
-
-
 def _extract_glossator_definition(payload: object) -> str | None:
     if payload is None:
         return None
@@ -433,7 +392,7 @@ def _extract_glossator_definition(payload: object) -> str | None:
     parsed = _parse_glossator_json(text)
     if isinstance(parsed, dict):
         return _definition_from_glossator_json(parsed)
-    return text if text else None
+    return None
 
 
 def _parse_glossator_json(text: str) -> dict | None:
@@ -475,11 +434,22 @@ def _load_nested_raw_text(text: str) -> dict | None:
 
 
 def _definition_from_glossator_json(payload: dict) -> str | None:
-    for key in ("DEFINITION", "Definition", "definition", "gloss", "GLOSS"):
+    if _glossator_payload_rejected(payload):
+        return None
+    for key in ("DEFINITION", "Definition", "definition"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _glossator_payload_rejected(payload: dict) -> bool:
+    rejected = payload.get("REJECTED")
+    if rejected is None:
+        rejected = payload.get("rejected")
+    if isinstance(rejected, str):
+        return rejected.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(rejected)
 
 
 def _build_support_lookup(
