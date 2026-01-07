@@ -14,10 +14,10 @@ from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 @dataclass
 class ResidualDetail:
     normalized: str
-    definition: str | None
-    coverage_ratio: float | None
-    residual_ratio: float | None
-    avg_confidence: float | None
+    definition: str | None = None
+    coverage_ratio: float | None = None
+    residual_ratio: float | None = None
+    avg_confidence: float | None = None
     uncovered: list[str] = field(default_factory=list)
     low_confidence: list[str] = field(default_factory=list)
 
@@ -328,15 +328,29 @@ class InsightsRepository:
     ) -> list[ClusterRecord]:
         # Only fetch accepted clusters (action='escalate' AND verdict='True')
         # Non-accepted clusters are either skipped or rejected definitions
-        cursor = conn.execute(
-            """SELECT * FROM clusters
+        supports_json = _sqlite_supports_json(conn)
+        if supports_json:
+            query = """SELECT * FROM clusters
                WHERE TRIM(ngram) COLLATE NOCASE = ?
                  AND action = 'escalate'
                  AND verdict = 'True'
-               ORDER BY cluster_index ASC;""",
-            (ngram,),
-        )
+                 AND COALESCE(TRIM(json_extract(glossator_def, '$.DEFINITION')), '') <> ''
+                 AND COALESCE(LOWER(CAST(json_extract(glossator_def, '$.REJECTED') AS TEXT)), '') NOT IN ('1', 'true', 'yes')
+               ORDER BY cluster_index ASC;"""
+        else:
+            query = """SELECT * FROM clusters
+               WHERE TRIM(ngram) COLLATE NOCASE = ?
+                 AND action = 'escalate'
+                 AND verdict = 'True'
+               ORDER BY cluster_index ASC;"""
+        cursor = conn.execute(query, (ngram,))
         cluster_rows = cursor.fetchall()
+        if cluster_rows and not supports_json:
+            cluster_rows = [
+                row
+                for row in cluster_rows
+                if _glossator_definition_is_accepted(row["glossator_def"])
+            ]
         if not cluster_rows:
             return []
 
@@ -554,17 +568,15 @@ class InsightsRepository:
                              AND verdict = 'True'"""
                     rows = conn.execute(cluster_sql, (morph,)).fetchall()
                     for row in rows:
-                        gloss = row[0]
-                        if not gloss:
+                        definition, rejected = _parse_glossator_definition(row[0])
+                        if rejected or not definition:
                             continue
                         score = _safe_float(row[1])
                         if score is None:
                             score = _safe_float(row[2])
                         if score is None:
                             score = _safe_float(row[3])
-                        normalized = str(gloss).strip()
-                        if not normalized:
-                            continue
+                        normalized = str(definition).strip()
                         gloss_bucket = glosses.setdefault(morph, {})
                         existing = gloss_bucket.get(normalized)
                         if existing is None or (
@@ -580,8 +592,8 @@ class InsightsRepository:
                         (morph,),
                     ).fetchall()
                     for row in residual_rows:
-                        gloss = row[0]
-                        if not gloss:
+                        definition, rejected = _parse_glossator_definition(row[0])
+                        if rejected or not definition:
                             continue
                         score = _safe_float(row[1])
                         if score is None:
@@ -592,9 +604,7 @@ class InsightsRepository:
                             score = _safe_float(row[4])
                         if score is None:
                             score = _safe_float(row[5])
-                        normalized = str(gloss).strip()
-                        if not normalized:
-                            continue
+                        normalized = str(definition).strip()
                         gloss_bucket = glosses.setdefault(morph, {})
                         existing = gloss_bucket.get(normalized)
                         if existing is None or (
@@ -662,10 +672,24 @@ class InsightsRepository:
             conn = self._connections.get(variant)
             if conn is None:
                 continue
-            rows = conn.execute(
-                "SELECT * FROM root_residual_semantics WHERE TRIM(residual) COLLATE NOCASE = ? ORDER BY group_idx;",
-                (residual,),
-            ).fetchall()
+            supports_json = _sqlite_supports_json(conn)
+            if supports_json:
+                query = """SELECT * FROM root_residual_semantics
+                    WHERE TRIM(residual) COLLATE NOCASE = ?
+                      AND COALESCE(TRIM(json_extract(glossator_def, '$.DEFINITION')), '') <> ''
+                      AND COALESCE(LOWER(CAST(json_extract(glossator_def, '$.REJECTED') AS TEXT)), '') NOT IN ('1', 'true', 'yes')
+                    ORDER BY group_idx;"""
+            else:
+                query = """SELECT * FROM root_residual_semantics
+                    WHERE TRIM(residual) COLLATE NOCASE = ?
+                    ORDER BY group_idx;"""
+            rows = conn.execute(query, (residual,)).fetchall()
+            if rows and not supports_json:
+                rows = [
+                    row
+                    for row in rows
+                    if _glossator_definition_is_accepted(row["glossator_def"])
+                ]
             for row in rows:
                 data = {key: row[key] for key in row.keys()}
                 records.append(
@@ -890,6 +914,55 @@ def _safe_json_array(payload: object) -> list[str]:
             return [str(item) for item in data]
         return [str(data)]
     return []
+
+
+def _parse_glossator_definition(payload: object) -> tuple[str | None, bool]:
+    if payload is None:
+        return None, False
+    if not isinstance(payload, str):
+        payload = str(payload)
+    payload = payload.strip()
+    if not payload:
+        return None, False
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return payload, False
+    if isinstance(data, Mapping):
+        definition = data.get("DEFINITION")
+        if definition is None:
+            definition = data.get("definition")
+        if isinstance(definition, str):
+            definition = definition.strip()
+        else:
+            definition = None
+        rejected = data.get("REJECTED")
+        if rejected is None:
+            rejected = data.get("rejected")
+        if isinstance(rejected, str):
+            rejected_flag = rejected.strip().lower() in {"1", "true", "yes", "y"}
+        else:
+            rejected_flag = bool(rejected)
+        return definition, rejected_flag
+    if isinstance(data, str):
+        definition = data.strip()
+        return definition or None, False
+    return payload, False
+
+
+def _glossator_definition_is_accepted(payload: object) -> bool:
+    definition, rejected = _parse_glossator_definition(payload)
+    if rejected:
+        return False
+    return bool(definition and definition.strip())
+
+
+def _sqlite_supports_json(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("SELECT json_extract('{\"a\": 1}', '$.a');").fetchone()
+    except sqlite3.OperationalError:
+        return False
+    return True
 
 
 def _count_matches(conn: sqlite3.Connection, query: str, params: tuple[object, ...]) -> int:
