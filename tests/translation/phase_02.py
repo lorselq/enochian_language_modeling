@@ -249,7 +249,7 @@ class TestGenerateDecompositions:
             ],
         )
 
-        decompositions = engine.generate_decompositions("NAZPSAD", evidence)
+        decompositions, _ = engine.generate_decompositions("NAZPSAD", evidence)
 
         # Expect both NAZ+PSAD and NAZP+SAD from the mock index
         morph_sets = [d.morphs for d in decompositions]
@@ -269,7 +269,7 @@ class TestGenerateDecompositions:
             variants_queried=["solo"],
         )
 
-        decompositions = engine.generate_decompositions("NAZ", evidence)
+        decompositions, _ = engine.generate_decompositions("NAZ", evidence)
 
         assert any(d.morphs == ["NAZ"] for d in decompositions)
         for decomp in decompositions:
@@ -277,7 +277,7 @@ class TestGenerateDecompositions:
 
     def test_unknown_word_returns_empty_list(self, engine: DecompositionEngine):
         evidence = WordEvidence(word="XYZABC", variants_queried=["solo"])
-        decompositions = engine.generate_decompositions("XYZABC", evidence)
+        decompositions, _ = engine.generate_decompositions("XYZABC", evidence)
         assert decompositions == []
 
 
@@ -289,7 +289,7 @@ class TestDatabaseBackedDecompositions:
             pytest.skip("Solo database not available")
 
         evidence = solo_repo.fetch_word_evidence("A", variants=["solo"])
-        decompositions = engine.generate_decompositions("A", evidence)
+        decompositions, _ = engine.generate_decompositions("A", evidence)
 
         assert isinstance(decompositions, list)
         if evidence.direct_clusters or evidence.residual_semantics:
@@ -308,7 +308,7 @@ class TestDatabaseBackedDecompositions:
                 pytest.skip(f"Debate database missing expected tables: {exc}")
             raise
 
-        decompositions = engine.generate_decompositions("A", evidence)
+        decompositions, _ = engine.generate_decompositions("A", evidence)
 
         # If the database has no entries, we still return a list gracefully
         assert isinstance(decompositions, list)
@@ -325,13 +325,13 @@ class TestGenerateDecompositionsEdgeCases:
     def test_empty_word_returns_empty_list(self, engine: DecompositionEngine):
         """Empty string input should return an empty list immediately."""
         evidence = WordEvidence(word="", variants_queried=["solo"])
-        decompositions = engine.generate_decompositions("", evidence)
+        decompositions, _ = engine.generate_decompositions("", evidence)
         assert decompositions == []
 
     def test_case_insensitive_input(self, engine: DecompositionEngine):
         """Lowercase input should be normalized to uppercase and still work."""
         evidence = WordEvidence(word="naz", variants_queried=["solo"])
-        decompositions = engine.generate_decompositions("naz", evidence)
+        decompositions, _ = engine.generate_decompositions("naz", evidence)
 
         # Should find decompositions despite lowercase input
         assert any(d.morphs == ["NAZ"] for d in decompositions)
@@ -341,7 +341,7 @@ class TestGenerateDecompositionsEdgeCases:
                 assert morph == morph.upper()
 
     def test_hypothesis_support_type(self, engine: DecompositionEngine):
-        """Morph hypotheses should be classified as 'hypothesis' in morph_support."""
+        """Morph hypotheses should not override support classification."""
         evidence = WordEvidence(
             word="NAZ",
             variants_queried=["solo"],
@@ -363,11 +363,11 @@ class TestGenerateDecompositionsEdgeCases:
             ],
         )
 
-        decompositions = engine.generate_decompositions("NAZ", evidence)
+        decompositions, _ = engine.generate_decompositions("NAZ", evidence)
 
         naz_decomp = next((d for d in decompositions if d.morphs == ["NAZ"]), None)
         assert naz_decomp is not None
-        assert naz_decomp.morph_support["NAZ"] == "hypothesis"
+        assert naz_decomp.morph_support["NAZ"] == "unknown"
 
     def test_unknown_morph_classification(self, engine: DecompositionEngine):
         """Morphs not in evidence should be classified as 'unknown'."""
@@ -398,7 +398,7 @@ class TestGenerateDecompositionsEdgeCases:
             # No residual_semantics for PSAD
         )
 
-        decompositions = engine.generate_decompositions("NAZPSAD", evidence)
+        decompositions, _ = engine.generate_decompositions("NAZPSAD", evidence)
         main = next((d for d in decompositions if d.morphs == ["NAZ", "PSAD"]), None)
         assert main is not None
         assert main.morph_support["NAZ"] == "cluster"
@@ -453,7 +453,7 @@ class TestGenerateDecompositionsEdgeCases:
             ],
         )
 
-        decompositions = engine.generate_decompositions("NAZ", evidence)
+        decompositions, _ = engine.generate_decompositions("NAZ", evidence)
         naz_decomp = next((d for d in decompositions if d.morphs == ["NAZ"]), None)
         assert naz_decomp is not None
         # Cluster should take priority over residual
@@ -596,7 +596,7 @@ class TestBuildSupportLookup:
         assert result["BAR"] == "residual"
 
     def test_hypothesis_support(self):
-        """Hypotheses should map to 'hypothesis' support."""
+        """Hypotheses should not contribute to support lookup."""
         evidence = WordEvidence(
             word="TEST",
             variants_queried=["solo"],
@@ -618,8 +618,7 @@ class TestBuildSupportLookup:
             ],
         )
         result = _build_support_lookup(evidence)
-        # Should be normalized to uppercase
-        assert result["BAZ"] == "hypothesis"
+        assert "BAZ" not in result
 
 
 class TestClassifySupport:
@@ -809,8 +808,10 @@ class TestApplyHardFilters:
         residual_ratio: float = 0.0,
         morph_support: Iterable[tuple[str, str]] | None = None,
     ) -> Decomposition:
+        canonicals = [m.upper() for m in morphs]
         return Decomposition(
-            morphs=[m.upper() for m in morphs],
+            morphs=canonicals,
+            canonicals=canonicals,
             beam_score=beam_score,
             breakdown={
                 "segments": [],
@@ -832,7 +833,7 @@ class TestApplyHardFilters:
         supported = self._make_decomposition(["NAZ", "PSAD"], residual_ratio=0.0)
         unsupported = self._make_decomposition(["NAZ", "XYZ"], residual_ratio=0.0)
 
-        filtered = apply_hard_filters([supported, unsupported], evidence)
+        filtered, _ = apply_hard_filters([supported, unsupported], evidence)
 
         assert supported in filtered
         assert unsupported not in filtered
@@ -848,7 +849,7 @@ class TestApplyHardFilters:
         strong = self._make_decomposition(["NAZ", "PSAD"], residual_ratio=0.1)
         weak = self._make_decomposition(["NAZ", "PSAD"], residual_ratio=0.8)
 
-        filtered = apply_hard_filters([weak, strong], evidence)
+        filtered, _ = apply_hard_filters([weak, strong], evidence)
 
         assert strong in filtered
         assert weak not in filtered
@@ -866,12 +867,13 @@ class TestApplyHardFilters:
         common_decomp = self._make_decomposition(["COMMON"], residual_ratio=0.0)
         rare_decomp = self._make_decomposition(["RARE"], residual_ratio=0.0)
 
-        filtered = apply_hard_filters([common_decomp, rare_decomp], evidence)
+        filtered, _ = apply_hard_filters([common_decomp, rare_decomp], evidence)
 
         assert common_decomp in filtered
         assert rare_decomp not in filtered
 
     def test_hypothesis_thresholds_respected(self):
+        """Hypotheses should not satisfy hard-filter support checks."""
         evidence = WordEvidence(
             word="DELTAOMEGA",
             variants_queried=["solo"],
@@ -884,11 +886,11 @@ class TestApplyHardFilters:
         low_confidence = self._make_decomposition(["DELTA"], residual_ratio=0.0)
         high_confidence = self._make_decomposition(["OMEGA"], residual_ratio=0.0)
 
-        filtered = apply_hard_filters(
+        filtered, _ = apply_hard_filters(
             [low_confidence, high_confidence], evidence, min_support_threshold=0.2
         )
 
-        assert high_confidence in filtered
+        assert high_confidence not in filtered
         assert low_confidence not in filtered
 
     def test_database_backed_filters_handle_missing_rows(
@@ -898,9 +900,9 @@ class TestApplyHardFilters:
             pytest.skip("Solo database not available")
 
         evidence = solo_repo.fetch_word_evidence("A", variants=["solo"])
-        decompositions = engine.generate_decompositions("A", evidence)
+        decompositions, _ = engine.generate_decompositions("A", evidence)
 
-        filtered = apply_hard_filters(decompositions, evidence)
+        filtered, _ = apply_hard_filters(decompositions, evidence)
 
         assert isinstance(filtered, list)
         if (
@@ -923,9 +925,9 @@ class TestApplyHardFilters:
                 pytest.skip(f"Debate database missing expected tables: {exc}")
             raise
 
-        decompositions = engine.generate_decompositions("A", evidence)
+        decompositions, _ = engine.generate_decompositions("A", evidence)
 
-        filtered = apply_hard_filters(decompositions, evidence)
+        filtered, _ = apply_hard_filters(decompositions, evidence)
 
         assert isinstance(filtered, list)
 
@@ -1239,6 +1241,7 @@ class TestScoreDecomposition:
         # Create decomposition with invalid beam_score
         decomp = Decomposition(
             morphs=["TEST"],
+            canonicals=["TEST"],
             beam_score=0.0,
             breakdown={
                 "segments": [],
