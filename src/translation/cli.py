@@ -772,6 +772,24 @@ def _format_variant_report(
                 reasoning = sense.get("reasoning")
                 if isinstance(reasoning, str) and reasoning:
                     lines.append(_wrap_text(f"Reasoning: {reasoning}", indent=0))
+                score_breakdown = sense.get("score_breakdown")
+                if isinstance(score_breakdown, dict):
+                    components = score_breakdown.get("components")
+                    if isinstance(components, dict) and components:
+                        lines.append("Score breakdown:")
+                        for key, payload in components.items():
+                            if not isinstance(payload, dict):
+                                continue
+                            raw = payload.get("raw")
+                            weighted = payload.get("weighted")
+                            if isinstance(raw, (int, float)) and isinstance(
+                                weighted, (int, float)
+                            ):
+                                line = f"{key}: raw={raw:.3f}, weighted={weighted:.3f}"
+                                lines.append(_wrap_text(line, indent=2, bullet=True))
+                    total = score_breakdown.get("total")
+                    if isinstance(total, (int, float)):
+                        lines.append(f"Score total: {total:.3f}")
     else:
         lines.append("No candidate decompositions found.")
         fallback = payload.get("fallback_morphs")

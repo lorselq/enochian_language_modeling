@@ -124,6 +124,10 @@ class WordEvidence:
     fasttext_neighbors: list[FasttextNeighbor] = field(default_factory=list)
     attested_definitions: list[AttestedDefinition] = field(default_factory=list)
     dictionary_morphs: dict[str, DictionaryMorph] = field(default_factory=dict)
+    definition_counts: dict[str, int] = field(default_factory=dict)
+    definition_glosses: dict[str, list[tuple[str, float | None]]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass

@@ -1020,10 +1020,11 @@ class TestScoreDecomposition:
         """High-quality decompositions should score higher than low-quality ones.
 
         Tests that the composite score correctly combines:
-        - beam_prior (0.3 weight): beam_score from TF-IDF
-        - avg_cluster_quality (0.25 weight): average of cohesion and semantic_coverage
-        - residual_coverage (0.25 weight): 1 - residual_ratio
-        - acceptance_bonus (0.2 weight): compressed, length-weighted acceptance
+        - beam_prior (0.2 weight): beam_score from TF-IDF
+        - avg_cluster_quality (0.2 weight): average of cohesion and semantic_coverage
+        - residual_coverage (0.2 weight): 1 - residual_ratio
+        - acceptance_bonus (0.15 weight): compressed, length-weighted acceptance
+        - specificity_bonus (0.15 weight): fewer definitions = higher score
         """
         evidence = WordEvidence(
             word="NAZPSAD",
@@ -1040,10 +1041,10 @@ class TestScoreDecomposition:
         strong_score = score_decomposition(strong, evidence)
         weak_score = score_decomposition(weak, evidence)
 
-        # Expected: beam_prior(0.3*5.0) + avg_quality(0.25*0.8) + coverage(0.25*1.0)
-        # + acceptance_bonus(0.2*log1p(1.0))
+        # Expected: beam_prior(0.2*5.0) + avg_quality(0.2*0.8) + coverage(0.2*1.0)
+        # + acceptance_bonus(0.15*log1p(1.0)) + specificity_bonus(0.15*1.0)
         acceptance = math.log1p(1.0)
-        expected = 0.3 * 5.0 + 0.25 * 0.8 + 0.25 * 1.0 + 0.2 * acceptance
+        expected = 0.2 * 5.0 + 0.2 * 0.8 + 0.2 * 1.0 + 0.15 * acceptance + 0.15
         assert math.isclose(strong_score, expected, rel_tol=1e-6)
         assert weak_score < strong_score
 
@@ -1062,7 +1063,12 @@ class TestScoreDecomposition:
         decomp = self._decomp(["TEST"], beam_score=2.0, residual_ratio=0.25)
 
         custom_weights = ScoringWeights(
-            beam_prior=2.0, avg_cluster_quality=2.0, residual_coverage=0.0, acceptance_bonus=0.0
+            beam_prior=2.0,
+            avg_cluster_quality=2.0,
+            residual_coverage=0.0,
+            acceptance_bonus=0.0,
+            specificity_bonus=0.0,
+            ambiguity_penalty=0.0,
         )
 
         score = score_decomposition(decomp, evidence, custom_weights)
@@ -1091,12 +1097,13 @@ class TestScoreDecomposition:
         score = score_decomposition(decomp, evidence)
 
         # Score components with default weights:
-        # beam_prior: 0.3 * 0.0 = 0.0
-        # avg_cluster_quality: 0.25 * 0.45 = 0.1125 (avg of 0.4 cohesion and 0.5 coverage)
-        # residual_coverage: 0.25 * 1.0 = 0.25
-        # acceptance_bonus: 0.2 * log1p(1.0 + 0.5 + 0.3)
+        # beam_prior: 0.2 * 0.0 = 0.0
+        # avg_cluster_quality: 0.2 * 0.45 = 0.09 (avg of 0.4 cohesion and 0.5 coverage)
+        # residual_coverage: 0.2 * 1.0 = 0.2
+        # acceptance_bonus: 0.15 * log1p(1.0 + 0.5 + 0.3)
+        # specificity_bonus: 0.15 * 1.0
         acceptance = math.log1p(1.0 + 0.5 + 0.3)
-        expected = 0.0 + 0.1125 + 0.25 + 0.2 * acceptance
+        expected = 0.0 + 0.09 + 0.2 + 0.15 * acceptance + 0.15
         assert math.isclose(score, expected, rel_tol=1e-6)
 
     def test_avg_cluster_quality_is_length_weighted(self):
@@ -1113,7 +1120,14 @@ class TestScoreDecomposition:
 
         avg_quality = 0.2  # length-weighted: (1*1 + 4*0) / 5
         acceptance = math.log1p(1.0) / 5.0  # only "A" is supported, weighted average
-        expected = 0.3 * 0.0 + 0.25 * avg_quality + 0.25 * 1.0 + 0.2 * acceptance
+        specificity = (1 * 1.0 + 4 * 0.5) / 5.0
+        expected = (
+            0.2 * 0.0
+            + 0.2 * avg_quality
+            + 0.2 * 1.0
+            + 0.15 * acceptance
+            + 0.15 * specificity
+        )
         assert math.isclose(score, expected, rel_tol=1e-6)
 
     def test_solo_database_scoring_handles_empty_tables(self, solo_repo: InsightsRepository):
@@ -1186,8 +1200,14 @@ class TestScoreDecomposition:
         score = score_decomposition(decomp, evidence)
 
         # Should use only cohesion (0.7) for cluster quality
-        # Score: 0.3*1.0 + 0.25*0.7 + 0.25*1.0 + 0.2*log1p(1.0)
-        expected = 0.3 * 1.0 + 0.25 * 0.7 + 0.25 * 1.0 + 0.2 * math.log1p(1.0)
+        # Score: 0.2*1.0 + 0.2*0.7 + 0.2*1.0 + 0.15*log1p(1.0) + 0.15*1.0
+        expected = (
+            0.2 * 1.0
+            + 0.2 * 0.7
+            + 0.2 * 1.0
+            + 0.15 * math.log1p(1.0)
+            + 0.15 * 1.0
+        )
         assert math.isclose(score, expected, rel_tol=1e-6)
 
     def test_empty_decomposition_scores_zero(self):
@@ -1223,8 +1243,18 @@ class TestScoreDecomposition:
         score = score_decomposition(decomp, evidence)
 
         # Should use best quality (0.85) not average
-        # Score: 0.3*2.0 + 0.25*0.85 + 0.25*0.9 + 0.2*log1p(3.0)
-        expected = 0.3 * 2.0 + 0.25 * 0.85 + 0.25 * 0.9 + 0.2 * math.log1p(3.0)
+        # Score: 0.2*2.0 + 0.2*0.85 + 0.2*0.9 + 0.15*log1p(3.0)
+        # + 0.15*specificity(3 defs) - 0.1*ambiguity(3 defs)
+        specificity = 1.0 / (1.0 + math.log1p(2.0))
+        ambiguity = math.log1p(2.0) / math.log1p(8.0)
+        expected = (
+            0.2 * 2.0
+            + 0.2 * 0.85
+            + 0.2 * 0.9
+            + 0.15 * math.log1p(3.0)
+            + 0.15 * specificity
+            - 0.1 * ambiguity
+        )
         assert math.isclose(score, expected, rel_tol=1e-6)
 
     def test_invalid_beam_score_defaults_to_zero(self):
@@ -1256,9 +1286,50 @@ class TestScoreDecomposition:
         score = score_decomposition(decomp, evidence)
 
         # Should still compute a score, treating beam_score as 0.0
-        # Score: 0.3*0.0 + 0.25*0.5 + 0.25*1.0 + 0.2*1.0
-        expected = 0.3 * 0.0 + 0.25 * 0.5 + 0.25 * 1.0 + 0.2 * 1.0
+        # Score: 0.2*0.0 + 0.2*0.5 + 0.2*1.0 + 0.15*log1p(1.0) + 0.15*1.0
+        expected = (
+            0.2 * 0.0
+            + 0.2 * 0.5
+            + 0.2 * 1.0
+            + 0.15 * math.log1p(1.0)
+            + 0.15 * 1.0
+        )
         assert math.isclose(score, expected, rel_tol=1e-6)
+
+    def test_specificity_prefers_attested_chunk_over_ambiguous_singletons(self):
+        evidence = WordEvidence(
+            word="NAZ",
+            variants_queried=["solo"],
+            direct_clusters=[
+                self._cluster("NAZ", cohesion=0.8, coverage=0.8),
+                self._cluster("NA", cohesion=0.8, coverage=0.8),
+                self._cluster("Z", cohesion=0.8, coverage=0.8),
+            ],
+            definition_counts={"NAZ": 1, "NA": 5, "Z": 2},
+        )
+
+        specific = self._decomp(["NAZ"], beam_score=1.0, residual_ratio=0.0)
+        ambiguous = self._decomp(["NA", "Z"], beam_score=1.0, residual_ratio=0.0)
+
+        specific_score = score_decomposition(specific, evidence)
+        ambiguous_score = score_decomposition(ambiguous, evidence)
+
+        assert specific_score > ambiguous_score
+
+    def test_definition_counts_drive_scoring_without_clusters(self):
+        evidence = WordEvidence(
+            word="NAZ",
+            variants_queried=["solo"],
+            definition_counts={"NAZ": 1, "NA": 6},
+        )
+
+        specific = self._decomp(["NAZ"], beam_score=0.0, residual_ratio=0.0)
+        ambiguous = self._decomp(["NA"], beam_score=0.0, residual_ratio=0.0)
+
+        specific_score = score_decomposition(specific, evidence)
+        ambiguous_score = score_decomposition(ambiguous, evidence)
+
+        assert specific_score > ambiguous_score
 
 
 class TestScoringWeights:
@@ -1272,6 +1343,8 @@ class TestScoringWeights:
             + weights.avg_cluster_quality
             + weights.residual_coverage
             + weights.acceptance_bonus
+            + weights.specificity_bonus
+            + weights.ambiguity_penalty
         )
         assert math.isclose(total, 1.0, rel_tol=1e-6)
 
@@ -1282,6 +1355,8 @@ class TestScoringWeights:
             avg_cluster_quality=5.0,
             residual_coverage=3.0,
             acceptance_bonus=2.0,
+            specificity_bonus=1.0,
+            ambiguity_penalty=4.0,
         )
         normalized = weights.normalized()
         total = (
@@ -1289,6 +1364,8 @@ class TestScoringWeights:
             + normalized.avg_cluster_quality
             + normalized.residual_coverage
             + normalized.acceptance_bonus
+            + normalized.specificity_bonus
+            + normalized.ambiguity_penalty
         )
         assert math.isclose(total, 1.0, rel_tol=1e-6)
 
@@ -1302,14 +1379,18 @@ class TestScoringWeights:
             avg_cluster_quality=0.0,
             residual_coverage=0.0,
             acceptance_bonus=0.0,
+            specificity_bonus=0.0,
+            ambiguity_penalty=0.0,
         )
         normalized = zero_weights.normalized()
 
-        # Should fall back to equal weights (0.25 each)
-        assert math.isclose(normalized.beam_prior, 0.25, rel_tol=1e-6)
-        assert math.isclose(normalized.avg_cluster_quality, 0.25, rel_tol=1e-6)
-        assert math.isclose(normalized.residual_coverage, 0.25, rel_tol=1e-6)
-        assert math.isclose(normalized.acceptance_bonus, 0.25, rel_tol=1e-6)
+        # Should fall back to equal weights (1/6 each)
+        assert math.isclose(normalized.beam_prior, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.avg_cluster_quality, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.residual_coverage, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.acceptance_bonus, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.specificity_bonus, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.ambiguity_penalty, 1 / 6, rel_tol=1e-6)
 
     def test_negative_weights_fallback_to_equal(self):
         """Negative weights should also trigger the equal weights fallback."""
@@ -1318,14 +1399,18 @@ class TestScoringWeights:
             avg_cluster_quality=-2.0,
             residual_coverage=-3.0,
             acceptance_bonus=-4.0,
+            specificity_bonus=-5.0,
+            ambiguity_penalty=-6.0,
         )
         normalized = negative_weights.normalized()
 
-        # Should fall back to equal weights (0.25 each)
-        assert math.isclose(normalized.beam_prior, 0.25, rel_tol=1e-6)
-        assert math.isclose(normalized.avg_cluster_quality, 0.25, rel_tol=1e-6)
-        assert math.isclose(normalized.residual_coverage, 0.25, rel_tol=1e-6)
-        assert math.isclose(normalized.acceptance_bonus, 0.25, rel_tol=1e-6)
+        # Should fall back to equal weights (1/6 each)
+        assert math.isclose(normalized.beam_prior, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.avg_cluster_quality, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.residual_coverage, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.acceptance_bonus, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.specificity_bonus, 1 / 6, rel_tol=1e-6)
+        assert math.isclose(normalized.ambiguity_penalty, 1 / 6, rel_tol=1e-6)
 
     def test_proportional_normalization(self):
         """Normalization should preserve proportions between weights."""
@@ -1334,6 +1419,8 @@ class TestScoringWeights:
             avg_cluster_quality=4.0,  # 4/6 = 2/3
             residual_coverage=0.0,
             acceptance_bonus=0.0,
+            specificity_bonus=0.0,
+            ambiguity_penalty=0.0,
         )
         normalized = weights.normalized()
 
@@ -1342,3 +1429,5 @@ class TestScoringWeights:
         assert math.isclose(normalized.avg_cluster_quality, 2.0 / 3.0, rel_tol=1e-6)
         assert math.isclose(normalized.residual_coverage, 0.0, rel_tol=1e-6)
         assert math.isclose(normalized.acceptance_bonus, 0.0, rel_tol=1e-6)
+        assert math.isclose(normalized.specificity_bonus, 0.0, rel_tol=1e-6)
+        assert math.isclose(normalized.ambiguity_penalty, 0.0, rel_tol=1e-6)
