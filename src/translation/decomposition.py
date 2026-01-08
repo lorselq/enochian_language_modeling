@@ -728,6 +728,9 @@ def _build_evidence_ngrams(
 
         key = normalized.lower()
         base_df = df_edge if edge_bonus else df_inner
+        existing_entries = candidate_finder.ngram_index.get(key, [])
+        if existing_entries:
+            extra.setdefault(key, []).extend(existing_entries)
 
         # Use definition counts to adjust DF for specificity:
         # - Fewer definitions = more specific = lower DF = higher IDF = better score
