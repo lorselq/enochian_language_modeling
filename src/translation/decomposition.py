@@ -140,6 +140,7 @@ class DecompositionEngine:
             evidence,
             candidate_finder=self.candidate_finder,
             definition_counts=definition_counts,
+            definition_glosses=definition_glosses,
             evidence_mode=evidence_mode,
         )
         diagnostics["extra_ngram_keys"] = len(extra_ngrams)
@@ -650,6 +651,7 @@ def _build_evidence_ngrams(
     *,
     candidate_finder: MorphemeCandidateFinder,
     definition_counts: dict[str, int] | None = None,
+    definition_glosses: dict[str, list[tuple[str, float | None]]] | None = None,
     evidence_mode: str | None = "all",
 ) -> dict[str, list[tuple[str, int, int]]]:
     """Build an extra ngram index based on evidence-backed morphs.
@@ -730,16 +732,17 @@ def _build_evidence_ngrams(
         # Use definition counts to adjust DF for specificity:
         # - Fewer definitions = more specific = lower DF = higher IDF = better score
         # - More definitions = more ambiguous = higher DF = lower IDF = worse score
+        def_count = 0
         if definition_counts:
             def_count = definition_counts.get(normalized, 0)
-            if def_count > 0:
-                # Scale DF by definition count: more defs = higher DF = lower score
-                # Use log scale to prevent extreme values
-                import math
-                specificity_factor = math.log1p(def_count)  # 1 def -> 0.69, 28 defs -> 3.37
-                df = max(1, int(base_df * (1 + specificity_factor)))
-            else:
-                df = base_df
+        if not def_count and definition_glosses:
+            def_count = len(definition_glosses.get(normalized, []))
+        if def_count > 0:
+            # Scale DF by definition count: more defs = higher DF = lower score
+            # Use log scale to prevent extreme values
+            import math
+            specificity_factor = math.log1p(def_count)  # 1 def -> 0.69, 28 defs -> 3.37
+            df = max(1, int(base_df * (1 + specificity_factor)))
         else:
             df = base_df
 
