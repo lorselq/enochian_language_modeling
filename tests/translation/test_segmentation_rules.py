@@ -46,6 +46,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
+from translation.decomposition import DecompositionEngine
+from translation.repository import ClusterRecord, WordEvidence
 
 
 class DummyVectors(dict):
@@ -64,6 +66,27 @@ class DummyVectors(dict):
 class DummyFasttext:
     def __init__(self) -> None:
         self.wv = DummyVectors()
+
+
+def _cluster(morph: str, *, cluster_id: int = 1) -> ClusterRecord:
+    return ClusterRecord(
+        variant="solo",
+        cluster_id=cluster_id,
+        run_id="r1",
+        ngram=morph,
+        cluster_index=0,
+        glossator_def={"definition": f"{morph} gloss"},
+        residual_explained=None,
+        residual_ratio=None,
+        residual_headline=None,
+        residual_focus_prompt=None,
+        semantic_coverage=None,
+        cohesion=None,
+        semantic_cohesion=None,
+        best_config=None,
+        residual_details=[],
+        raw_definitions=[],
+    )
 
 
 @pytest.fixture()
@@ -261,3 +284,34 @@ def test_multiple_decompositions_returned(
     # Parses should have different morph sequences
     unique_paths = {tuple(parse[0]) for parse in parses}
     assert len(unique_paths) >= 2, f"Expected diverse parses, got {unique_paths}"
+
+
+def test_attested_only_enumerator_respects_cluster_evidence(
+    tmp_path: Path, monkeypatched_fasttext: None
+) -> None:
+    tokens: list[str] = []
+    finder = _build_finder(tmp_path, tokens, min_n=1, beam_width=10)
+    engine = DecompositionEngine(finder)
+
+    evidence = WordEvidence(
+        word="NAZPSAD",
+        variants_queried=["solo"],
+        direct_clusters=[
+            _cluster("NAZ", cluster_id=1),
+            _cluster("P", cluster_id=2),
+            _cluster("SA", cluster_id=3),
+            _cluster("D", cluster_id=4),
+        ],
+    )
+
+    decompositions, _diagnostics = engine.generate_decompositions(
+        "NAZPSAD",
+        evidence,
+        evidence_mode="clusters-only",
+    )
+
+    paths = {tuple(decomp.morphs) for decomp in decompositions}
+    assert ("NAZ", "P", "SA", "D") in paths
+    for path in paths:
+        assert "ZPSAD" not in path
+        assert "NAZPSAD" not in path
