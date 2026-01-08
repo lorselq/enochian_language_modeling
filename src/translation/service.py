@@ -20,7 +20,16 @@ from enochian_lm.root_extraction.utils.embeddings import (
 )
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 
-from .decomposition import Decomposition, DecompositionEngine, apply_hard_filters
+from .decomposition import (
+    DEFAULT_MAX_FULL_SEGMENTATIONS,
+    DEFAULT_MAX_PARTIAL_PER_INDEX,
+    Decomposition,
+    DecompositionEngine,
+    apply_hard_filters,
+    _collect_attested_pieces,
+    build_decompositions_from_segmentations,
+    enumerate_attested_segmentations,
+)
 from .llm_synthesis import SynthesisResult, synthesize_definition
 from .repository import (
     ClusterRecord,
@@ -405,6 +414,7 @@ class SingleWordTranslationService:
         evidence_mode: EvidenceMode = EvidenceMode.CLUSTERS_ONLY,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
+        use_beam_search: bool = False,
     ) -> dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
 
@@ -509,11 +519,6 @@ class SingleWordTranslationService:
             # In clusters-only mode, only cluster evidence is used.
             self._apply_evidence_mode(evidence, mode=evidence_mode)
 
-            beam_width = getattr(self.candidate_finder, "beam_width", 10)
-            if beam_width is None:
-                beam_width = 10
-            n_best = max(top_k * 5, beam_width)
-
             # Fetch accepted definition counts for all possible substrings
             # This is used to penalize ambiguous morphs (many definitions) during beam search
             all_substrings = self._substring_candidates(
@@ -540,46 +545,108 @@ class SingleWordTranslationService:
             evidence.definition_counts = definition_counts
             evidence.definition_glosses = definition_glosses
 
-            # Two-pass decomposition: first with min_n=2 (chunky), then with min_n=1 (singletons)
-            # This ensures we generate both chunky and singleton-based decompositions
-            decompositions, diagnostics = (
-                self._decomposition_engine.generate_decompositions(
-                    normalized,
-                    evidence,
-                    allow_whole_word=allow_whole_word,
-                    n_best=n_best,
-                    definition_counts=definition_counts,
-                    definition_glosses=definition_glosses,
-                    evidence_mode=evidence_mode.value,
-                )
-            )
+            diagnostics: dict[str, object] = {
+                "fallback_used": False,
+                "fallback_morphs": [],
+                "parse_count": 0,
+                "decomposition_count": 0,
+                "extra_ngram_keys": 0,
+                "extra_ngram_entries": 0,
+                "dictionary_ngram_keys": 0,
+                "dictionary_ngram_entries": 0,
+                "dictionary_forced": False,
+            }
+            fallback_used = False
+            fallback_mode: str | None = None
 
-            # Second pass: generate singleton-enabled decompositions for all words
-            # Even short words like OD (O+D) or ITA (I+TA) can have meaningful singleton splits
-            singleton_decomps: list[Decomposition] = []
-            if self.candidate_finder.min_n > 1:
-                singleton_decomps, singleton_diag = self._with_min_n(
-                    1,
-                    self._decomposition_engine.generate_decompositions,
+            if use_beam_search:
+                beam_width = getattr(self.candidate_finder, "beam_width", 10)
+                if beam_width is None:
+                    beam_width = 10
+                n_best = max(top_k * 5, beam_width)
+                decompositions, diagnostics = (
+                    self._decomposition_engine.generate_decompositions(
+                        normalized,
+                        evidence,
+                        allow_whole_word=allow_whole_word,
+                        n_best=n_best,
+                        definition_counts=definition_counts,
+                        definition_glosses=definition_glosses,
+                        evidence_mode=evidence_mode.value,
+                    )
+                )
+            else:
+                attested_pieces = _collect_attested_pieces(
+                    evidence, evidence_mode=evidence_mode.value
+                )
+                max_partial = DEFAULT_MAX_PARTIAL_PER_INDEX
+                max_full = DEFAULT_MAX_FULL_SEGMENTATIONS
+                segmentations: list[list[str]] = []
+                fallback_segmentations: list[list[str]] = []
+                if len(normalized) >= 5:
+                    segmentations = enumerate_attested_segmentations(
+                        normalized,
+                        attested_pieces,
+                        max_partial_per_index=max_partial,
+                        max_full_segmentations=max_full,
+                        min_piece_len=2,
+                    )
+                    if not segmentations:
+                        fallback_used = True
+                        fallback_mode = "min_piece_len=1"
+                        fallback_segmentations = enumerate_attested_segmentations(
+                            normalized,
+                            attested_pieces,
+                            max_partial_per_index=max_partial,
+                            max_full_segmentations=max_full,
+                            min_piece_len=1,
+                        )
+                        segmentations = fallback_segmentations
+                else:
+                    segmentations = enumerate_attested_segmentations(
+                        normalized,
+                        attested_pieces,
+                        max_partial_per_index=max_partial,
+                        max_full_segmentations=max_full,
+                        min_piece_len=1,
+                    )
+                if not allow_whole_word and len(normalized) > 1:
+                    segmentations = [
+                        segmentation
+                        for segmentation in segmentations
+                        if not (
+                            len(segmentation) == 1
+                            and segmentation[0] == normalized
+                        )
+                    ]
+                    if fallback_segmentations:
+                        fallback_segmentations = [
+                            segmentation
+                            for segmentation in fallback_segmentations
+                            if not (
+                                len(segmentation) == 1
+                                and segmentation[0] == normalized
+                            )
+                        ]
+
+                decompositions = build_decompositions_from_segmentations(
                     normalized,
-                    evidence,
-                    allow_whole_word=allow_whole_word,
-                    n_best=n_best,
-                    definition_counts=definition_counts,
-                    definition_glosses=definition_glosses,
+                    segmentations,
+                    candidate_finder=self.candidate_finder,
+                    evidence=evidence,
                     evidence_mode=evidence_mode.value,
                 )
-                diagnostics["singleton_pass"] = {
-                    "used": True,
-                    "generated": len(singleton_decomps),
+                diagnostics["decomposition_count"] = len(decompositions)
+                diagnostics["fallback_used"] = fallback_used
+                diagnostics["enumerator"] = {
+                    "attested_piece_count": len(attested_pieces),
+                    "max_partial_per_index": max_partial,
+                    "max_full_segmentations": max_full,
+                    "segmentations": len(segmentations),
+                    "fallback_segmentations": len(fallback_segmentations),
+                    "fallback_used": fallback_used,
+                    "fallback_mode": fallback_mode,
                 }
-
-            # Merge decompositions from both passes
-            if singleton_decomps:
-                decompositions = self._merge_decompositions(
-                    decompositions, singleton_decomps
-                )
-                diagnostics["merged_count"] = len(decompositions)
             if decompositions:
                 morphs = {morph for decomp in decompositions for morph in decomp.morphs}
                 if morphs:
@@ -610,8 +677,6 @@ class SingleWordTranslationService:
                 evidence_mode=evidence_mode.value,
             )
             fallback_decompositions: list[Decomposition] = []
-            fallback_used = False
-            fallback_mode: str | None = None
             fallback_min_coverage: float | None = None
 
             ranked: list[tuple[Decomposition, float]] = []

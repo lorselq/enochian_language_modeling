@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from typing import Final, Literal, cast
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from collections.abc import Callable
 
@@ -21,6 +21,9 @@ from enochian_lm.root_extraction.utils.candidate_finder import (
 from .repository import WordEvidence
 
 LOGGER = logging.getLogger(__name__)
+
+DEFAULT_MAX_PARTIAL_PER_INDEX: Final[int] = 200
+DEFAULT_MAX_FULL_SEGMENTATIONS: Final[int] = 100
 
 
 @dataclass
@@ -272,6 +275,133 @@ def _build_breakdown(
         "coverage_ratio": coverage_ratio,
         "residual_ratio": 1.0 - coverage_ratio,
     }
+
+
+def _segment_rank_key(segments: Sequence[str]) -> tuple[object, ...]:
+    if not segments:
+        return (0, 0, (), ())
+    multi_char_coverage = sum(len(segment) for segment in segments if len(segment) > 1)
+    length_signature = tuple(-len(segment) for segment in segments)
+    return (
+        len(segments),
+        -multi_char_coverage,
+        length_signature,
+        tuple(segments),
+    )
+
+
+def _prune_segmentations(
+    segmentations: list[list[str]],
+    limit: int,
+) -> list[list[str]]:
+    if limit <= 0 or len(segmentations) <= limit:
+        return segmentations
+    return sorted(segmentations, key=_segment_rank_key)[:limit]
+
+
+def enumerate_attested_segmentations(
+    word: str,
+    attested_pieces: Iterable[str],
+    *,
+    max_partial_per_index: int,
+    max_full_segmentations: int,
+    min_piece_len: int = 1,
+) -> list[list[str]]:
+    """Enumerate full-cover segmentations using attested pieces only."""
+    if not word:
+        return []
+
+    normalized = word.upper()
+    pieces: list[str] = sorted(
+        {
+            normalized_piece
+            for piece in attested_pieces
+            if piece
+            and (normalized_piece := piece.strip().upper())
+            and len(normalized_piece) >= min_piece_len
+            and normalized_piece in normalized
+        },
+        key=lambda item: (-len(item), item),
+    )
+    if not pieces:
+        return []
+
+    segmentations: list[list[str]] = []
+    partials_by_index: dict[int, list[list[str]]] = {0: [[]]}
+
+    for index in range(len(normalized)):
+        partials = partials_by_index.get(index)
+        if not partials:
+            continue
+        next_indices: set[int] = set()
+        for partial in sorted(partials, key=_segment_rank_key):
+            for piece in pieces:
+                if not normalized.startswith(piece, index):
+                    continue
+                next_index = index + len(piece)
+                new_path = partial + [piece]
+                if next_index == len(normalized):
+                    segmentations.append(new_path)
+                    segmentations = _prune_segmentations(
+                        segmentations, max_full_segmentations
+                    )
+                else:
+                    partials_by_index.setdefault(next_index, []).append(new_path)
+                    next_indices.add(next_index)
+        for next_index in next_indices:
+            partials_by_index[next_index] = _prune_segmentations(
+                partials_by_index[next_index], max_partial_per_index
+            )
+
+    return _prune_segmentations(segmentations, max_full_segmentations)
+
+
+def build_decompositions_from_segmentations(
+    word: str,
+    segmentations: Iterable[Sequence[str]],
+    *,
+    candidate_finder: MorphemeCandidateFinder,
+    evidence: WordEvidence,
+    evidence_mode: str | None = "all",
+) -> list[Decomposition]:
+    decompositions: list[Decomposition] = []
+    normalized = word.upper()
+    support_lookup = _build_support_lookup(evidence, evidence_mode=evidence_mode)
+
+    for segmentation in segmentations:
+        morphs = [segment.upper() for segment in segmentation if segment]
+        if not morphs:
+            continue
+        cursor = 0
+        coverage: list[CoverageSegment] = []
+        for morph in morphs:
+            start = cursor
+            end = cursor + len(morph)
+            coverage.append(
+                {
+                    "start": start,
+                    "end": end,
+                    "ngram": morph,
+                    "canonical": morph,
+                }
+            )
+            cursor = end
+        breakdown = _build_breakdown(candidate_finder, normalized, coverage)
+        morph_support = {
+            morph: _classify_support(morph, support_lookup) for morph in morphs
+        }
+        decompositions.append(
+            Decomposition(
+                morphs=morphs,
+                canonicals=list(morphs),
+                beam_score=0.0,
+                breakdown=breakdown,
+                morph_support=morph_support,
+            )
+        )
+
+    _normalize_beam_scores(decompositions)
+    return decompositions
 
 
 def _segment_tokens(
