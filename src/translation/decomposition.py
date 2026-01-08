@@ -131,9 +131,6 @@ class DecompositionEngine:
         if not word:
             return [], diagnostics
 
-        normalized_evidence_mode = _normalize_evidence_mode(evidence_mode)
-        attested_only = normalized_evidence_mode != "all"
-
         normalized = word.upper()
         extra_ngrams = _build_evidence_ngrams(
             normalized,
@@ -141,65 +138,24 @@ class DecompositionEngine:
             candidate_finder=self.candidate_finder,
             definition_counts=definition_counts,
             evidence_mode=evidence_mode,
-            attested_only=attested_only,
         )
         diagnostics["extra_ngram_keys"] = len(extra_ngrams)
         diagnostics["extra_ngram_entries"] = sum(
             len(entries) for entries in extra_ngrams.values()
         )
-        dictionary_ngrams: dict[str, list[tuple[str, int, int]]] = {}
-        if force_dictionary and not attested_only:
-            dictionary_ngrams = _build_dictionary_ngrams(
-                normalized, candidate_finder=self.candidate_finder
-            )
-            diagnostics["dictionary_ngram_keys"] = len(dictionary_ngrams)
-            diagnostics["dictionary_ngram_entries"] = sum(
-                len(entries) for entries in dictionary_ngrams.values()
-            )
-
-        merged = (
-            _merge_ngrams(extra_ngrams, dictionary_ngrams)
-            if dictionary_ngrams
-            else extra_ngrams
-        )
         parses = self.candidate_finder.segment_target(
             normalized,
-            extra_ngrams=merged,
+            extra_ngrams=extra_ngrams,
             n_best=n_best,
             definition_counts=definition_counts,
             definition_glosses=definition_glosses,
-            restrict_to_attested=attested_only,
+            restrict_to_attested=True,
         )
         diagnostics["parse_count"] = len(parses)
 
-        if not parses and not force_dictionary and not attested_only:
-            dictionary_ngrams = _build_dictionary_ngrams(
-                normalized, candidate_finder=self.candidate_finder
-            )
-            diagnostics["dictionary_ngram_keys"] = len(dictionary_ngrams)
-            diagnostics["dictionary_ngram_entries"] = sum(
-                len(entries) for entries in dictionary_ngrams.values()
-            )
-            if dictionary_ngrams:
-                merged = _merge_ngrams(extra_ngrams, dictionary_ngrams)
-                parses = self.candidate_finder.segment_target(
-                    normalized,
-                    extra_ngrams=merged,
-                    n_best=n_best,
-                    definition_counts=definition_counts,
-                    definition_glosses=definition_glosses,
-                    restrict_to_attested=attested_only,
-                )
-                diagnostics["parse_count"] = len(parses)
-                if parses:
-                    diagnostics["fallback_used"] = True
-                    diagnostics["fallback_morphs"] = sorted(
-                        {
-                            canon
-                            for entries in dictionary_ngrams.values()
-                            for canon, _, _ in entries
-                        }
-                    )
+        if not parses and not force_dictionary:
+            diagnostics["dictionary_ngram_keys"] = 0
+            diagnostics["dictionary_ngram_entries"] = 0
 
         decompositions: list[Decomposition] = []
 
@@ -534,7 +490,6 @@ def _build_evidence_ngrams(
     candidate_finder: MorphemeCandidateFinder,
     definition_counts: dict[str, int] | None = None,
     evidence_mode: str | None = "all",
-    attested_only: bool = False,
 ) -> dict[str, list[tuple[str, int, int]]]:
     """Build an extra ngram index based on evidence-backed morphs.
 
@@ -545,13 +500,9 @@ def _build_evidence_ngrams(
       except when the 1-char morph is explicitly dictionary-backed.
     """
 
-    attested_pieces = _collect_attested_pieces(evidence, evidence_mode=evidence_mode)
-    morphs: set[str] = set(attested_pieces)
-    if not attested_only:
-        morphs.update(hypothesis.morph for hypothesis in evidence.morph_hypotheses)
-        morphs.update(attested.source_word for attested in evidence.attested_definitions)
-        morphs.update(attested.root_ngram for attested in evidence.attested_definitions)
-        morphs.update(evidence.dictionary_morphs.keys())
+    morphs: set[str] = set(
+        _collect_attested_pieces(evidence, evidence_mode=evidence_mode)
+    )
 
     if not morphs or not word:
         return {}
@@ -583,8 +534,6 @@ def _build_evidence_ngrams(
             continue
         if len(normalized) < min_len:
             if len(normalized) != 1:
-                continue
-            if not attested_only and normalized not in evidence.dictionary_morphs:
                 continue
         if len(normalized) > max_len:
             continue
