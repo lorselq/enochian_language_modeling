@@ -299,17 +299,22 @@ def _prune_segmentations(
     return sorted(segmentations, key=_segment_rank_key)[:limit]
 
 
-def enumerate_attested_segmentations(
+def enumerate_attested_segmentations_with_diagnostics(
     word: str,
     attested_pieces: Iterable[str],
     *,
     max_partial_per_index: int,
     max_full_segmentations: int,
     min_piece_len: int = 1,
-) -> list[list[str]]:
+) -> tuple[list[list[str]], dict[str, int]]:
     """Enumerate full-cover segmentations using attested pieces only."""
+    diagnostics = {
+        "enumerated_full_count": 0,
+        "enumerated_full_returned": 0,
+        "enumerated_partial_pruned_count": 0,
+    }
     if not word:
-        return []
+        return [], diagnostics
 
     normalized = word.upper()
     pieces: list[str] = sorted(
@@ -324,7 +329,7 @@ def enumerate_attested_segmentations(
         key=lambda item: (-len(item), item),
     )
     if not pieces:
-        return []
+        return [], diagnostics
 
     segmentations: list[list[str]] = []
     partials_by_index: dict[int, list[list[str]]] = {0: [[]]}
@@ -341,6 +346,7 @@ def enumerate_attested_segmentations(
                 next_index = index + len(piece)
                 new_path = partial + [piece]
                 if next_index == len(normalized):
+                    diagnostics["enumerated_full_count"] += 1
                     segmentations.append(new_path)
                     segmentations = _prune_segmentations(
                         segmentations, max_full_segmentations
@@ -349,11 +355,36 @@ def enumerate_attested_segmentations(
                     partials_by_index.setdefault(next_index, []).append(new_path)
                     next_indices.add(next_index)
         for next_index in next_indices:
+            before = len(partials_by_index[next_index])
             partials_by_index[next_index] = _prune_segmentations(
                 partials_by_index[next_index], max_partial_per_index
             )
+            diagnostics["enumerated_partial_pruned_count"] += (
+                before - len(partials_by_index[next_index])
+            )
 
-    return _prune_segmentations(segmentations, max_full_segmentations)
+    segmentations = _prune_segmentations(segmentations, max_full_segmentations)
+    diagnostics["enumerated_full_returned"] = len(segmentations)
+    return segmentations, diagnostics
+
+
+def enumerate_attested_segmentations(
+    word: str,
+    attested_pieces: Iterable[str],
+    *,
+    max_partial_per_index: int,
+    max_full_segmentations: int,
+    min_piece_len: int = 1,
+) -> list[list[str]]:
+    """Enumerate full-cover segmentations using attested pieces only."""
+    segmentations, _ = enumerate_attested_segmentations_with_diagnostics(
+        word,
+        attested_pieces,
+        max_partial_per_index=max_partial_per_index,
+        max_full_segmentations=max_full_segmentations,
+        min_piece_len=min_piece_len,
+    )
+    return segmentations
 
 
 def build_decompositions_from_segmentations(
@@ -845,6 +876,9 @@ def apply_hard_filters(
     if not decompositions:
         return [], {
             "stage1_dropped": 0,
+            "stage1_drops_total": 0,
+            "stage1_drops_missing_support": 0,
+            "stage1_drops_other_reasons": 0,
             "stage2_dropped": 0,
             "stage3_dropped": 0,
             "unsupported_morphs": [],
@@ -869,6 +903,9 @@ def apply_hard_filters(
     # Build diagnostics dict - counters will be updated before return
     diagnostics: dict[str, object] = {
         "stage1_dropped": 0,
+        "stage1_drops_total": 0,
+        "stage1_drops_missing_support": 0,
+        "stage1_drops_other_reasons": 0,
         "stage2_dropped": 0,
         "stage3_dropped": 0,
         "unsupported_morphs": [],
@@ -885,6 +922,9 @@ def apply_hard_filters(
     def _finalize_diagnostics() -> None:
         """Update diagnostics dict with final counter values."""
         diagnostics["stage1_dropped"] = stage1_dropped
+        diagnostics["stage1_drops_total"] = stage1_dropped
+        diagnostics["stage1_drops_missing_support"] = stage1_dropped
+        diagnostics["stage1_drops_other_reasons"] = 0
         diagnostics["stage2_dropped"] = stage2_dropped
         diagnostics["stage3_dropped"] = stage3_dropped
 
