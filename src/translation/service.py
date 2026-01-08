@@ -28,7 +28,7 @@ from .decomposition import (
     apply_hard_filters,
     _collect_attested_pieces,
     build_decompositions_from_segmentations,
-    enumerate_attested_segmentations,
+    enumerate_attested_segmentations_with_diagnostics,
 )
 from .llm_synthesis import SynthesisResult, synthesize_definition
 from .repository import (
@@ -545,6 +545,13 @@ class SingleWordTranslationService:
             evidence.definition_counts = definition_counts
             evidence.definition_glosses = definition_glosses
 
+            attested_pieces = _collect_attested_pieces(
+                evidence, evidence_mode=evidence_mode.value
+            )
+            attested_pieces_sample = sorted(
+                attested_pieces, key=lambda piece: (-len(piece), piece)
+            )[:25]
+
             diagnostics: dict[str, object] = {
                 "fallback_used": False,
                 "fallback_morphs": [],
@@ -558,6 +565,15 @@ class SingleWordTranslationService:
             }
             fallback_used = False
             fallback_mode: str | None = None
+            enumerator_enabled = not use_beam_search
+            enumerator_params: dict[str, int] | None = None
+            enumerated_full_count = 0
+            enumerated_full_returned = 0
+            enumerated_partial_pruned_count = 0
+            fallback_used_enum = "none"
+            fallback_reason: str | None = None
+            attested_only_guarantee = False
+            unsupported_morphs_in_generated: list[str] = []
 
             if use_beam_search:
                 beam_width = getattr(self.candidate_finder, "beam_width", 10)
@@ -576,40 +592,48 @@ class SingleWordTranslationService:
                     )
                 )
             else:
-                attested_pieces = _collect_attested_pieces(
-                    evidence, evidence_mode=evidence_mode.value
-                )
                 max_partial = DEFAULT_MAX_PARTIAL_PER_INDEX
                 max_full = DEFAULT_MAX_FULL_SEGMENTATIONS
                 segmentations: list[list[str]] = []
-                fallback_segmentations: list[list[str]] = []
-                if len(normalized) >= 5:
-                    segmentations = enumerate_attested_segmentations(
+                min_piece_len = 2 if len(normalized) >= 5 else 1
+                attested_only_guarantee = True
+                segmentations, enumerator_diag = (
+                    enumerate_attested_segmentations_with_diagnostics(
                         normalized,
                         attested_pieces,
                         max_partial_per_index=max_partial,
                         max_full_segmentations=max_full,
-                        min_piece_len=2,
+                        min_piece_len=min_piece_len,
                     )
-                    if not segmentations:
-                        fallback_used = True
-                        fallback_mode = "min_piece_len=1"
-                        fallback_segmentations = enumerate_attested_segmentations(
+                )
+                enumerated_full_count = enumerator_diag["enumerated_full_count"]
+                enumerated_partial_pruned_count = enumerator_diag[
+                    "enumerated_partial_pruned_count"
+                ]
+                if min_piece_len == 2 and not segmentations:
+                    fallback_used = True
+                    fallback_used_enum = "min_piece_len_lowered"
+                    fallback_reason = "no_full_cover_with_min_piece_len=2"
+                    fallback_mode = "min_piece_len=1"
+                    min_piece_len = 1
+                    segmentations, enumerator_diag = (
+                        enumerate_attested_segmentations_with_diagnostics(
                             normalized,
                             attested_pieces,
                             max_partial_per_index=max_partial,
                             max_full_segmentations=max_full,
-                            min_piece_len=1,
+                            min_piece_len=min_piece_len,
                         )
-                        segmentations = fallback_segmentations
-                else:
-                    segmentations = enumerate_attested_segmentations(
-                        normalized,
-                        attested_pieces,
-                        max_partial_per_index=max_partial,
-                        max_full_segmentations=max_full,
-                        min_piece_len=1,
                     )
+                    enumerated_full_count = enumerator_diag["enumerated_full_count"]
+                    enumerated_partial_pruned_count = enumerator_diag[
+                        "enumerated_partial_pruned_count"
+                    ]
+                enumerator_params = {
+                    "max_partial_per_index": max_partial,
+                    "max_full_segmentations": max_full,
+                    "min_piece_len": min_piece_len,
+                }
                 if not allow_whole_word and len(normalized) > 1:
                     segmentations = [
                         segmentation
@@ -619,15 +643,28 @@ class SingleWordTranslationService:
                             and segmentation[0] == normalized
                         )
                     ]
-                    if fallback_segmentations:
-                        fallback_segmentations = [
-                            segmentation
-                            for segmentation in fallback_segmentations
-                            if not (
-                                len(segmentation) == 1
-                                and segmentation[0] == normalized
-                            )
-                        ]
+                enumerated_full_returned = len(segmentations)
+                if not segmentations:
+                    fallback_used = True
+                    fallback_used_enum = "no_full_cover"
+                    fallback_reason = (
+                        f"no_full_cover_with_min_piece_len={min_piece_len}"
+                    )
+                    fallback_mode = "no_full_cover"
+
+                unsupported_morphs_in_generated = sorted(
+                    {
+                        morph
+                        for segmentation in segmentations
+                        for morph in segmentation
+                        if morph not in attested_pieces
+                    }
+                )
+                if attested_only_guarantee and unsupported_morphs_in_generated:
+                    raise RuntimeError(
+                        "Attested-only enumeration produced unsupported morphs: "
+                        f"{unsupported_morphs_in_generated}"
+                    )
 
                 decompositions = build_decompositions_from_segmentations(
                     normalized,
@@ -640,12 +677,30 @@ class SingleWordTranslationService:
                 diagnostics["fallback_used"] = fallback_used
                 diagnostics["enumerator"] = {
                     "attested_piece_count": len(attested_pieces),
-                    "max_partial_per_index": max_partial,
-                    "max_full_segmentations": max_full,
-                    "segmentations": len(segmentations),
-                    "fallback_segmentations": len(fallback_segmentations),
-                    "fallback_used": fallback_used,
-                    "fallback_mode": fallback_mode,
+                    "attested_pieces_sample": attested_pieces_sample,
+                    "enumerator_enabled": enumerator_enabled,
+                    "enumerator_params": enumerator_params,
+                    "enumerated_full_count": enumerated_full_count,
+                    "enumerated_full_returned": enumerated_full_returned,
+                    "enumerated_partial_pruned_count": enumerated_partial_pruned_count,
+                    "fallback_used": fallback_used_enum,
+                    "fallback_reason": fallback_reason,
+                    "attested_only_guarantee": attested_only_guarantee,
+                    "unsupported_morphs_in_generated": unsupported_morphs_in_generated,
+                }
+            if "enumerator" not in diagnostics:
+                diagnostics["enumerator"] = {
+                    "attested_piece_count": len(attested_pieces),
+                    "attested_pieces_sample": attested_pieces_sample,
+                    "enumerator_enabled": enumerator_enabled,
+                    "enumerator_params": enumerator_params,
+                    "enumerated_full_count": enumerated_full_count,
+                    "enumerated_full_returned": enumerated_full_returned,
+                    "enumerated_partial_pruned_count": enumerated_partial_pruned_count,
+                    "fallback_used": fallback_used_enum,
+                    "fallback_reason": fallback_reason,
+                    "attested_only_guarantee": attested_only_guarantee,
+                    "unsupported_morphs_in_generated": unsupported_morphs_in_generated,
                 }
             if decompositions:
                 morphs = {morph for decomp in decompositions for morph in decomp.morphs}
@@ -676,6 +731,35 @@ class SingleWordTranslationService:
                 evidence,
                 evidence_mode=evidence_mode.value,
             )
+            stage1_drops_total = int(
+                filter_diagnostics.get(
+                    "stage1_drops_total",
+                    filter_diagnostics.get("stage1_dropped", 0),
+                )
+            )
+            stage1_drops_missing_support = int(
+                filter_diagnostics.get(
+                    "stage1_drops_missing_support", stage1_drops_total
+                )
+            )
+            stage1_drops_other_reasons = int(
+                filter_diagnostics.get(
+                    "stage1_drops_other_reasons",
+                    max(0, stage1_drops_total - stage1_drops_missing_support),
+                )
+            )
+            diagnostics["hard_filter_stage1_drops_total"] = stage1_drops_total
+            diagnostics["hard_filter_stage1_drops_missing_support"] = (
+                stage1_drops_missing_support
+            )
+            diagnostics["hard_filter_stage1_drops_other_reasons"] = (
+                stage1_drops_other_reasons
+            )
+            if attested_only_guarantee and stage1_drops_missing_support:
+                raise RuntimeError(
+                    "Attested-only enumeration dropped candidates for missing morph "
+                    f"support: {stage1_drops_missing_support}"
+                )
             fallback_decompositions: list[Decomposition] = []
             fallback_min_coverage: float | None = None
 
