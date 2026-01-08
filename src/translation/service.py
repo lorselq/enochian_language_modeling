@@ -576,6 +576,8 @@ class SingleWordTranslationService:
             fallback_reason: str | None = None
             attested_only_guarantee = False
             unsupported_morphs_in_generated: list[str] = []
+            beam_scoring_applied = False
+            beam_scoring_parse_count = 0
 
             if use_beam_search:
                 beam_width = getattr(self.candidate_finder, "beam_width", 10)
@@ -691,6 +693,8 @@ class SingleWordTranslationService:
                         definition_glosses=definition_glosses,
                         restrict_to_attested=True,
                     )
+                    beam_scoring_applied = True
+                    beam_scoring_parse_count = len(parses)
                     beam_scores: dict[tuple[str, ...], float] = {}
                     for _path, score, _ngram_scores, coverage in parses:
                         if not coverage:
@@ -723,6 +727,8 @@ class SingleWordTranslationService:
                     "fallback_reason": fallback_reason,
                     "attested_only_guarantee": attested_only_guarantee,
                     "unsupported_morphs_in_generated": unsupported_morphs_in_generated,
+                    "beam_scoring_applied": beam_scoring_applied,
+                    "beam_scoring_parse_count": beam_scoring_parse_count,
                 }
             if "enumerator" not in diagnostics:
                 diagnostics["enumerator"] = {
@@ -737,6 +743,8 @@ class SingleWordTranslationService:
                     "fallback_reason": fallback_reason,
                     "attested_only_guarantee": attested_only_guarantee,
                     "unsupported_morphs_in_generated": unsupported_morphs_in_generated,
+                    "beam_scoring_applied": beam_scoring_applied,
+                    "beam_scoring_parse_count": beam_scoring_parse_count,
                 }
             if decompositions:
                 morphs = {morph for decomp in decompositions for morph in decomp.morphs}
