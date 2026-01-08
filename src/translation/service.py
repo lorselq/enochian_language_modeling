@@ -27,8 +27,10 @@ from .decomposition import (
     DecompositionEngine,
     apply_hard_filters,
     _collect_attested_pieces,
+    _build_evidence_ngrams,
     build_decompositions_from_segmentations,
     enumerate_attested_segmentations_with_diagnostics,
+    _normalize_beam_scores,
 )
 from .llm_synthesis import SynthesisResult, synthesize_definition
 from .repository import (
@@ -673,6 +675,40 @@ class SingleWordTranslationService:
                     evidence=evidence,
                     evidence_mode=evidence_mode.value,
                 )
+                if decompositions:
+                    extra_ngrams = _build_evidence_ngrams(
+                        normalized,
+                        evidence,
+                        candidate_finder=self.candidate_finder,
+                        definition_counts=definition_counts,
+                        definition_glosses=definition_glosses,
+                        evidence_mode=evidence_mode.value,
+                    )
+                    parses = self.candidate_finder.segment_target(
+                        normalized,
+                        extra_ngrams=extra_ngrams,
+                        definition_counts=definition_counts,
+                        definition_glosses=definition_glosses,
+                        restrict_to_attested=True,
+                    )
+                    beam_scores: dict[tuple[str, ...], float] = {}
+                    for _path, score, _ngram_scores, coverage in parses:
+                        if not coverage:
+                            continue
+                        morphs: list[str] = []
+                        for segment in coverage:
+                            ngram = segment.get("ngram")
+                            if isinstance(ngram, str) and ngram:
+                                morphs.append(ngram.upper())
+                        if not morphs:
+                            continue
+                        key = tuple(morphs)
+                        existing = beam_scores.get(key)
+                        if existing is None or score > existing:
+                            beam_scores[key] = float(score)
+                    for decomp in decompositions:
+                        decomp.beam_score = beam_scores.get(tuple(decomp.morphs), 0.0)
+                    _normalize_beam_scores(decompositions)
                 diagnostics["decomposition_count"] = len(decompositions)
                 diagnostics["fallback_used"] = fallback_used
                 diagnostics["enumerator"] = {
