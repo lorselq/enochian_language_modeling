@@ -9,6 +9,7 @@ import math
 import numpy as np
 
 from enochian_lm.common.types import FastTextModel, MaybeNumber, Vector
+from enochian_lm.root_extraction.utils.embeddings import cluster_definitions, get_sentence_transformer
 from .decomposition import Decomposition
 from .repository import (
     ClusterRecord,
@@ -33,6 +34,7 @@ class ScoringWeights:
     acceptance_bonus: float = 0.15
     specificity_bonus: float = 0.15  # Reward morphs with fewer definitions
     ambiguity_penalty: float = 0.10  # Penalize morphs with many definitions
+    definition_coherence: float = 0.10  # Reward coherent definition clusters
 
     def normalized(self) -> "ScoringWeights":
         total = (
@@ -42,11 +44,14 @@ class ScoringWeights:
             + self.acceptance_bonus
             + self.specificity_bonus
             + self.ambiguity_penalty
+            + self.definition_coherence
         )
         if total <= 0:
             # Fall back to equal weights to avoid division by zero and keep the
             # scoring function usable.
-            return ScoringWeights(1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6, 1 / 6)
+            return ScoringWeights(
+                1 / 7, 1 / 7, 1 / 7, 1 / 7, 1 / 7, 1 / 7, 1 / 7
+            )
 
         scale = 1.0 / total
         return ScoringWeights(
@@ -56,6 +61,7 @@ class ScoringWeights:
             acceptance_bonus=self.acceptance_bonus * scale,
             specificity_bonus=self.specificity_bonus * scale,
             ambiguity_penalty=self.ambiguity_penalty * scale,
+            definition_coherence=self.definition_coherence * scale,
         )
 
 
@@ -76,6 +82,7 @@ def score_decomposition(
       with the morphs (weighted 1.0 / 0.5 / 0.3).
     - specificity_bonus: rewards morphs with fewer definitions (more specific).
     - ambiguity_penalty: penalizes morphs with many accepted definitions.
+    - definition_coherence: rewards clustered, complementary definition glosses.
     """
 
     components = _score_components(decomp, evidence)
@@ -171,6 +178,11 @@ def _score_components(
         definition_counts,
     )
 
+    definition_coherence = _definition_coherence_score(
+        decomp.morphs,
+        evidence.definition_glosses,
+    )
+
     return {
         "beam_prior": beam_prior,
         "avg_cluster_quality": avg_cluster_quality,
@@ -178,6 +190,7 @@ def _score_components(
         "acceptance_bonus": acceptance,
         "specificity_bonus": specificity,
         "ambiguity_penalty": ambiguity,
+        "definition_coherence": definition_coherence,
     }
 
 
@@ -189,6 +202,7 @@ def _weighted_score(components: dict[str, float], weights: ScoringWeights) -> fl
         + weights.acceptance_bonus * components["acceptance_bonus"]
         + weights.specificity_bonus * components["specificity_bonus"]
         - weights.ambiguity_penalty * components["ambiguity_penalty"]
+        + weights.definition_coherence * components["definition_coherence"]
     )
 
 
@@ -200,6 +214,7 @@ def _unweighted_score(components: dict[str, float]) -> float:
         + components["acceptance_bonus"]
         + components["specificity_bonus"]
         - components["ambiguity_penalty"]
+        + components["definition_coherence"]
     )
 
 
@@ -215,6 +230,7 @@ def _score_breakdown(
             "acceptance_bonus": 1.0,
             "specificity_bonus": 1.0,
             "ambiguity_penalty": 1.0,
+            "definition_coherence": 1.0,
         }
     else:
         weights_payload = {
@@ -224,6 +240,7 @@ def _score_breakdown(
             "acceptance_bonus": weights.acceptance_bonus,
             "specificity_bonus": weights.specificity_bonus,
             "ambiguity_penalty": weights.ambiguity_penalty,
+            "definition_coherence": weights.definition_coherence,
         }
 
     weighted = {
@@ -242,6 +259,9 @@ def _score_breakdown(
         ),
         "ambiguity_penalty": -weights_payload["ambiguity_penalty"]
         * components["ambiguity_penalty"],
+        "definition_coherence": (
+            weights_payload["definition_coherence"] * components["definition_coherence"]
+        ),
     }
 
     total = sum(weighted.values())
@@ -444,6 +464,94 @@ def _ambiguity_penalty(
         weighted_penalty += len(morph) * penalty
 
     return weighted_penalty / float(total_len)
+
+
+def _definition_coherence_score(
+    morphs: Iterable[str],
+    definition_glosses: dict[str, list[tuple[str, float | None]]] | None,
+) -> float:
+    if not definition_glosses:
+        return 0.0
+
+    morph_list = [m.upper() for m in morphs]
+    if not morph_list:
+        return 0.0
+
+    embedder = get_sentence_transformer("paraphrase-MiniLM-L6-v2")
+    morph_scores: list[float] = []
+    centroid_vectors: list[np.ndarray] = []
+
+    for morph in morph_list:
+        glosses = definition_glosses.get(morph, [])
+        definitions: list[str] = []
+        scores: list[float] = []
+        for definition, score in glosses:
+            if not isinstance(definition, str):
+                continue
+            cleaned = definition.strip()
+            if not cleaned:
+                continue
+            definitions.append(cleaned)
+            scores.append(float(score) if isinstance(score, (int, float)) else 0.0)
+
+        if not definitions:
+            continue
+
+        if len(definitions) == 1:
+            morph_scores.append(0.2)
+            representative = definitions[0]
+        else:
+            clusters = cluster_definitions(
+                definitions,
+                model=embedder,
+                scores=scores,
+                similarity_threshold=0.8,
+            )
+            total = len(definitions)
+            cluster_sizes = [len(cluster.get("members", [])) for cluster in clusters]
+            max_ratio = max(cluster_sizes) / float(total) if cluster_sizes else 0.0
+            cohesion = 1.0 - ((len(cluster_sizes) - 1) / float(total - 1))
+            coverage_boost = min(1.0, math.log1p(total) / math.log1p(5))
+            morph_scores.append((0.7 * max_ratio + 0.3 * cohesion) * coverage_boost)
+
+            representative = definitions[0]
+            if cluster_sizes:
+                best_index = cluster_sizes.index(max(cluster_sizes))
+                rep_idx = clusters[best_index].get("representative", 0)
+                if isinstance(rep_idx, int) and 0 <= rep_idx < len(definitions):
+                    representative = definitions[rep_idx]
+
+        encoded = embedder.encode(representative, normalize_embeddings=True)
+        centroid_vectors.append(np.array(encoded, dtype=float))
+
+    if not morph_scores:
+        return 0.0
+
+    base_score = sum(morph_scores) / float(len(morph_scores))
+
+    complementarity = 0.0
+    if len(centroid_vectors) >= 2:
+        sims: list[float] = []
+        target = 0.35
+        span = 0.65
+        for i in range(len(centroid_vectors)):
+            for j in range(i + 1, len(centroid_vectors)):
+                similarity = float(np.dot(centroid_vectors[i], centroid_vectors[j]))
+                value = 1.0 - abs(similarity - target) / span
+                sims.append(max(0.0, min(1.0, value)))
+        if sims:
+            complementarity = sum(sims) / float(len(sims))
+
+    singleton_count = sum(1 for morph in morph_list if len(morph) == 1)
+    total_len = sum(len(morph) for morph in morph_list)
+    penalty = 0.0
+    if total_len >= 5 and singleton_count >= 3:
+        penalty = 0.02 * (singleton_count - 2)
+        if complementarity < 0.2:
+            penalty += 0.05 * (0.2 - complementarity)
+
+    score = base_score + 0.3 * complementarity - penalty
+    return max(-1.0, min(1.0, score))
 
 
 # ---------------------------------------------------------------------------
