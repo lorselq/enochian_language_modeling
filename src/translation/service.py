@@ -37,6 +37,7 @@ from .llm_synthesis import (
     SynthesisResult,
     synthesize_consensus,
     synthesize_definition,
+    DEFAULT_LLM_CONTEXT,
 )
 from .repository import (
     ClusterRecord,
@@ -417,6 +418,7 @@ class SingleWordTranslationService:
         strategy: str = "prefer-balance",
         top_k: int = 3,
         llm: bool | None = None,
+        llm_context: str | None = None,
         fallback_top_n: int = 5,
         evidence_mode: EvidenceMode = EvidenceMode.CLUSTERS_ONLY,
         weight_enabled: bool = True,
@@ -466,6 +468,7 @@ class SingleWordTranslationService:
                         if llm_enabled
                         else None
                     ),
+                    "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "candidates": [],
                     "evidence": {},
@@ -885,6 +888,7 @@ class SingleWordTranslationService:
                 evidence=evidence,
                 strategy=strategy,
                 llm_enabled=llm_enabled,
+                llm_context=llm_context,
             )
             consensus_payload: dict[str, object] | None = None
             if llm_enabled and len(enriched) > 1:
@@ -892,6 +896,7 @@ class SingleWordTranslationService:
                     enriched,
                     strategy=strategy,
                     llm_use_remote=self.llm_use_remote,
+                    llm_context=llm_context,
                 )
 
             return {
@@ -908,6 +913,7 @@ class SingleWordTranslationService:
                     if llm_enabled
                     else None
                 ),
+                "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "candidates": enriched,
                 "consensus_synthesis": consensus_payload,
@@ -949,6 +955,7 @@ class SingleWordTranslationService:
         evidence: WordEvidence,
         strategy: str,
         llm_enabled: bool,
+        llm_context: str | None,
     ) -> list[dict[str, object]]:
         enriched: list[dict[str, object]] = []
         for idx, candidate in enumerate(candidates):
@@ -988,6 +995,7 @@ class SingleWordTranslationService:
                     "provenance": meanings,
                     "variants": evidence.variants_queried,
                     "use_remote": self.llm_use_remote,
+                    "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
                 }
                 synthesis = self.llm_adapter(
                     morphs,
@@ -1026,6 +1034,7 @@ class SingleWordTranslationService:
         *,
         strategy: str,
         llm_use_remote: bool,
+        llm_context: str | None,
     ) -> dict[str, object]:
         coverage_values: list[float] = []
         residual_values: list[float] = []
@@ -1048,6 +1057,7 @@ class SingleWordTranslationService:
             if residual_values
             else 1.0,
             "use_remote": llm_use_remote,
+            "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
         }
         synthesis = synthesize_consensus(candidates, context)
         return synthesis.as_dict()
