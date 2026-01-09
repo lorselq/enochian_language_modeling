@@ -19,6 +19,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from enochian_lm.common.config import get_config_paths
 
+from .llm_synthesis import DEFAULT_LLM_CONTEXT
 from .service import InterpretationService, SingleWordTranslationService
 
 INTERPRET_COMMAND = "interpret-text"
@@ -126,6 +127,14 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
             "Choose which LLM backend to use when --llm is enabled. "
             "'local' loads .env_local; 'remote' loads .env_remote and falls back "
             "to .env_local if available (default: remote)."
+        ),
+    )
+    parser.add_argument(
+        "--llm-context",
+        default=DEFAULT_LLM_CONTEXT,
+        help=(
+            "Historical prose/context scope for LLM synthesis. Defaults to "
+            "16th-century British Christian prose aligned with John Dee's era."
         ),
     )
 
@@ -361,6 +370,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     strategy=args.strategy,
                     top_k=top_k,
                     llm=llm_enabled,
+                    llm_context=args.llm_context,
                     fallback_top_n=fallback_top_n,
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
@@ -534,6 +544,7 @@ def _build_output_payload(
         "timestamp": result.get("timestamp"),
         "llm_enabled": result.get("llm_enabled"),
         "llm_mode": result.get("llm_mode"),
+        "llm_context": result.get("llm_context"),
         "senses": senses,
         "evidence": evidence,
         "fallback_morphs": result.get("fallback_morphs", []),
@@ -680,6 +691,7 @@ def _format_variant_report(
     strategy = payload.get("strategy", "")
     llm_enabled = payload.get("llm_enabled", False)
     llm_mode = payload.get("llm_mode")
+    llm_context = payload.get("llm_context")
     evidence_mode = payload.get("evidence_mode")
     weighting_enabled = payload.get("weighting_enabled")
     llm_mode_label = llm_mode if llm_mode else "n/a"
@@ -693,6 +705,8 @@ def _format_variant_report(
         lines.append(f"Weighted scoring: {weighting_enabled}")
     lines.append(f"LLM enabled: {llm_enabled}")
     lines.append(f"LLM mode: {llm_mode_label}")
+    if isinstance(llm_context, str) and llm_context:
+        lines.append(f"LLM context: {llm_context}")
 
     message = payload.get("message")
     if isinstance(message, str) and message:
