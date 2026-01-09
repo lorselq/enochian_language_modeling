@@ -752,8 +752,15 @@ def _format_variant_report(
 
             synthesized = sense.get("synthesized_definition")
             concatenated = sense.get("concatenated_meanings")
+            best_estimations = sense.get("best_estimations")
             if synthesized:
                 lines.append(_wrap_text(f"Synthesized: {synthesized}", indent=0))
+                if isinstance(best_estimations, list) and best_estimations:
+                    lines.append("Best Estimations:")
+                    for estimation in best_estimations:
+                        if not isinstance(estimation, str) or not estimation:
+                            continue
+                        lines.append(_wrap_text(estimation, indent=2, bullet=True))
                 if concatenated:
                     lines.append(_wrap_text(f"Concatenated: {concatenated}", indent=0))
             elif concatenated:
@@ -859,6 +866,7 @@ def _format_variant_report(
                     lines.append(
                         _wrap_text(f"Available variants: {available}", indent=2)
                     )
+
                 variant_paths = repository.get("variant_paths")
                 if isinstance(variant_paths, dict) and variant_paths:
                     lines.append(_wrap_text("Variant paths:", indent=2))
@@ -1122,7 +1130,29 @@ def _format_variant_report(
                                     if part
                                 )
                                 if label:
-                                    lines.append(_wrap_text(label, indent=8, bullet=True))
+                                    lines.append(
+                                        _wrap_text(label, indent=8, bullet=True)
+                                    )
+
+    consensus = payload.get("consensus_synthesis")
+    if isinstance(consensus, dict) and consensus:
+        lines.append("\nConsensus synthesis:")
+        definition = consensus.get("synthesized_definition")
+        if isinstance(definition, str) and definition:
+            lines.append(_wrap_text(f"Synthesized: {definition}", indent=0))
+        best_estimations = consensus.get("best_estimations")
+        if isinstance(best_estimations, list) and best_estimations:
+            lines.append("Best Estimations:")
+            for estimation in best_estimations:
+                if not isinstance(estimation, str) or not estimation:
+                    continue
+                lines.append(_wrap_text(estimation, indent=2, bullet=True))
+        confidence = consensus.get("confidence")
+        if isinstance(confidence, (int, float)):
+            lines.append(f"Confidence: {float(confidence):.2f}")
+        warnings = consensus.get("warnings")
+        if isinstance(warnings, list) and warnings:
+            lines.append(_wrap_text("Warnings: " + "; ".join(warnings), indent=0))
 
     return "\n".join(lines)
 
