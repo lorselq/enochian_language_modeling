@@ -19,6 +19,11 @@ from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 
 LOGGER = logging.getLogger(__name__)
 
+DEFAULT_LLM_CONTEXT = (
+    "Use Early Modern English prose from 16th-century Britain, grounded in the "
+    "mainstream Christian worldview John Dee would have known. Avoid modern "
+    "terms, theology, or concepts."
+)
 
 @dataclass(slots=True)
 class SynthesisResult:
@@ -115,11 +120,13 @@ def synthesize_definition(
     use_remote = bool(context.get("use_remote", False))
 
     try:
+        llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
         tool = QueryModelTool(
             system_prompt=(
                 "You are a precise Enochian glossator. Combine morph semantics "
                 "into a single, well-formed definition without inventing "
-                "unsupported etymologies."
+                "unsupported etymologies. "
+                f"Historical scope: {llm_context}"
             ),
             name="Definition Synthesizer",
             description="Compose a concise morph-level synthesis",
@@ -166,10 +173,12 @@ def synthesize_consensus(
     use_remote = bool(context.get("use_remote", False))
 
     try:
+        llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
         tool = QueryModelTool(
             system_prompt=(
                 "You are a precision Enochian glossator. Combine candidate senses "
-                "into one concrete consensus without inventing unsupported etymologies."
+                "into one concrete consensus without inventing unsupported etymologies. "
+                f"Historical scope: {llm_context}"
             ),
             name="Consensus Synthesizer",
             description="Compose a consensus definition across candidates",
@@ -212,6 +221,7 @@ def _build_prompt(
     coverage_ratio = _safe_float(context.get("coverage_ratio"), default=0.0)
     residual_ratio = _safe_float(context.get("residual_ratio"), default=1.0)
     strategy = str(context.get("strategy") or "prefer-balance")
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
 
     provenance_lines: list[str] = []
     provenance_raw = context.get("provenance")
@@ -245,6 +255,7 @@ def _build_prompt(
 
     instruction_lines = [
         "ROLE: You are a precision Enochian glossator.",
+        f"HISTORICAL CONTEXT: {llm_context}",
         "CONSTRAINTS:",
         "- Use ONLY the provided morphs/meanings/provenance; no external etymology or speculation.",
         "- Evidence trust order: clusters > residuals > hypotheses. Do not invent links.",
@@ -277,6 +288,7 @@ def _build_consensus_prompt(
     strategy = str(context.get("strategy") or "prefer-balance")
     coverage_ratio = _safe_float(context.get("coverage_ratio"), default=0.0)
     residual_ratio = _safe_float(context.get("residual_ratio"), default=1.0)
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
 
     candidate_lines: list[str] = []
     for candidate in candidates:
@@ -329,6 +341,7 @@ def _build_consensus_prompt(
     instruction_lines = [
         "ROLE: You are a precision Enochian glossator.",
         "TASK: Combine the top candidate senses into one consensus meaning.",
+        f"HISTORICAL CONTEXT: {llm_context}",
         "CONSTRAINTS:",
         "- Use ONLY the provided candidate information; no external etymology.",
         "- Prefer the overlapping concrete semantics across candidates.",
