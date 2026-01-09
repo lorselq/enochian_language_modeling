@@ -1098,10 +1098,10 @@ def _format_variant_report(
                                 )
                             )
                         attestation = trace.get("attestation_score")
-                        if isinstance(attestation, int):
+                        if isinstance(attestation, (int, float)):
                             lines.append(
                                 _wrap_text(
-                                    f"Attestation score: {attestation}",
+                                    f"Attestation score: {float(attestation):.3f}",
                                     indent=6,
                                 )
                             )
