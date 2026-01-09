@@ -22,7 +22,7 @@ from .repository import WordEvidence
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_MAX_PARTIAL_PER_INDEX: Final[int] = 200
+DEFAULT_MAX_PARTIAL_PER_INDEX: Final[int] = 500
 DEFAULT_MAX_FULL_SEGMENTATIONS: Final[int] = 100
 
 
@@ -873,10 +873,10 @@ def apply_hard_filters(
     Filters are applied in order:
 
     1. Every morph must be supported by clusters or residuals.
-    2. Decompositions with high residual ratios (>0.5) are discarded when a
-       better-covered alternative exists.
-    3. When possible, decompositions that use well-attested morphs (>3 uses)
-       are preferred over those composed entirely of singletons.
+    2. Decompositions with lower coverage are discarded when a higher-coverage
+       alternative exists.
+    3. When possible, decompositions that use longer, lower-ambiguity morphs
+       are preferred over those dominated by ambiguous singletons.
     """
 
     if not decompositions:
@@ -983,20 +983,22 @@ def apply_hard_filters(
         return [], diagnostics
 
     # ------------------------------------------------------------------
-    # Filter 2: discard high-residual decomps when a better exists.
+    # Filter 2: discard lower-coverage decomps when a better exists.
     # ------------------------------------------------------------------
-    min_residual = min(_residual_ratio(d) for d in supported)
-    diagnostics["min_residual_ratio"] = min_residual
+    max_coverage = max(1.0 - _residual_ratio(d) for d in supported)
+    diagnostics["min_residual_ratio"] = (
+        min(_residual_ratio(d) for d in supported) if supported else None
+    )
     coverage_filtered: list[Decomposition] = []
     for decomp in supported:
-        ratio = _residual_ratio(decomp)
-        if ratio > 0.5 and min_residual <= 0.5:
+        coverage = 1.0 - _residual_ratio(decomp)
+        if coverage < max_coverage:
             stage2_dropped += 1
             LOGGER.debug(
-                "Discarding %s due to high residual_ratio %.3f (best=%.3f)",
+                "Discarding %s due to lower coverage %.3f (best=%.3f)",
                 decomp.morphs,
-                ratio,
-                min_residual,
+                coverage,
+                max_coverage,
             )
             continue
         coverage_filtered.append(decomp)
@@ -1006,45 +1008,49 @@ def apply_hard_filters(
         return [], diagnostics
 
     # ------------------------------------------------------------------
-    # Filter 3: prefer well-attested morphs (>3 uses) over pure singletons.
+    # Filter 3: prefer longer, lower-ambiguity morphs over singleton-heavy splits.
     # ------------------------------------------------------------------
-    def attestation_score(decomp: Decomposition) -> int:
-        score = 0
+    definition_counts = evidence.definition_counts or {}
+
+    def specificity_score(decomp: Decomposition) -> float:
+        score = 0.0
         for morph in decomp.morphs:
-            stats = support_stats.get(morph.upper())
-            if stats is not None and stats.uses > 3:
-                score += 1
+            norm = (morph or "").upper()
+            count = definition_counts.get(norm)
+            if isinstance(count, int) and count > 0:
+                score += (1.0 / count) + 0.05 * len(norm)
+            else:
+                score += 0.02 * len(norm)
         return score
 
-    attestation_scores = {
-        tuple(d.morphs): attestation_score(d) for d in coverage_filtered
+    specificity_scores = {
+        tuple(d.morphs): specificity_score(d) for d in coverage_filtered
     }
     for decomp in coverage_filtered:
         _update_attestation_trace(
-            filter_traces, decomp, attestation_scores[tuple(decomp.morphs)]
+            filter_traces, decomp, specificity_scores[tuple(decomp.morphs)]
         )
-    max_attestation = max(attestation_scores.values())
-    diagnostics["max_attestation_score"] = max_attestation
-    if max_attestation == 0:
-        # Nobody uses well-attested morphs; let soft scoring handle it.
+    max_specificity = max(specificity_scores.values())
+    diagnostics["max_attestation_score"] = max_specificity
+    if max_specificity <= 0:
         _finalize_diagnostics()
         return coverage_filtered, diagnostics
 
-    attested: list[Decomposition] = []
+    preferred: list[Decomposition] = []
     for decomp in coverage_filtered:
-        score = attestation_scores[tuple(decomp.morphs)]
-        if score == 0:
+        score = specificity_scores[tuple(decomp.morphs)]
+        if score <= 0:
             stage3_dropped += 1
             LOGGER.debug(
-                "Discarding %s due to singleton-only morph usage (best score=%d)",
+                "Discarding %s due to low specificity (best score=%.3f)",
                 decomp.morphs,
-                max_attestation,
+                max_specificity,
             )
             continue
-        attested.append(decomp)
+        preferred.append(decomp)
 
     _finalize_diagnostics()
-    return (attested if attested else coverage_filtered), diagnostics
+    return (preferred if preferred else coverage_filtered), diagnostics
 
 
 def _summarize_segments(breakdown: dict[str, object]) -> list[dict[str, str]]:
@@ -1069,7 +1075,7 @@ def _summarize_segments(breakdown: dict[str, object]) -> list[dict[str, str]]:
 def _update_attestation_trace(
     traces: list[dict[str, object]],
     target: Decomposition,
-    score: int,
+    score: float,
 ) -> None:
     if not traces:
         return

@@ -599,7 +599,7 @@ class SingleWordTranslationService:
                 max_partial = DEFAULT_MAX_PARTIAL_PER_INDEX
                 max_full = DEFAULT_MAX_FULL_SEGMENTATIONS
                 segmentations: list[list[str]] = []
-                min_piece_len = 2 if len(normalized) >= 5 else 1
+                min_piece_len = 1
                 attested_only_guarantee = True
                 segmentations, enumerator_diag = (
                     enumerate_attested_segmentations_with_diagnostics(
@@ -614,25 +614,6 @@ class SingleWordTranslationService:
                 enumerated_partial_pruned_count = enumerator_diag[
                     "enumerated_partial_pruned_count"
                 ]
-                if min_piece_len == 2 and not segmentations:
-                    fallback_used = True
-                    fallback_used_enum = "min_piece_len_lowered"
-                    fallback_reason = "no_full_cover_with_min_piece_len=2"
-                    fallback_mode = "min_piece_len=1"
-                    min_piece_len = 1
-                    segmentations, enumerator_diag = (
-                        enumerate_attested_segmentations_with_diagnostics(
-                            normalized,
-                            attested_pieces,
-                            max_partial_per_index=max_partial,
-                            max_full_segmentations=max_full,
-                            min_piece_len=min_piece_len,
-                        )
-                    )
-                    enumerated_full_count = enumerator_diag["enumerated_full_count"]
-                    enumerated_partial_pruned_count = enumerator_diag[
-                        "enumerated_partial_pruned_count"
-                    ]
                 enumerator_params = {
                     "max_partial_per_index": max_partial,
                     "max_full_segmentations": max_full,
