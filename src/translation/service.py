@@ -32,7 +32,12 @@ from .decomposition import (
     enumerate_attested_segmentations_with_diagnostics,
     _normalize_beam_scores,
 )
-from .llm_synthesis import SynthesisResult, synthesize_definition
+from .llm_synthesis import (
+    ConsensusSynthesisResult,
+    SynthesisResult,
+    synthesize_consensus,
+    synthesize_definition,
+)
 from .repository import (
     ClusterRecord,
     DictionaryMorph,
@@ -881,6 +886,13 @@ class SingleWordTranslationService:
                 strategy=strategy,
                 llm_enabled=llm_enabled,
             )
+            consensus_payload: dict[str, object] | None = None
+            if llm_enabled and len(enriched) > 1:
+                consensus_payload = self._build_consensus_synthesis(
+                    enriched,
+                    strategy=strategy,
+                    llm_use_remote=self.llm_use_remote,
+                )
 
             return {
                 "word": normalized,
@@ -898,6 +910,7 @@ class SingleWordTranslationService:
                 ),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "candidates": enriched,
+                "consensus_synthesis": consensus_payload,
                 "evidence": self._summarize_evidence(evidence),
                 "fallback_morphs": fallback_morphs,
                 "diagnostics": {
@@ -989,6 +1002,7 @@ class SingleWordTranslationService:
                     base["raw_llm_response"] = synthesis.raw_response
                 if synthesis.warnings:
                     warnings.extend(synthesis.warnings)
+                base["best_estimations"] = synthesis.best_estimations
             else:
                 base["synthesized_definition"] = None
                 base["confidence"] = self._coverage_confidence(
@@ -997,6 +1011,7 @@ class SingleWordTranslationService:
                 base["reasoning"] = (
                     "LLM disabled; using concatenated morph meanings."
                 )
+                base["best_estimations"] = []
 
             if warnings:
                 base["warnings"] = warnings
@@ -1004,6 +1019,38 @@ class SingleWordTranslationService:
             enriched.append(base)
 
         return enriched
+
+    def _build_consensus_synthesis(
+        self,
+        candidates: list[dict[str, object]],
+        *,
+        strategy: str,
+        llm_use_remote: bool,
+    ) -> dict[str, object]:
+        coverage_values: list[float] = []
+        residual_values: list[float] = []
+        for candidate in candidates:
+            breakdown_raw = candidate.get("breakdown")
+            breakdown = breakdown_raw if isinstance(breakdown_raw, dict) else {}
+            coverage = breakdown.get("coverage_ratio")
+            residual = breakdown.get("residual_ratio")
+            if isinstance(coverage, (int, float)):
+                coverage_values.append(float(coverage))
+            if isinstance(residual, (int, float)):
+                residual_values.append(float(residual))
+
+        context = {
+            "strategy": strategy,
+            "coverage_ratio": sum(coverage_values) / len(coverage_values)
+            if coverage_values
+            else 0.0,
+            "residual_ratio": sum(residual_values) / len(residual_values)
+            if residual_values
+            else 1.0,
+            "use_remote": llm_use_remote,
+        }
+        synthesis = synthesize_consensus(candidates, context)
+        return synthesis.as_dict()
 
     def _with_min_n(
         self,
