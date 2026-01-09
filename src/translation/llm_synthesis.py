@@ -44,6 +44,8 @@ class SynthesisResult:
         Optional warnings emitted during synthesis.
     raw_response:
         Raw text returned by the LLM (useful for debugging downstream).
+    best_estimations:
+        Concrete 1–3 word phrases that capture the morph-level meaning.
     """
 
     synthesized_definition: str | None
@@ -52,11 +54,35 @@ class SynthesisResult:
     reasoning: str
     warnings: list[str] = field(default_factory=list)
     raw_response: str | None = None
+    best_estimations: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
         return {
             "synthesized_definition": self.synthesized_definition,
             "concatenated_meanings": self.concatenated_meanings,
+            "confidence": self.confidence,
+            "reasoning": self.reasoning,
+            "warnings": list(self.warnings),
+            "raw_response": self.raw_response,
+            "best_estimations": list(self.best_estimations),
+        }
+
+
+@dataclass(slots=True)
+class ConsensusSynthesisResult:
+    """Structured output for synthesized consensus across top candidates."""
+
+    synthesized_definition: str | None
+    best_estimations: list[str]
+    confidence: float
+    reasoning: str
+    warnings: list[str] = field(default_factory=list)
+    raw_response: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "synthesized_definition": self.synthesized_definition,
+            "best_estimations": list(self.best_estimations),
             "confidence": self.confidence,
             "reasoning": self.reasoning,
             "warnings": list(self.warnings),
@@ -109,6 +135,7 @@ def synthesize_definition(
         confidence = _resolved_confidence(confidence_val, context)
         reasoning_raw = parsed.get("reasoning")
         reasoning: str = reasoning_raw if isinstance(reasoning_raw, str) else "Synthesized definition via LLM."
+        best_estimations = _coerce_best_estimations(parsed.get("best_estimations"))
 
         return SynthesisResult(
             synthesized_definition=synthesized,
@@ -116,6 +143,7 @@ def synthesize_definition(
             confidence=confidence,
             reasoning=reasoning,
             raw_response=response.get("response_text"),
+            best_estimations=best_estimations,
         )
     except Exception as exc:  # pragma: no cover - defensive fallback
         LOGGER.warning("LLM synthesis failed; falling back to concatenated meanings", exc_info=exc)
@@ -124,6 +152,56 @@ def synthesize_definition(
             concatenated_meanings=concatenated,
             confidence=_resolved_confidence(None, context, fallback_only=True),
             reasoning="LLM synthesis unavailable; returned concatenated meanings instead.",
+            warnings=[str(exc)],
+        )
+
+
+def synthesize_consensus(
+    candidates: list[dict[str, object]],
+    context: dict[str, object],
+) -> ConsensusSynthesisResult:
+    """Return a consensus synthesis across top-ranked candidates."""
+
+    prompt = _build_consensus_prompt(candidates, context)
+    use_remote = bool(context.get("use_remote", False))
+
+    try:
+        tool = QueryModelTool(
+            system_prompt=(
+                "You are a precision Enochian glossator. Combine candidate senses "
+                "into one concrete consensus without inventing unsupported etymologies."
+            ),
+            name="Consensus Synthesizer",
+            description="Compose a consensus definition across candidates",
+            use_remote=use_remote,
+        )
+        response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+        parsed = _parse_response(
+            response.get("response_text", ""), fallback="", context=context
+        )
+        synthesized_raw = parsed.get("definition")
+        synthesized: str | None = synthesized_raw if isinstance(synthesized_raw, str) else None
+        confidence_raw = parsed.get("confidence")
+        confidence_val: float | None = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else None
+        confidence = _resolved_confidence(confidence_val, context)
+        reasoning_raw = parsed.get("reasoning")
+        reasoning: str = reasoning_raw if isinstance(reasoning_raw, str) else "Consensus synthesis via LLM."
+        best_estimations = _coerce_best_estimations(parsed.get("best_estimations"))
+
+        return ConsensusSynthesisResult(
+            synthesized_definition=synthesized,
+            best_estimations=best_estimations,
+            confidence=confidence,
+            reasoning=reasoning,
+            raw_response=response.get("response_text"),
+        )
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        LOGGER.warning("Consensus synthesis failed; returning empty result", exc_info=exc)
+        return ConsensusSynthesisResult(
+            synthesized_definition=None,
+            best_estimations=[],
+            confidence=_resolved_confidence(None, context, fallback_only=True),
+            reasoning="Consensus synthesis unavailable; no aggregate definition.",
             warnings=[str(exc)],
         )
 
@@ -154,6 +232,11 @@ def _build_prompt(
     schema_block = json.dumps(
         {
             "definition": f"<one-sentence, single-sense definition, <= {max_len} chars>",
+            "best_estimations": [
+                "<concrete 1-3 word phrase>",
+                "<concrete 1-3 word phrase>",
+                "<concrete 1-3 word phrase>",
+            ],
             "confidence": 0.0,
             "reasoning": f"<one-sentence justification, <= {max_len} chars>",
         },
@@ -166,6 +249,8 @@ def _build_prompt(
         "- Use ONLY the provided morphs/meanings/provenance; no external etymology or speculation.",
         "- Evidence trust order: clusters > residuals > hypotheses. Do not invent links.",
         "- Produce exactly one concise sense (no lists, no multiple senses, no hedging).",
+        "- Provide 3-6 concrete 'best_estimations' (1-3 word phrases) that make the sense tangible.",
+        "- 'best_estimations' should prefer physical objects/actions when possible.",
         "- One sentence for definition, one sentence for reasoning; trim whitespace.",
         f"- Hard max length per field: {max_len} characters; truncate gracefully if needed.",
         "- Return STRICT JSON only, matching the schema below (no prose around it).",
@@ -178,6 +263,85 @@ def _build_prompt(
         provenance_block,
         f"- Coverage: coverage_ratio={coverage_ratio:.2f}, residual_ratio={residual_ratio:.2f}",
         f"- Strategy hint: {strategy}",
+        "SCHEMA (return exactly this shape):",
+        schema_block,
+    ]
+
+    return "\n".join(instruction_lines)
+
+
+def _build_consensus_prompt(
+    candidates: list[dict[str, object]], context: dict[str, object]
+) -> str:
+    max_len = 180
+    strategy = str(context.get("strategy") or "prefer-balance")
+    coverage_ratio = _safe_float(context.get("coverage_ratio"), default=0.0)
+    residual_ratio = _safe_float(context.get("residual_ratio"), default=1.0)
+
+    candidate_lines: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        rank = candidate.get("rank")
+        morphs = candidate.get("morphs")
+        morph_list = morphs if isinstance(morphs, list) else []
+        morph_label = " + ".join(str(m) for m in morph_list if m)
+        meanings = candidate.get("meanings")
+        meanings_list = meanings if isinstance(meanings, list) else []
+        meaning_lines = []
+        for meaning in meanings_list:
+            if not isinstance(meaning, dict):
+                continue
+            morph = meaning.get("morph")
+            definition = meaning.get("definition")
+            if morph and definition:
+                meaning_lines.append(f"{morph}: {definition}")
+        synthesized = candidate.get("synthesized_definition") or candidate.get(
+            "concatenated_meanings"
+        )
+        confidence = candidate.get("confidence")
+        candidate_lines.append(
+            "\n".join(
+                [
+                    f"- Rank {rank}: {morph_label}",
+                    f"  Meanings: {', '.join(meaning_lines) if meaning_lines else 'n/a'}",
+                    f"  Synthesized: {synthesized or 'n/a'}",
+                    f"  Confidence: {confidence if isinstance(confidence, (int, float)) else 'n/a'}",
+                ]
+            )
+        )
+
+    candidates_block = "\n".join(candidate_lines) or "- No candidate summaries available"
+    schema_block = json.dumps(
+        {
+            "definition": f"<one-sentence consensus definition, <= {max_len} chars>",
+            "best_estimations": [
+                "<concrete 1-3 word phrase>",
+                "<concrete 1-3 word phrase>",
+                "<concrete 1-3 word phrase>",
+            ],
+            "confidence": 0.0,
+            "reasoning": f"<one-sentence justification, <= {max_len} chars>",
+        },
+        ensure_ascii=False,
+    )
+
+    instruction_lines = [
+        "ROLE: You are a precision Enochian glossator.",
+        "TASK: Combine the top candidate senses into one consensus meaning.",
+        "CONSTRAINTS:",
+        "- Use ONLY the provided candidate information; no external etymology.",
+        "- Prefer the overlapping concrete semantics across candidates.",
+        "- Produce exactly one concise sense (no lists, no multiple senses).",
+        "- Provide 3-6 concrete 'best_estimations' (1-3 word phrases) that fit the consensus.",
+        "- One sentence for definition, one sentence for reasoning; trim whitespace.",
+        f"- Hard max length per field: {max_len} characters; truncate gracefully if needed.",
+        "- Return STRICT JSON only, matching the schema below (no prose around it).",
+        "CONTEXT:",
+        f"- Strategy hint: {strategy}",
+        f"- Coverage: coverage_ratio={coverage_ratio:.2f}, residual_ratio={residual_ratio:.2f}",
+        "CANDIDATES:",
+        candidates_block,
         "SCHEMA (return exactly this shape):",
         schema_block,
     ]
@@ -200,7 +364,7 @@ def _parse_response(
             return text
         return text[: max_len - 1].rstrip() + "…"
 
-    parsed: dict[str, str | float] = {}
+    parsed: dict[str, str | float | list[str]] = {}
 
     if not payload:
         parsed["definition"] = fallback
@@ -231,12 +395,27 @@ def _parse_response(
     if isinstance(reasoning_val, str) and reasoning_val.strip():
         parsed["reasoning"] = _trim(reasoning_val)
 
+    best_estimations = data.get("best_estimations")
+    if isinstance(best_estimations, list):
+        parsed["best_estimations"] = [
+            _trim(item)
+            for item in best_estimations
+            if isinstance(item, str) and item.strip()
+        ]
+
     if "confidence" not in parsed:
         parsed["confidence"] = _resolved_confidence(None, context, fallback_only=True)
     if "reasoning" not in parsed:
         parsed["reasoning"] = "Synthesized definition via LLM."
 
     return parsed
+
+
+def _coerce_best_estimations(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    return cleaned[:6]
 
 
 def _resolved_confidence(
