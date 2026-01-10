@@ -56,7 +56,12 @@ from .scoring import (
     score_decomposition_breakdown,
     score_decomposition_with_coherence_breakdown,
 )
-from .strategies import apply_strategy, select_top_k
+from .strategies import (
+    apply_strategy,
+    compute_contradiction_penalty,
+    extract_definition_candidates,
+    select_top_k,
+)
 from .tokenization import expand_sentence_ngrams, tokenize_words
 
 T = TypeVar("T")
@@ -685,6 +690,8 @@ class SingleWordTranslationService:
                     beam_scoring_applied = True
                     beam_scoring_parse_count = len(parses)
                     beam_scores: dict[tuple[str, ...], float] = {}
+                    parsed_paths: list[tuple[tuple[str, ...], float]] = []
+                    all_morphs: set[str] = set()
                     for _path, score, _ngram_scores, coverage in parses:
                         if not coverage:
                             continue
@@ -696,9 +703,28 @@ class SingleWordTranslationService:
                         if not morphs:
                             continue
                         key = tuple(morphs)
+                        parsed_paths.append((key, float(score)))
+                        all_morphs.update(morphs)
+
+                    definition_candidates = extract_definition_candidates(
+                        all_morphs,
+                        evidence,
+                        max_per_morph=3,
+                    )
+                    for key, score in parsed_paths:
+                        definitions_by_morph = {
+                            morph: [
+                                entry.get("definition")
+                                for entry in definition_candidates.get(morph, [])
+                                if isinstance(entry.get("definition"), str)
+                            ]
+                            for morph in key
+                        }
+                        penalty = compute_contradiction_penalty(definitions_by_morph)
+                        adjusted = score - penalty
                         existing = beam_scores.get(key)
-                        if existing is None or score > existing:
-                            beam_scores[key] = float(score)
+                        if existing is None or adjusted > existing:
+                            beam_scores[key] = adjusted
                     for decomp in decompositions:
                         decomp.beam_score = beam_scores.get(tuple(decomp.morphs), 0.0)
                     _normalize_beam_scores(decompositions)
