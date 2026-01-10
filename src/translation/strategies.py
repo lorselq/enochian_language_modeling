@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 import json
 import math
 import re
@@ -8,9 +9,12 @@ import re
 import numpy as np
 
 from enochian_lm.common.types import MaybeNumber
-from enochian_lm.root_extraction.utils.embeddings import get_sentence_transformer
+from enochian_lm.root_extraction.utils.embeddings import (
+    cluster_definitions,
+    get_sentence_transformer,
+)
 from .decomposition import Decomposition
-from .repository import ClusterRecord, WordEvidence
+from .repository import ClusterRecord, DictionaryMorph, WordEvidence
 
 
 # ---------------------------
@@ -179,6 +183,61 @@ def _extract_meanings(
         k.upper(): v for k, v in (decomp.morph_support or {}).items()
     }
 
+    if evidence is None:
+        return [
+            {
+                "morph": (morph or "").upper(),
+                "canonical": None,
+                "definition": None,
+                "definitions": [],
+                "provenance": "unknown",
+            }
+            for morph in decomp.morphs
+        ]
+
+    candidates = extract_definition_candidates(
+        decomp.morphs,
+        evidence,
+        max_per_morph=4,
+    )
+    for idx, morph in enumerate(decomp.morphs):
+        key = (morph or "").upper()
+        canonical = (
+            decomp.canonicals[idx].upper()
+            if idx < len(decomp.canonicals)
+            else None
+        )
+        extra_defs = _meaning_from_evidence(
+            morph=key,
+            evidence=evidence,
+            canonical=canonical,
+        )
+        candidates.setdefault(key, [])
+        existing = {str(item.get("definition", "")).strip().lower() for item in candidates[key]}
+        for entry in extra_defs:
+            definition = entry.get("definition")
+            if not isinstance(definition, str):
+                continue
+            normalized = definition.strip()
+            if not normalized:
+                continue
+            key_norm = normalized.lower()
+            if key_norm in existing:
+                continue
+            existing.add(key_norm)
+            candidates[key].append(
+                {
+                    "definition": normalized,
+                    "source": entry.get("provenance"),
+                    "quality": 0.0,
+                }
+            )
+
+    selections, _beam_results = _select_definition_combination(
+        decomp.morphs,
+        candidates,
+    )
+
     meanings: list[dict[str, object]] = []
     for idx, morph in enumerate(decomp.morphs):
         key = (morph or "").upper()
@@ -187,13 +246,11 @@ def _extract_meanings(
             if idx < len(decomp.canonicals)
             else None
         )
-        definition, provenance = _meaning_from_evidence(
-            morph=key,
-            evidence=evidence,
-            canonical=canonical,
-        )
+        selected = selections.get(key)
+        definition = selected.get("definition") if selected else None
+        provenance = selected.get("source") if selected else None
 
-        if provenance == "unknown":
+        if not provenance or provenance == "unknown":
             provenance = support_lookup.get(key, "unknown")
 
         meanings.append(
@@ -201,7 +258,16 @@ def _extract_meanings(
                 "morph": key,
                 "canonical": canonical,
                 "definition": definition,
+                "definitions": [
+                    entry.get("definition")
+                    for entry in candidates.get(key, [])
+                    if isinstance(entry.get("definition"), str)
+                ],
                 "provenance": provenance,
+                "anchor_strength": compute_anchor_strength(
+                    key,
+                    candidates.get(key, []),
+                ),
             }
         )
 
@@ -213,11 +279,25 @@ def _meaning_from_evidence(
     morph: str,
     evidence: WordEvidence | None,
     canonical: str | None,
-) -> tuple[str | None, str]:
+) -> list[dict[str, object]]:
     if evidence is None:
-        return None, "unknown"
+        return []
 
-    # 1) clusters
+    results: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def add(definition: str | None, provenance: str) -> None:
+        if not isinstance(definition, str):
+            return
+        normalized = definition.strip()
+        if not normalized:
+            return
+        key = normalized.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        results.append({"definition": normalized, "provenance": provenance})
+
     for cluster in evidence.direct_clusters:
         if cluster.ngram.upper() != morph:
             continue
@@ -226,10 +306,8 @@ def _meaning_from_evidence(
             _first_cluster_raw_definition(cluster),
             cluster.residual_headline,
         )
-        if definition is not None:
-            return definition, "cluster"
+        add(definition, "cluster")
 
-    # 2) residuals
     for residual in evidence.residual_semantics:
         if residual.residual.upper() != morph:
             continue
@@ -237,43 +315,40 @@ def _meaning_from_evidence(
             _extract_glossator_definition(residual.glossator_def),
             residual.residual_headline,
         )
-        if definition is not None:
-            return definition, "residual"
+        add(definition, "residual")
 
-    # 3) hypotheses
     for hypothesis in evidence.morph_hypotheses:
         if hypothesis.morph.upper() != morph:
             continue
         seed_glosses = ", ".join(g for g in hypothesis.seed_glosses if g and g.strip()) or None
         definition = _first_non_empty(hypothesis.proposed_gloss, seed_glosses, hypothesis.anchor)
-        if definition is not None:
-            return definition, "hypothesis"
+        add(definition, "hypothesis")
 
-    # 4) attested definitions
     for attested in evidence.attested_definitions:
         if attested.source_word.upper() != morph:
             continue
         definition = _first_non_empty(attested.definition)
-        if definition is not None:
-            return definition, "attested"
+        add(definition, "attested")
 
-    # 5) dictionary entries
     entry = evidence.dictionary_morphs.get(morph)
     if entry is not None:
         definition = _first_non_empty(entry.definition, ", ".join(entry.senses))
-        if definition is not None:
-            return definition, "dictionary"
+        add(definition, "dictionary")
 
     if canonical and canonical != morph:
-        canonical_def, canonical_prov = _meaning_from_evidence(
+        for entry in _meaning_from_evidence(
             morph=canonical,
             evidence=evidence,
             canonical=None,
-        )
-        if canonical_def is not None:
-            return canonical_def, f"canonical_{canonical_prov}"
+        ):
+            provenance = entry.get("provenance")
+            definition = entry.get("definition")
+            if isinstance(provenance, str) and provenance:
+                add(definition, f"canonical_{provenance}")
+            else:
+                add(definition, "canonical_unknown")
 
-    return None, "unknown"
+    return results
 
 
 def _first_cluster_raw_definition(cluster: ClusterRecord) -> str | None:
@@ -476,6 +551,12 @@ def compute_complementarity_band_similarity(
 
 
 CONTRADICTION_KEYWORD_PAIRS: list[tuple[str, str]] = [
+    ("unite", "divide"),
+    ("whole", "part"),
+    ("light", "dark"),
+    ("still", "move"),
+    ("good", "wicked"),
+    ("righteous", "sinful"),
     ("light", "dark"),
     ("life", "death"),
     ("love", "hate"),
@@ -519,6 +600,223 @@ def _keyword_present(corpus: str, keyword: str) -> bool:
         return False
     pattern = rf"\\b{re.escape(keyword.lower())}\\b"
     return re.search(pattern, corpus) is not None
+
+
+@dataclass(frozen=True)
+class DefinitionBeamResult:
+    selections: dict[str, dict[str, object]]
+    score: float
+    components: dict[str, float]
+
+
+def _select_definition_combination(
+    morphs: Iterable[str],
+    candidates: Mapping[str, list[dict[str, object]]],
+    *,
+    beam_width: int = 6,
+    max_defs_per_morph: int = 4,
+) -> tuple[dict[str, dict[str, object]], list[DefinitionBeamResult]]:
+    morph_list = [m.upper() for m in morphs if m]
+    if not morph_list:
+        return {}, []
+
+    anchor_strengths = {
+        morph: compute_anchor_strength(morph, candidates.get(morph, []))
+        for morph in morph_list
+    }
+    prepared = _prepare_candidates(morph_list, candidates, max_defs_per_morph)
+
+    beam_results = _beam_search_definitions(
+        morph_list,
+        prepared,
+        anchor_strengths,
+        beam_width=beam_width,
+    )
+    if not beam_results:
+        return {}, []
+
+    locked = _lock_definition_anchors(
+        beam_results,
+        morph_list,
+        prepared,
+    )
+    if locked:
+        beam_results = _beam_search_definitions(
+            morph_list,
+            locked,
+            anchor_strengths,
+            beam_width=beam_width,
+        )
+
+    best = beam_results[0]
+    return best.selections, beam_results
+
+
+def _prepare_candidates(
+    morphs: list[str],
+    candidates: Mapping[str, list[dict[str, object]]],
+    max_defs_per_morph: int,
+) -> dict[str, list[dict[str, object]]]:
+    prepared: dict[str, list[dict[str, object]]] = {}
+    for morph in morphs:
+        entries = list(candidates.get(morph, []))
+        if entries:
+            entries.sort(
+                key=lambda entry: (
+                    _safe_number(entry.get("quality"), default=0.0),
+                    len(str(entry.get("definition", ""))),
+                ),
+                reverse=True,
+            )
+        if max_defs_per_morph > 0:
+            entries = entries[:max_defs_per_morph]
+        if not entries:
+            entries = [
+                {
+                    "definition": None,
+                    "source": "unknown",
+                    "quality": 0.0,
+                }
+            ]
+        prepared[morph] = entries
+    return prepared
+
+
+def _beam_search_definitions(
+    morphs: list[str],
+    candidates: Mapping[str, list[dict[str, object]]],
+    anchor_strengths: Mapping[str, float],
+    *,
+    beam_width: int,
+) -> list[DefinitionBeamResult]:
+    beams: list[DefinitionBeamResult] = [
+        DefinitionBeamResult(selections={}, score=0.0, components={})
+    ]
+    for morph in morphs:
+        new_beams: list[DefinitionBeamResult] = []
+        for beam in beams:
+            for candidate in candidates.get(morph, []):
+                selections = {**beam.selections, morph: candidate}
+                score, components = _score_definition_combo(
+                    selections,
+                    anchor_strengths,
+                )
+                new_beams.append(
+                    DefinitionBeamResult(
+                        selections=selections,
+                        score=score,
+                        components=components,
+                    )
+                )
+        new_beams.sort(key=lambda item: item.score, reverse=True)
+        beams = new_beams[: max(1, beam_width)]
+    return beams
+
+
+def _score_definition_combo(
+    selections: Mapping[str, dict[str, object]],
+    anchor_strengths: Mapping[str, float],
+) -> tuple[float, dict[str, float]]:
+    definitions_by_morph: dict[str, list[str]] = {}
+    qualities: list[float] = []
+    anchors: list[float] = []
+
+    for morph, candidate in selections.items():
+        definition = candidate.get("definition")
+        if isinstance(definition, str) and definition.strip():
+            definitions_by_morph[morph] = [definition]
+        else:
+            definitions_by_morph[morph] = []
+        qualities.append(_safe_number(candidate.get("quality"), default=0.0))
+        anchors.append(_safe_number(anchor_strengths.get(morph), default=0.0))
+
+    complementarity = compute_complementarity_band_similarity(
+        [definition for defs in definitions_by_morph.values() for definition in defs]
+    )
+    anchor_alignment = sum(anchors) / float(len(anchors)) if anchors else 0.0
+    definition_quality = sum(qualities) / float(len(qualities)) if qualities else 0.0
+    contradiction = compute_contradiction_penalty(definitions_by_morph)
+
+    score = (
+        0.45 * complementarity
+        + 0.30 * anchor_alignment
+        + 0.15 * definition_quality
+        - 0.10 * contradiction
+    )
+    components = {
+        "complementarity": complementarity,
+        "anchor_alignment": anchor_alignment,
+        "definition_quality": definition_quality,
+        "contradiction_penalty": contradiction,
+    }
+    return score, components
+
+
+def _lock_definition_anchors(
+    beam_results: list[DefinitionBeamResult],
+    morphs: list[str],
+    candidates: Mapping[str, list[dict[str, object]]],
+) -> dict[str, list[dict[str, object]]]:
+    if not beam_results:
+        return {}
+    locked: dict[str, list[dict[str, object]]] = {}
+    for morph in morphs:
+        selected_defs = [
+            result.selections.get(morph, {}).get("definition")
+            for result in beam_results
+        ]
+        unique_defs = [d for d in selected_defs if isinstance(d, str) and d.strip()]
+        if not unique_defs:
+            continue
+        candidate_defs = [
+            candidate.get("definition")
+            for candidate in candidates.get(morph, [])
+            if isinstance(candidate.get("definition"), str)
+        ]
+        cluster_map = _definition_cluster_map(candidate_defs)
+        clusters = {
+            cluster_map[definition]
+            for definition in unique_defs
+            if definition in cluster_map
+        }
+        if len(clusters) == 1:
+            target_cluster = next(iter(clusters))
+            locked[morph] = [
+                candidate
+                for candidate in candidates.get(morph, [])
+                if isinstance(candidate.get("definition"), str)
+                and cluster_map.get(candidate.get("definition")) == target_cluster
+            ]
+
+    if not locked:
+        return {}
+
+    merged = {**candidates}
+    for morph, entries in locked.items():
+        if entries:
+            merged[morph] = entries
+    return merged
+
+
+def _definition_cluster_map(definitions: list[str]) -> dict[str, int]:
+    cleaned = [definition.strip() for definition in definitions if isinstance(definition, str)]
+    if not cleaned:
+        return {}
+    if len(cleaned) == 1:
+        return {cleaned[0]: 0}
+
+    embedder = get_sentence_transformer("paraphrase-MiniLM-L6-v2")
+    clusters = cluster_definitions(
+        cleaned,
+        model=embedder,
+        similarity_threshold=0.8,
+    )
+    mapping: dict[str, int] = {}
+    for idx, cluster in enumerate(clusters):
+        for member_idx in cluster.get("members", []):
+            if isinstance(member_idx, int) and 0 <= member_idx < len(cleaned):
+                mapping[cleaned[member_idx]] = idx
+    return mapping
 
 
 def _collect_definition_candidates(
@@ -600,6 +898,30 @@ def _collect_definition_candidates(
                     "delta_cosine": hypothesis.delta_cosine,
                     "residual_before": hypothesis.residual_before,
                     "residual_after": hypothesis.residual_after,
+                }
+            )
+
+    for attested in evidence.attested_definitions:
+        if attested.source_word.upper() != morph:
+            continue
+        definition = _first_non_empty(attested.definition)
+        if definition:
+            add_candidate(
+                {
+                    "definition": definition,
+                    "source": "attested",
+                    "cluster_id": attested.cluster_id,
+                }
+            )
+
+    entry: DictionaryMorph | None = evidence.dictionary_morphs.get(morph)
+    if entry is not None:
+        definition = _first_non_empty(entry.definition, ", ".join(entry.senses))
+        if definition:
+            add_candidate(
+                {
+                    "definition": definition,
+                    "source": "dictionary",
                 }
             )
 
