@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import json
 import math
 import re
@@ -473,6 +473,52 @@ def compute_complementarity_band_similarity(
             sims.append(max(0.0, min(1.0, value)))
 
     return sum(sims) / float(len(sims)) if sims else 0.0
+
+
+CONTRADICTION_KEYWORD_PAIRS: list[tuple[str, str]] = [
+    ("light", "dark"),
+    ("life", "death"),
+    ("love", "hate"),
+    ("order", "chaos"),
+    ("create", "destroy"),
+]
+
+
+def compute_contradiction_penalty(
+    definitions_by_morph: Mapping[str, Iterable[str]],
+    *,
+    keyword_pairs: Iterable[tuple[str, str]] | None = None,
+    penalty_per_pair: float = 0.20,
+    max_penalty: float = 0.50,
+) -> float:
+    """Penalize contradictory keyword pairs across morph definitions."""
+    pairs = list(keyword_pairs) if keyword_pairs is not None else CONTRADICTION_KEYWORD_PAIRS
+    if not pairs:
+        return 0.0
+
+    corpus = " ".join(
+        definition.lower()
+        for definitions in definitions_by_morph.values()
+        for definition in definitions
+        if isinstance(definition, str) and definition.strip()
+    )
+    if not corpus:
+        return 0.0
+
+    detected = 0
+    for left, right in pairs:
+        if _keyword_present(corpus, left) and _keyword_present(corpus, right):
+            detected += 1
+
+    penalty = penalty_per_pair * detected
+    return min(max_penalty, max(0.0, penalty))
+
+
+def _keyword_present(corpus: str, keyword: str) -> bool:
+    if not keyword:
+        return False
+    pattern = rf"\\b{re.escape(keyword.lower())}\\b"
+    return re.search(pattern, corpus) is not None
 
 
 def _collect_definition_candidates(
