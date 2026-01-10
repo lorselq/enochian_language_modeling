@@ -58,7 +58,7 @@ from .scoring import (
 )
 from .strategies import (
     apply_strategy,
-    compute_contradiction_penalty,
+    compute_contradiction_penalty_for_candidates,
     extract_definition_candidates,
     select_top_k,
 )
@@ -712,15 +712,10 @@ class SingleWordTranslationService:
                         max_per_morph=3,
                     )
                     for key, score in parsed_paths:
-                        definitions_by_morph = {
-                            morph: [
-                                entry.get("definition")
-                                for entry in definition_candidates.get(morph, [])
-                                if isinstance(entry.get("definition"), str)
-                            ]
-                            for morph in key
-                        }
-                        penalty = compute_contradiction_penalty(definitions_by_morph)
+                        penalty = compute_contradiction_penalty_for_candidates(
+                            key,
+                            definition_candidates,
+                        )
                         adjusted = score - penalty
                         existing = beam_scores.get(key)
                         if existing is None or adjusted > existing:
