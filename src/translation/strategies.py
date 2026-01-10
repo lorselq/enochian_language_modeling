@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import json
+import math
 import re
 
+import numpy as np
+
 from enochian_lm.common.types import MaybeNumber
+from enochian_lm.root_extraction.utils.embeddings import get_sentence_transformer
 from .decomposition import Decomposition
 from .repository import ClusterRecord, WordEvidence
 
@@ -383,3 +387,231 @@ def _safe_number(value: MaybeNumber, *, default: float) -> float:
         except ValueError:
             return default
     return default
+
+
+# ---------------------------------------------
+# Beam-scoring helpers for definition candidates
+# ---------------------------------------------
+
+def extract_definition_candidates(
+    morphs: Iterable[str],
+    evidence: WordEvidence,
+    *,
+    max_per_morph: int = 3,
+) -> dict[str, list[dict[str, object]]]:
+    """Return candidate definitions per morph with quality metadata."""
+    try:
+        limit = max(0, int(max_per_morph))
+    except (TypeError, ValueError):
+        limit = 0
+
+    results: dict[str, list[dict[str, object]]] = {}
+    for raw_morph in morphs:
+        morph = (raw_morph or "").upper()
+        if not morph:
+            continue
+
+        candidates = _collect_definition_candidates(morph, evidence)
+        if candidates:
+            candidates.sort(
+                key=lambda item: (_candidate_quality(item), len(item.get("definition", ""))),
+                reverse=True,
+            )
+
+        if limit:
+            candidates = candidates[:limit]
+
+        results[morph] = candidates
+
+    return results
+
+
+def compute_anchor_strength(
+    morph: str,
+    candidates: Iterable[dict[str, object]],
+) -> float:
+    """Compute anchor strength using morph length, candidate count, and quality."""
+    morph_len = len((morph or "").strip())
+    candidate_list = list(candidates)
+    length_score = min(1.0, math.log1p(morph_len) / math.log1p(6))
+    scarcity_score = 1.0 / float(len(candidate_list)) if candidate_list else 0.0
+
+    quality_values: list[float] = []
+    for candidate in candidate_list:
+        for key in ("semantic_coverage", "cohesion", "semantic_cohesion"):
+            quality_values.append(_safe_number(candidate.get(key), default=0.0))
+    quality_score = (
+        sum(quality_values) / float(len(quality_values)) if quality_values else 0.0
+    )
+
+    blended = 0.45 * length_score + 0.35 * scarcity_score + 0.20 * quality_score
+    return max(0.0, min(1.0, blended))
+
+
+def compute_complementarity_band_similarity(
+    definitions: Iterable[str],
+    *,
+    target: float = 0.45,
+    radius: float = 0.20,
+) -> float:
+    """Compute complementarity-band similarity using sentence-transformer embeddings."""
+    cleaned = [text.strip() for text in definitions if isinstance(text, str) and text.strip()]
+    if len(cleaned) < 2:
+        return 0.0
+
+    embedder = get_sentence_transformer("paraphrase-MiniLM-L6-v2")
+    vectors = [
+        np.array(embedder.encode(text, normalize_embeddings=True), dtype=float)
+        for text in cleaned
+    ]
+
+    sims: list[float] = []
+    for i in range(len(vectors)):
+        for j in range(i + 1, len(vectors)):
+            similarity = float(np.dot(vectors[i], vectors[j]))
+            value = 1.0 - abs(similarity - target) / radius
+            sims.append(max(0.0, min(1.0, value)))
+
+    return sum(sims) / float(len(sims)) if sims else 0.0
+
+
+CONTRADICTION_KEYWORD_PAIRS: list[tuple[str, str]] = [
+    ("light", "dark"),
+    ("life", "death"),
+    ("love", "hate"),
+    ("order", "chaos"),
+    ("create", "destroy"),
+]
+
+
+def compute_contradiction_penalty(
+    definitions_by_morph: Mapping[str, Iterable[str]],
+    *,
+    keyword_pairs: Iterable[tuple[str, str]] | None = None,
+    penalty_per_pair: float = 0.20,
+    max_penalty: float = 0.50,
+) -> float:
+    """Penalize contradictory keyword pairs across morph definitions."""
+    pairs = list(keyword_pairs) if keyword_pairs is not None else CONTRADICTION_KEYWORD_PAIRS
+    if not pairs:
+        return 0.0
+
+    corpus = " ".join(
+        definition.lower()
+        for definitions in definitions_by_morph.values()
+        for definition in definitions
+        if isinstance(definition, str) and definition.strip()
+    )
+    if not corpus:
+        return 0.0
+
+    detected = 0
+    for left, right in pairs:
+        if _keyword_present(corpus, left) and _keyword_present(corpus, right):
+            detected += 1
+
+    penalty = penalty_per_pair * detected
+    return min(max_penalty, max(0.0, penalty))
+
+
+def _keyword_present(corpus: str, keyword: str) -> bool:
+    if not keyword:
+        return False
+    pattern = rf"\\b{re.escape(keyword.lower())}\\b"
+    return re.search(pattern, corpus) is not None
+
+
+def _collect_definition_candidates(
+    morph: str,
+    evidence: WordEvidence,
+) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def add_candidate(payload: dict[str, object]) -> None:
+        definition = payload.get("definition")
+        if not isinstance(definition, str):
+            return
+        normalized = definition.strip()
+        if not normalized:
+            return
+        key = normalized.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        payload["definition"] = normalized
+        payload["quality"] = _candidate_quality(payload)
+        candidates.append(payload)
+
+    for cluster in evidence.direct_clusters:
+        if cluster.ngram.upper() != morph:
+            continue
+        definition = _first_non_empty(
+            _extract_glossator_definition(cluster.glossator_def),
+            _first_cluster_raw_definition(cluster),
+            cluster.residual_headline,
+        )
+        if definition:
+            add_candidate(
+                {
+                    "definition": definition,
+                    "source": "cluster",
+                    "cluster_id": cluster.cluster_id,
+                    "semantic_coverage": cluster.semantic_coverage,
+                    "cohesion": cluster.cohesion,
+                    "semantic_cohesion": cluster.semantic_cohesion,
+                    "residual_ratio": cluster.residual_ratio,
+                    "residual_explained": cluster.residual_explained,
+                }
+            )
+
+    for residual in evidence.residual_semantics:
+        if residual.residual.upper() != morph:
+            continue
+        definition = _first_non_empty(
+            _extract_glossator_definition(residual.glossator_def),
+            residual.residual_headline,
+        )
+        if definition:
+            add_candidate(
+                {
+                    "definition": definition,
+                    "source": "residual",
+                    "semantic_coverage": residual.semantic_coverage,
+                    "cohesion": residual.cohesion,
+                    "semantic_cohesion": residual.semantic_cohesion,
+                    "residual_ratio": residual.residual_ratio,
+                    "residual_explained": residual.residual_explained,
+                    "derivational_validity": residual.derivational_validity,
+                }
+            )
+
+    for hypothesis in evidence.morph_hypotheses:
+        if hypothesis.morph.upper() != morph:
+            continue
+        seed_glosses = ", ".join(g for g in hypothesis.seed_glosses if g and g.strip())
+        definition = _first_non_empty(hypothesis.proposed_gloss, seed_glosses, hypothesis.anchor)
+        if definition:
+            add_candidate(
+                {
+                    "definition": definition,
+                    "source": "hypothesis",
+                    "anchor": hypothesis.anchor,
+                    "delta_cosine": hypothesis.delta_cosine,
+                    "residual_before": hypothesis.residual_before,
+                    "residual_after": hypothesis.residual_after,
+                }
+            )
+
+    return candidates
+
+
+def _candidate_quality(candidate: dict[str, object]) -> float:
+    metrics = [
+        candidate.get("semantic_coverage"),
+        candidate.get("cohesion"),
+        candidate.get("semantic_cohesion"),
+        candidate.get("delta_cosine"),
+    ]
+    values = [_safe_number(metric, default=0.0) for metric in metrics if metric is not None]
+    return sum(values) / float(len(values)) if values else 0.0
