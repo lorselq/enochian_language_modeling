@@ -555,6 +555,13 @@ CONTRADICTION_KEYWORD_PAIRS: list[tuple[str, str]] = [
     ("whole", "part"),
     ("light", "dark"),
     ("still", "move"),
+    ("good", "wicked"),
+    ("righteous", "sinful"),
+    ("light", "dark"),
+    ("life", "death"),
+    ("love", "hate"),
+    ("order", "chaos"),
+    ("create", "destroy"),
 ]
 
 
