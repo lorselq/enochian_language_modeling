@@ -108,8 +108,8 @@ def synthesize_definition(
       with the human-readable ``meanings`` and coverage context.
     - Leveraging the existing ``QueryModelTool`` infrastructure to keep LLM
       invocation consistent with the rest of the codebase.
-    - Handling LLM failures gracefully by returning the concatenated meanings
-      along with transparent reasoning and warnings.
+    - Enforcing mandatory ``best_estimations`` output with retries and
+      validation to keep downstream consumers consistent.
     """
 
     normalized_morphs = [m.upper() for m in morphs if m]
@@ -119,48 +119,75 @@ def synthesize_definition(
     prompt = _build_prompt(normalized_morphs, cleaned_meanings, context)
     use_remote = bool(context.get("use_remote", False))
 
-    try:
-        llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
-        tool = QueryModelTool(
-            system_prompt=(
-                "You are a precise Enochian glossator. Combine morph semantics "
-                "into a single, well-formed definition without inventing "
-                "unsupported etymologies. "
-                f"Historical scope: {llm_context}"
-            ),
-            name="Definition Synthesizer",
-            description="Compose a concise morph-level synthesis",
-            use_remote=use_remote,
-        )
-        response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
-        parsed = _parse_response(response.get("response_text", ""), fallback=concatenated, context=context)
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    tool = QueryModelTool(
+        system_prompt=(
+            "You are a precise Enochian glossator. Combine morph semantics "
+            "into a single, well-formed definition without inventing "
+            "unsupported etymologies. "
+            f"Historical scope: {llm_context}"
+        ),
+        name="Definition Synthesizer",
+        description="Compose a concise morph-level synthesis",
+        use_remote=use_remote,
+    )
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+            parsed = _parse_response(
+                response.get("response_text", ""), fallback=concatenated, context=context
+            )
 
-        synthesized_raw = parsed.get("definition")
-        synthesized: str | None = synthesized_raw if isinstance(synthesized_raw, str) else None
-        confidence_raw = parsed.get("confidence")
-        confidence_val: float | None = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else None
-        confidence = _resolved_confidence(confidence_val, context)
-        reasoning_raw = parsed.get("reasoning")
-        reasoning: str = reasoning_raw if isinstance(reasoning_raw, str) else "Synthesized definition via LLM."
-        best_estimations = _coerce_best_estimations(parsed.get("best_estimations"))
+            synthesized_raw = parsed.get("definition")
+            synthesized: str | None = synthesized_raw if isinstance(synthesized_raw, str) else None
+            confidence_raw = parsed.get("confidence")
+            confidence_val: float | None = (
+                float(confidence_raw) if isinstance(confidence_raw, (int, float)) else None
+            )
+            confidence = _resolved_confidence(confidence_val, context)
+            reasoning_raw = parsed.get("reasoning")
+            reasoning: str = (
+                reasoning_raw if isinstance(reasoning_raw, str) else "Synthesized definition via LLM."
+            )
+            best_estimations = _coerce_best_estimations(parsed.get("best_estimations"))
+            if not best_estimations:
+                best_estimations = _request_best_estimations(
+                    tool,
+                    context,
+                    synthesized or concatenated,
+                    response.get("response_text", ""),
+                )
+            if not best_estimations:
+                raise ValueError("Missing required best_estimations list.")
 
-        return SynthesisResult(
-            synthesized_definition=synthesized,
-            concatenated_meanings=concatenated,
-            confidence=confidence,
-            reasoning=reasoning,
-            raw_response=response.get("response_text"),
-            best_estimations=best_estimations,
-        )
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        LOGGER.warning("LLM synthesis failed; falling back to concatenated meanings", exc_info=exc)
-        return SynthesisResult(
-            synthesized_definition=None,
-            concatenated_meanings=concatenated,
-            confidence=_resolved_confidence(None, context, fallback_only=True),
-            reasoning="LLM synthesis unavailable; returned concatenated meanings instead.",
-            warnings=[str(exc)],
-        )
+            return SynthesisResult(
+                synthesized_definition=synthesized,
+                concatenated_meanings=concatenated,
+                confidence=confidence,
+                reasoning=reasoning,
+                raw_response=response.get("response_text"),
+                best_estimations=best_estimations,
+            )
+        except ValueError as exc:
+            last_error = exc
+            prompt = _build_prompt(
+                normalized_morphs,
+                cleaned_meanings,
+                {**context, "validation_error": str(exc)},
+            )
+            continue
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            last_error = exc
+            break
+
+    message = (
+        "LLM synthesis failed to return mandatory best_estimations."
+        if last_error is None
+        else f"LLM synthesis failed: {last_error}"
+    )
+    LOGGER.error(message)
+    raise ValueError(message)
 
 
 def synthesize_consensus(
@@ -172,47 +199,71 @@ def synthesize_consensus(
     prompt = _build_consensus_prompt(candidates, context)
     use_remote = bool(context.get("use_remote", False))
 
-    try:
-        llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
-        tool = QueryModelTool(
-            system_prompt=(
-                "You are a precision Enochian glossator. Combine candidate senses "
-                "into one concrete consensus without inventing unsupported etymologies. "
-                f"Historical scope: {llm_context}"
-            ),
-            name="Consensus Synthesizer",
-            description="Compose a consensus definition across candidates",
-            use_remote=use_remote,
-        )
-        response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
-        parsed = _parse_response(
-            response.get("response_text", ""), fallback="", context=context
-        )
-        synthesized_raw = parsed.get("definition")
-        synthesized: str | None = synthesized_raw if isinstance(synthesized_raw, str) else None
-        confidence_raw = parsed.get("confidence")
-        confidence_val: float | None = float(confidence_raw) if isinstance(confidence_raw, (int, float)) else None
-        confidence = _resolved_confidence(confidence_val, context)
-        reasoning_raw = parsed.get("reasoning")
-        reasoning: str = reasoning_raw if isinstance(reasoning_raw, str) else "Consensus synthesis via LLM."
-        best_estimations = _coerce_best_estimations(parsed.get("best_estimations"))
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    tool = QueryModelTool(
+        system_prompt=(
+            "You are a precision Enochian glossator. Combine candidate senses "
+            "into one concrete consensus without inventing unsupported etymologies. "
+            f"Historical scope: {llm_context}"
+        ),
+        name="Consensus Synthesizer",
+        description="Compose a consensus definition across candidates",
+        use_remote=use_remote,
+    )
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+            parsed = _parse_response(
+                response.get("response_text", ""), fallback="", context=context
+            )
+            synthesized_raw = parsed.get("definition")
+            synthesized: str | None = synthesized_raw if isinstance(synthesized_raw, str) else None
+            confidence_raw = parsed.get("confidence")
+            confidence_val: float | None = (
+                float(confidence_raw) if isinstance(confidence_raw, (int, float)) else None
+            )
+            confidence = _resolved_confidence(confidence_val, context)
+            reasoning_raw = parsed.get("reasoning")
+            reasoning: str = (
+                reasoning_raw if isinstance(reasoning_raw, str) else "Consensus synthesis via LLM."
+            )
+            best_estimations = _coerce_best_estimations(parsed.get("best_estimations"))
+            if not best_estimations:
+                best_estimations = _request_best_estimations(
+                    tool,
+                    context,
+                    synthesized or "",
+                    response.get("response_text", ""),
+                )
+            if not best_estimations:
+                raise ValueError("Missing required best_estimations list.")
 
-        return ConsensusSynthesisResult(
-            synthesized_definition=synthesized,
-            best_estimations=best_estimations,
-            confidence=confidence,
-            reasoning=reasoning,
-            raw_response=response.get("response_text"),
-        )
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        LOGGER.warning("Consensus synthesis failed; returning empty result", exc_info=exc)
-        return ConsensusSynthesisResult(
-            synthesized_definition=None,
-            best_estimations=[],
-            confidence=_resolved_confidence(None, context, fallback_only=True),
-            reasoning="Consensus synthesis unavailable; no aggregate definition.",
-            warnings=[str(exc)],
-        )
+            return ConsensusSynthesisResult(
+                synthesized_definition=synthesized,
+                best_estimations=best_estimations,
+                confidence=confidence,
+                reasoning=reasoning,
+                raw_response=response.get("response_text"),
+            )
+        except ValueError as exc:
+            last_error = exc
+            prompt = _build_consensus_prompt(
+                candidates,
+                {**context, "validation_error": str(exc)},
+            )
+            continue
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            last_error = exc
+            break
+
+    message = (
+        "Consensus synthesis failed to return mandatory best_estimations."
+        if last_error is None
+        else f"Consensus synthesis failed: {last_error}"
+    )
+    LOGGER.error(message)
+    raise ValueError(message)
 
 
 def _build_prompt(
@@ -252,7 +303,20 @@ def _build_prompt(
         },
         ensure_ascii=False,
     )
+    example_block = json.dumps(
+        {
+            "definition": "A pillar that bears a counted segment in shared praise.",
+            "best_estimations": ["stone pillar", "praise rite", "linked support"],
+            "confidence": 0.62,
+            "reasoning": "Combines pillar, segment, and praise-with relation into one sense.",
+        },
+        ensure_ascii=False,
+    )
 
+    validation_error = context.get("validation_error")
+    validation_note = (
+        f"VALIDATION NOTE: {validation_error}" if isinstance(validation_error, str) else None
+    )
     instruction_lines = [
         "ROLE: You are a precision Enochian glossator.",
         f"HISTORICAL CONTEXT: {llm_context}",
@@ -262,6 +326,7 @@ def _build_prompt(
         "- Produce exactly one concise sense (no lists, no multiple senses, no hedging).",
         "- Provide 3-6 concrete 'best_estimations' (1-3 word phrases) that make the sense tangible.",
         "- 'best_estimations' should prefer physical objects/actions when possible.",
+        "- 'best_estimations' is REQUIRED. Responses missing it are invalid.",
         "- One sentence for definition, one sentence for reasoning; trim whitespace.",
         f"- Hard max length per field: {max_len} characters; truncate gracefully if needed.",
         "- Return STRICT JSON only, matching the schema below (no prose around it).",
@@ -276,7 +341,11 @@ def _build_prompt(
         f"- Strategy hint: {strategy}",
         "SCHEMA (return exactly this shape):",
         schema_block,
+        "EXAMPLE (format only; do not copy wording):",
+        example_block,
     ]
+    if validation_note:
+        instruction_lines.append(validation_note)
 
     return "\n".join(instruction_lines)
 
@@ -337,7 +406,20 @@ def _build_consensus_prompt(
         },
         ensure_ascii=False,
     )
+    example_block = json.dumps(
+        {
+            "definition": "A shared rite of praise around a counted pillar segment.",
+            "best_estimations": ["praise rite", "pillar segment", "shared accord"],
+            "confidence": 0.58,
+            "reasoning": "Consensus favors praise, structure, and relation across candidates.",
+        },
+        ensure_ascii=False,
+    )
 
+    validation_error = context.get("validation_error")
+    validation_note = (
+        f"VALIDATION NOTE: {validation_error}" if isinstance(validation_error, str) else None
+    )
     instruction_lines = [
         "ROLE: You are a precision Enochian glossator.",
         "TASK: Combine the top candidate senses into one consensus meaning.",
@@ -347,6 +429,7 @@ def _build_consensus_prompt(
         "- Prefer the overlapping concrete semantics across candidates.",
         "- Produce exactly one concise sense (no lists, no multiple senses).",
         "- Provide 3-6 concrete 'best_estimations' (1-3 word phrases) that fit the consensus.",
+        "- 'best_estimations' is REQUIRED. Responses missing it are invalid.",
         "- One sentence for definition, one sentence for reasoning; trim whitespace.",
         f"- Hard max length per field: {max_len} characters; truncate gracefully if needed.",
         "- Return STRICT JSON only, matching the schema below (no prose around it).",
@@ -357,7 +440,11 @@ def _build_consensus_prompt(
         candidates_block,
         "SCHEMA (return exactly this shape):",
         schema_block,
+        "EXAMPLE (format only; do not copy wording):",
+        example_block,
     ]
+    if validation_note:
+        instruction_lines.append(validation_note)
 
     return "\n".join(instruction_lines)
 
@@ -428,6 +515,87 @@ def _coerce_best_estimations(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     cleaned = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    return cleaned[:6]
+
+
+def _request_best_estimations(
+    tool: QueryModelTool,
+    context: dict[str, object],
+    synthesized: str,
+    raw_response: str,
+) -> list[str]:
+    prompt = _build_best_estimations_prompt(context, synthesized, raw_response)
+    for _ in range(2):
+        response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+        parsed = _parse_best_estimations_response(response.get("response_text", ""))
+        if parsed:
+            return parsed
+        prompt = _build_best_estimations_prompt(
+            {**context, "validation_error": "Missing or empty best_estimations list."},
+            synthesized,
+            raw_response,
+        )
+    return []
+
+
+def _build_best_estimations_prompt(
+    context: dict[str, object],
+    synthesized: str,
+    raw_response: str,
+) -> str:
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    validation_error = context.get("validation_error")
+    validation_note = (
+        f"VALIDATION NOTE: {validation_error}" if isinstance(validation_error, str) else None
+    )
+    schema_block = json.dumps(
+        {
+            "best_estimations": [
+                "<concrete 1-3 word phrase>",
+                "<concrete 1-3 word phrase>",
+                "<concrete 1-3 word phrase>",
+            ]
+        },
+        ensure_ascii=False,
+    )
+    example_block = json.dumps(
+        {"best_estimations": ["stone pillar", "praise rite", "linked support"]},
+        ensure_ascii=False,
+    )
+    instruction_lines = [
+        "ROLE: You are a precision Enochian glossator.",
+        "TASK: Extract 3-5 concrete best_estimations from the synthesis.",
+        f"HISTORICAL CONTEXT: {llm_context}",
+        "CONSTRAINTS:",
+        "- Use ONLY the provided synthesis or LLM output; no new etymology.",
+        "- Provide 3-5 concrete 'best_estimations' (1-3 word phrases).",
+        "- 'best_estimations' is REQUIRED. Responses missing it are invalid.",
+        "- Return STRICT JSON only, matching the schema below (no prose around it).",
+        "SYNTHESIS:",
+        synthesized or "(none)",
+        "RAW LLM OUTPUT:",
+        raw_response or "(none)",
+        "SCHEMA (return exactly this shape):",
+        schema_block,
+        "EXAMPLE (format only; do not copy wording):",
+        example_block,
+    ]
+    if validation_note:
+        instruction_lines.append(validation_note)
+    return "\n".join(instruction_lines)
+
+
+def _parse_best_estimations_response(payload: str) -> list[str]:
+    if not payload:
+        return []
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+    best_estimations = data.get("best_estimations")
+    if not isinstance(best_estimations, list):
+        return []
+    cleaned = [item.strip() for item in best_estimations if isinstance(item, str) and item.strip()]
     return cleaned[:6]
 
 
