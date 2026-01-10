@@ -548,6 +548,7 @@ def _build_output_payload(
         "senses": senses,
         "evidence": evidence,
         "fallback_morphs": result.get("fallback_morphs", []),
+        "consensus_synthesis": result.get("consensus_synthesis"),
     }
 
     candidates_raw = result.get("candidates")
@@ -568,10 +569,15 @@ def _build_output_payload(
                 "meanings": list(meanings_raw) if isinstance(meanings_raw, (list, tuple)) else [],
                 "synthesized_definition": candidate.get("synthesized_definition"),
                 "concatenated_meanings": candidate.get("concatenated_meanings"),
+                "best_estimations": candidate.get("best_estimations"),
                 "confidence": candidate.get("confidence"),
                 "warnings": list(warnings_raw) if isinstance(warnings_raw, (list, tuple)) else [],
             }
         )
+
+    consensus_inputs = _build_consensus_inputs(senses)
+    if consensus_inputs:
+        payload["consensus_inputs"] = consensus_inputs
 
     _apply_residual_only_adjustment(payload)
     if _no_direct_evidence(evidence):
@@ -618,6 +624,47 @@ def _apply_residual_only_adjustment(payload: dict[str, object]) -> None:
         confidence = sense.get("confidence")
         if isinstance(confidence, (int, float)):
             sense["confidence"] = max(0.0, min(1.0, float(confidence) - 0.2))
+
+
+def _build_consensus_inputs(senses: list[dict[str, object]]) -> dict[str, object] | None:
+    synthesized_definitions: list[dict[str, object]] = []
+    concatenated_meanings: list[dict[str, object]] = []
+    best_estimations: list[dict[str, object]] = []
+
+    for sense in senses:
+        if not isinstance(sense, dict):
+            continue
+        rank = sense.get("rank")
+        synthesized = sense.get("synthesized_definition")
+        concatenated = sense.get("concatenated_meanings")
+        estimations = sense.get("best_estimations")
+
+        if isinstance(synthesized, str) and synthesized:
+            synthesized_definitions.append(
+                {"rank": rank, "synthesized_definition": synthesized}
+            )
+        if isinstance(concatenated, str) and concatenated:
+            concatenated_meanings.append(
+                {"rank": rank, "concatenated_meanings": concatenated}
+            )
+        if isinstance(estimations, list) and estimations:
+            best_estimations.append(
+                {
+                    "rank": rank,
+                    "best_estimations": [
+                        item for item in estimations if isinstance(item, str) and item
+                    ],
+                }
+            )
+
+    if not synthesized_definitions and not concatenated_meanings and not best_estimations:
+        return None
+
+    return {
+        "synthesized_definitions": synthesized_definitions,
+        "concatenated_meanings": concatenated_meanings,
+        "best_estimations": best_estimations,
+    }
 
 
 def _no_direct_evidence(evidence: dict[str, object]) -> bool:
@@ -769,18 +816,18 @@ def _format_variant_report(
             best_estimations = sense.get("best_estimations")
             if synthesized:
                 lines.append(_wrap_text(f"Synthesized: {synthesized}", indent=0))
-                if isinstance(best_estimations, list) and best_estimations:
-                    lines.append("Best Estimations:")
-                    for estimation in best_estimations:
-                        if not isinstance(estimation, str) or not estimation:
-                            continue
-                        lines.append(_wrap_text(estimation, indent=2, bullet=True))
                 if concatenated:
                     lines.append(_wrap_text(f"Concatenated: {concatenated}", indent=0))
             elif concatenated:
                 lines.append(
                     _wrap_text(f"Concatenated meanings: {concatenated}", indent=0)
                 )
+            if isinstance(best_estimations, list) and best_estimations:
+                lines.append("Best Estimations:")
+                for estimation in best_estimations:
+                    if not isinstance(estimation, str) or not estimation:
+                        continue
+                    lines.append(_wrap_text(estimation, indent=2, bullet=True))
 
             confidence = sense.get("confidence")
             if isinstance(confidence, (int, float)):
@@ -1154,6 +1201,45 @@ def _format_variant_report(
         definition = consensus.get("synthesized_definition")
         if isinstance(definition, str) and definition:
             lines.append(_wrap_text(f"Synthesized: {definition}", indent=0))
+        consensus_inputs = payload.get("consensus_inputs")
+        if isinstance(consensus_inputs, dict) and consensus_inputs:
+            synthesized_inputs = consensus_inputs.get("synthesized_definitions")
+            if isinstance(synthesized_inputs, list) and synthesized_inputs:
+                lines.append("Consensus inputs (synthesized definitions):")
+                for entry in synthesized_inputs:
+                    if not isinstance(entry, dict):
+                        continue
+                    rank = entry.get("rank")
+                    value = entry.get("synthesized_definition")
+                    if isinstance(value, str) and value:
+                        label = f"Rank {rank}: {value}" if rank else value
+                        lines.append(_wrap_text(label, indent=2, bullet=True))
+            concatenated_inputs = consensus_inputs.get("concatenated_meanings")
+            if isinstance(concatenated_inputs, list) and concatenated_inputs:
+                lines.append("Consensus inputs (concatenated meanings):")
+                for entry in concatenated_inputs:
+                    if not isinstance(entry, dict):
+                        continue
+                    rank = entry.get("rank")
+                    value = entry.get("concatenated_meanings")
+                    if isinstance(value, str) and value:
+                        label = f"Rank {rank}: {value}" if rank else value
+                        lines.append(_wrap_text(label, indent=2, bullet=True))
+            best_inputs = consensus_inputs.get("best_estimations")
+            if isinstance(best_inputs, list) and best_inputs:
+                lines.append("Consensus inputs (best estimations):")
+                for entry in best_inputs:
+                    if not isinstance(entry, dict):
+                        continue
+                    rank = entry.get("rank")
+                    values = entry.get("best_estimations")
+                    if isinstance(values, list) and values:
+                        label = f"Rank {rank}: " if rank else ""
+                        label += ", ".join(
+                            item for item in values if isinstance(item, str) and item
+                        )
+                        if label.strip():
+                            lines.append(_wrap_text(label, indent=2, bullet=True))
         best_estimations = consensus.get("best_estimations")
         if isinstance(best_estimations, list) and best_estimations:
             lines.append("Best Estimations:")
