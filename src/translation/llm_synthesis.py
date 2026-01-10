@@ -360,6 +360,9 @@ def _build_consensus_prompt(
     llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
 
     candidate_lines: list[str] = []
+    synthesized_lines: list[str] = []
+    concatenated_lines: list[str] = []
+    best_estimation_lines: list[str] = []
     for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
@@ -381,6 +384,13 @@ def _build_consensus_prompt(
             "concatenated_meanings"
         )
         confidence = candidate.get("confidence")
+        best_estimations = candidate.get("best_estimations")
+        best_estimation_list = (
+            best_estimations if isinstance(best_estimations, list) else []
+        )
+        best_estimation_label = ", ".join(
+            str(item) for item in best_estimation_list if isinstance(item, str) and item
+        )
         candidate_lines.append(
             "\n".join(
                 [
@@ -391,8 +401,25 @@ def _build_consensus_prompt(
                 ]
             )
         )
+        if candidate.get("synthesized_definition"):
+            synthesized_lines.append(
+                f"- Rank {rank}: {candidate.get('synthesized_definition')}"
+            )
+        if candidate.get("concatenated_meanings"):
+            concatenated_lines.append(
+                f"- Rank {rank}: {candidate.get('concatenated_meanings')}"
+            )
+        if best_estimation_label:
+            best_estimation_lines.append(f"- Rank {rank}: {best_estimation_label}")
 
     candidates_block = "\n".join(candidate_lines) or "- No candidate summaries available"
+    synthesized_block = "\n".join(synthesized_lines) or "- No synthesized definitions available"
+    concatenated_block = (
+        "\n".join(concatenated_lines) or "- No concatenated meanings available"
+    )
+    best_estimations_block = (
+        "\n".join(best_estimation_lines) or "- No best estimations available"
+    )
     schema_block = json.dumps(
         {
             "definition": f"<one-sentence consensus definition, <= {max_len} chars>",
@@ -438,6 +465,12 @@ def _build_consensus_prompt(
         f"- Coverage: coverage_ratio={coverage_ratio:.2f}, residual_ratio={residual_ratio:.2f}",
         "CANDIDATES:",
         candidates_block,
+        "SYNTHESIZED DEFINITIONS:",
+        synthesized_block,
+        "CONCATENATED MEANINGS:",
+        concatenated_block,
+        "BEST ESTIMATIONS:",
+        best_estimations_block,
         "SCHEMA (return exactly this shape):",
         schema_block,
         "EXAMPLE (format only; do not copy wording):",
