@@ -595,6 +595,41 @@ def compute_contradiction_penalty(
     return min(max_penalty, max(0.0, penalty))
 
 
+def compute_contradiction_penalty_for_candidates(
+    morphs: Iterable[str],
+    candidates: Mapping[str, list[dict[str, object]]],
+    *,
+    beam_width: int = 6,
+    max_defs_per_morph: int = 4,
+    keyword_pairs: Iterable[tuple[str, str]] | None = None,
+    penalty_per_pair: float = 0.20,
+    max_penalty: float = 0.50,
+) -> float:
+    selections, _beam_results = _select_definition_combination(
+        morphs,
+        candidates,
+        beam_width=beam_width,
+        max_defs_per_morph=max_defs_per_morph,
+    )
+    if not selections:
+        return 0.0
+
+    definitions_by_morph: dict[str, list[str]] = {}
+    for morph, selection in selections.items():
+        definition = selection.get("definition")
+        if isinstance(definition, str) and definition.strip():
+            definitions_by_morph[morph] = [definition]
+        else:
+            definitions_by_morph[morph] = []
+
+    return compute_contradiction_penalty(
+        definitions_by_morph,
+        keyword_pairs=keyword_pairs,
+        penalty_per_pair=penalty_per_pair,
+        max_penalty=max_penalty,
+    )
+
+
 def _keyword_present(corpus: str, keyword: str) -> bool:
     if not keyword:
         return False
