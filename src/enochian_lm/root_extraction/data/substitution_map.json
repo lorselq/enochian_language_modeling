@@ -16,7 +16,7 @@
     "canonical": "c",
     "alternates": [
       { "value": "k", "confidence": "high", "direction": "to" },
-      { "value": "t", "confidence": "high", "direction": "both" },
+      { "value": "t", "confidence": "medium", "direction": "both" },
       { "value": "veh", "confidence": "low", "direction": "to" },
       { "value": "ve", "confidence": "low", "direction": "to" }
     ]
@@ -122,8 +122,8 @@
   "t": {
     "canonical": "t",
     "alternates": [
-      { "value": "d", "confidence": "high", "direction": "both" },
-      { "value": "c", "confidence": "high", "direction": "both" },
+      { "value": "d", "confidence": "medium", "direction": "both" },
+      { "value": "c", "confidence": "medium", "direction": "both" },
       { "value": "gisg", "confidence": "low", "direction": "to" }
     ]
   },
