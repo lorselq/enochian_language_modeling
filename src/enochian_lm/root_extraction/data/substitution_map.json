@@ -114,6 +114,7 @@
   "s": {
     "canonical": "s",
     "alternates": [
+      { "value": "ph", "confidence": "medium", "direction": "both" },
       { "value": "es", "confidence": "medium", "direction": "both" },
       { "value": "fam", "confidence": "low", "direction": "to" }
     ]
@@ -154,7 +155,7 @@
   "z": {
     "canonical": "z",
     "alternates": [
-      { "value": "zod", "confidence": "low", "direction": "to" },
+      { "value": "zod", "confidence": "low", "direction": "both" },
       { "value": "ceph", "confidence": "low", "direction": "to" },
       { "value": "cef", "confidence": "low", "direction": "to" }
     ]
