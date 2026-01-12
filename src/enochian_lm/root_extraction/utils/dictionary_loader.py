@@ -88,6 +88,7 @@ def load_dictionary(
     Load dictionary JSON (list or dict) into validated Entry objects.
     - Supports 'alternates', 'senses', or single 'definition'.
     - Captures 'key_citations', 'commentary', and 'canon_word' if present.
+    - Skips entries explicitly marked with canon_word=False.
     - Normalizes, deduplicates alternates, and caches by JSON hash (cache currently disabled).
     """
     os.makedirs(cache_dir, exist_ok=True)
@@ -105,11 +106,15 @@ def load_dictionary(
             if not isinstance(item, dict):
                 logger.warning(f"Skipping non-dict entry: {item}")
                 continue
+            if item.get("canon_word") is False:
+                continue
             key = item.get("canonical") or item.get("word") or ""
             items.append((key, item))
     elif isinstance(raw, dict):
         logger.info(f"Loading {len(raw)} entries from dict JSON")
         for key, val in raw.items():
+            if isinstance(val, dict) and val.get("canon_word") is False:
+                continue
             items.append((key, val))
     else:
         logger.error("Unsupported JSON root type: %s", type(raw))
@@ -221,6 +226,8 @@ def load_dictionary_v2(json_path: str) -> list[EntryRecord]:
     out: list[EntryRecord] = []
     for it in raw:
         if not isinstance(it, dict):
+            continue
+        if it.get("canon_word") is False:
             continue
         canonical = (it.get("normalized") or it.get("word") or "").lower().strip()
         if not canonical:
