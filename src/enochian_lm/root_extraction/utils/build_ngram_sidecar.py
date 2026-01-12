@@ -91,7 +91,7 @@ def _load_dictionary(path: Path) -> list[DictionaryEntry]:
     """Load dictionary.json as a list of DictionaryEntry."""
     data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, list):
-        return data
+        return [entry for entry in data if entry.get("canon_word") is not False]
     return []
 
 
@@ -203,13 +203,13 @@ def generate_variants_for_word(
     letter_out: list[tuple[str, str]],
     seq_out: list[tuple[str, str]],
     max_ops: int = 2,
-    max_variants: int = 2000,
+    max_variants: int | None = None,
 ) -> set[str]:
     """
     Generate plausible surface variants from a canonical by applying:
       - sequence-level canonical→surface expansions
       - letter-level canonical→alternate substitutions
-    Bounded by max_ops and max_variants to prevent blowup.
+    Bounded by max_ops and optionally max_variants to prevent blowup.
     Returns lowercase strings.
     """
     base = canon_lower.upper()
@@ -229,16 +229,16 @@ def generate_variants_for_word(
                 out.add(s.replace(frm, to))
         return {x for x in out if x}
 
-    while frontier and ops < max_ops and len(seen) < max_variants:
+    while frontier and ops < max_ops and (max_variants is None or len(seen) < max_variants):
         nxt: set[str] = set()
         for s in list(frontier):
             for t in apply_once(s):
                 if t not in seen:
                     seen.add(t)
                     nxt.add(t)
-                    if len(seen) >= max_variants:
+                    if max_variants is not None and len(seen) >= max_variants:
                         break
-            if len(seen) >= max_variants:
+            if max_variants is not None and len(seen) >= max_variants:
                 break
         frontier = nxt
         ops += 1
@@ -373,6 +373,7 @@ def build_sidecar(
     max_n: int = 7,
     respect_pauses: bool = True,
     variant_map_path: Path | None = None,
+    max_variants: int | None = None,
 ) -> None:
 
     # 1) Load authoritative dictionary canonicals (letters-only, lower)
@@ -407,7 +408,13 @@ def build_sidecar(
 
     variant_index: dict[str, set[str]] = defaultdict(set)
     for canon in dict_types:
-        variants = generate_variants_for_word(canon, letter_out, seq_out, max_ops=2)
+        variants = generate_variants_for_word(
+            canon,
+            letter_out,
+            seq_out,
+            max_ops=2,
+            max_variants=max_variants,
+        )
         for v in variants:
             variant_index[v].add(canon)
 
@@ -671,6 +678,7 @@ def main() -> None:
     ap.add_argument("--max_n", type=int, default=7)
     ap.add_argument("--respect_pauses", type=int, default=1)
     ap.add_argument("--variant_map", type=Path, default=None)  # optional manual overrides
+    ap.add_argument("--max_variants", type=int, default=None)  # optional guardrail
     args = ap.parse_args()
 
     build_sidecar(
@@ -683,6 +691,7 @@ def main() -> None:
         max_n=args.max_n,
         respect_pauses=bool(args.respect_pauses),
         variant_map_path=args.variant_map,
+        max_variants=args.max_variants,
     )
 
 if __name__ == "__main__":
