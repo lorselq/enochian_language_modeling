@@ -349,7 +349,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
         except FileNotFoundError as exc:
             _emit_error(str(exc))
             return 2
-    top_k = max(1, int(args.top_k)) if args.top_k is not None else 3
+    top_k = max(1, int(args.top_k)) if args.top_k is not None else 5
     fallback_top_n = (
         max(1, int(args.fallback_top_n))
         if args.fallback_top_n is not None

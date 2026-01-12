@@ -918,7 +918,7 @@
         "normalized": "af",
         "canon_word": true,
         "definition": "(the Enochian word for the digits 19)",
-        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+        "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
         "key_citations": [
             {
                 "location": "5.17",
@@ -929,7 +929,7 @@
             {
                 "sense_id": 1,
                 "definition": "(the Enochian word for the digits 19)",
-                "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+                "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
                 "key_citations": [
                     {
                         "location": "5.17",
@@ -1048,7 +1048,7 @@
     {
         "word": "AGL",
         "normalized": "agl",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "no one (creature)",
         "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do",
         "senses": [
@@ -1256,7 +1256,7 @@
     {
         "word": "ALCA",
         "normalized": "alca",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "to signify",
         "commentary": "in the Five Books, Illemese says, \"Soyga signifieth not Agyos. SOYGA ALCA MIKETH.\" By context and knowing what SOYGA and MIKETH are, we can infer that ALCA is likely \"to signify\"",
         "senses": [
@@ -2079,7 +2079,7 @@
     {
         "word": "ARTH",
         "normalized": "arth",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "gladness",
         "commentary": "sort of an extrapolation from NAZARTH, where if NAZ is \"pillars\" or \"rectangle\" or similar, ARTH must be \"gladness\"",
         "senses": [
@@ -2604,12 +2604,12 @@
         "word": "AZIA",
         "normalized": "azia",
         "canon_word": false,
-        "definition": "like,unto,in the likeness of",
+        "definition": "like, unto, in the likeness of",
         "commentary": "very obviously a stretch, but I can't help but mention—it could be that A is \"in\", Z is the root of division (Patricia Shaffer), I is \"is\", and A is \"in\" again, which could suggest something like, \"that in the first subject is divided in essence such that it is in the second subject as well\"; alternatively, \"in\", \"hand\" (the stretch), \"in\", indicating a sort of tautology such that \"a thing in the hand is in (the hand)\". again, a stretch, but the A--A seems relevant to the structure somehow. Also, does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "like,unto,in the likeness of",
+                "definition": "like, unto, in the likeness of",
                 "commentary": "very obviously a stretch, but I can't help but mention—it could be that A is \"in\", Z is the root of division (Patricia Shaffer), I is \"is\", and A is \"in\" again, which could suggest something like, \"that in the first subject is divided in essence such that it is in the second subject as well\"; alternatively, \"in\", \"hand\" (the stretch), \"in\", indicating a sort of tautology such that \"a thing in the hand is in (the hand)\". again, a stretch, but the A--A seems relevant to the structure somehow. Also, does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do"
             }
         ]
@@ -3001,7 +3001,7 @@
         "normalized": "balit",
         "canon_word": true,
         "definition": "the just",
-        "commentary": "I have BAL marked as a prefix right now, but this may need to be revised to BALT as a rootword pending further investigation",
+        "commentary": "commentary:I have BAL marked as a prefix right now, but this may need to be revised to BALT as a rootword pending further investigation",
         "key_citations": [
             {
                 "location": "16.10",
@@ -3012,7 +3012,7 @@
             {
                 "sense_id": 1,
                 "definition": "the just",
-                "commentary": "I have BAL marked as a prefix right now, but this may need to be revised to BALT as a rootword pending further investigation",
+                "commentary": "commentary:I have BAL marked as a prefix right now, but this may need to be revised to BALT as a rootword pending further investigation",
                 "key_citations": [
                     {
                         "location": "16.10",
@@ -3541,7 +3541,7 @@
     {
         "word": "BLIARD",
         "normalized": "bliard",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "comfort",
         "senses": [
             {
@@ -4604,7 +4604,7 @@
     },
     {
         "word": "KAPENE",
-        "normalized": "kapene",
+        "normalized": "capene",
         "canon_word": false,
         "definition": "therefore the house is holy",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -8866,7 +8866,7 @@
     {
         "word": "ETHARZI",
         "normalized": "etharzi",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "peace",
         "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do",
         "senses": [
@@ -8923,7 +8923,7 @@
         "word": "FAAIP",
         "normalized": "faaip",
         "canon_word": true,
-        "definition": "voices,voicings,psalms",
+        "definition": "voices ,voicings,psalms",
         "key_citations": [
             {
                 "location": "2.5",
@@ -8933,7 +8933,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "voices,voicings,psalms",
+                "definition": "voices ,voicings,psalms",
                 "key_citations": [
                     {
                         "location": "2.5",
@@ -14785,7 +14785,7 @@
         "normalized": "mapm",
         "canon_word": true,
         "definition": "(the Enochian word for the digits 9639)",
-        "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+        "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
         "key_citations": [
             {
                 "location": "4.15",
@@ -14796,7 +14796,7 @@
             {
                 "sense_id": 1,
                 "definition": "(the Enochian word for the digits 9639)",
-                "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+                "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
                 "key_citations": [
                     {
                         "location": "4.15",
@@ -15128,7 +15128,7 @@
             {
                 "sense_id": 2,
                 "definition": "(the Enochian word for the digits 3663)",
-                "commentary": "the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
+                "commentary": "commentary: the number of digits is always equal to the number of letters, but there is no clear relationship between the letters and the digits",
                 "key_citations": [
                     {
                         "location": "4.15",
@@ -16021,12 +16021,12 @@
         "normalized": "naz",
         "canon_word": true,
         "definition": "(something shaped like a rectangular prism)",
-        "commentary": "",
+        "commentary": "commentary:",
         "senses": [
             {
                 "sense_id": 1,
                 "definition": "(something shaped like a rectangular prism)",
-                "commentary": ""
+                "commentary": "commentary:"
             }
         ]
     },
