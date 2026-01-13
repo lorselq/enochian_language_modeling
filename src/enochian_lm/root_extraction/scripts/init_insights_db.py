@@ -326,6 +326,20 @@ CREATE TABLE IF NOT EXISTS residual_details (
   created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS roots_via_subtraction (
+  host_word                TEXT NOT NULL,
+  host_definition          TEXT,
+  host_source              TEXT,
+  host_cluster_id          INTEGER REFERENCES clusters(cluster_id) ON DELETE SET NULL,
+  target_residual          TEXT NOT NULL,
+  known_roots              TEXT,
+  known_root_cluster_ids   TEXT,
+  residual_definition      TEXT,
+  confidence               REAL,
+  manual_notes             TEXT,
+  updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS canon_words (
   word       TEXT NOT NULL,
   normalized TEXT NOT NULL,
@@ -712,6 +726,36 @@ LEFT JOIN evidence_counts AS evidence
   AND evidence.source_cluster_id = glosses.source_cluster_id;
 """
 
+_ROOTS_VIA_SUBTRACTION_VIEW = """
+CREATE VIEW IF NOT EXISTS roots_via_subtraction_accepted_roots AS
+SELECT
+  r.host_word,
+  r.host_definition,
+  r.host_source,
+  r.host_cluster_id,
+  r.target_residual,
+  r.known_roots,
+  r.known_root_cluster_ids,
+  r.residual_definition,
+  r.confidence,
+  r.manual_notes,
+  r.updated_at,
+  cluster_ids.value AS known_root_cluster_id,
+  roots_json.value AS known_root,
+  glosses.definition AS known_root_definition,
+  glosses.reason AS known_root_reason,
+  glosses.semantic_core AS known_root_semantic_core,
+  glosses.decoding_guide AS known_root_decoding_guide,
+  glosses.confidence_score AS known_root_confidence,
+  glosses.source_cluster_id AS source_cluster_id
+FROM roots_via_subtraction AS r
+JOIN json_each(r.known_root_cluster_ids) AS cluster_ids
+JOIN json_each(r.known_roots) AS roots_json
+  ON roots_json.key = cluster_ids.key
+LEFT JOIN root_glosses AS glosses
+  ON glosses.source_cluster_id = cluster_ids.value;
+"""
+
 ANALYSIS_TABLE_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS attribution_marginals (
@@ -809,6 +853,8 @@ def init_db(path: str | PathLike[str]) -> None:
                 conn.execute("DROP VIEW IF EXISTS root_evidence_examples;")
             if _table_or_view_exists(conn, "root_attachment_profile"):
                 conn.execute("DROP VIEW IF EXISTS root_attachment_profile;")
+            if _table_or_view_exists(conn, "roots_via_subtraction_accepted_roots"):
+                conn.execute("DROP VIEW IF EXISTS roots_via_subtraction_accepted_roots;")
 
             # Ensure newly introduced columns exist for older databases
             shared_columns = {
@@ -870,6 +916,7 @@ def init_db(path: str | PathLike[str]) -> None:
                 conn.executescript(_ROOT_GLOSSES_VIEW)
                 conn.executescript(_ROOT_EVIDENCE_EXAMPLES_VIEW)
                 conn.executescript(_ROOT_ATTACHMENT_PROFILE_VIEW)
+                conn.executescript(_ROOTS_VIA_SUBTRACTION_VIEW)
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)
