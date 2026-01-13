@@ -29,7 +29,6 @@ from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
 from enochian_lm.root_extraction.utils.residual_refresh import refresh_residual_details
-from enochian_lm.root_extraction.utils.remainders import backfill_root_remainders
 
 from translation.cli import configure_translate_word_parser, translate_word_from_args
 
@@ -1099,30 +1098,6 @@ def _run_residual_refresh(args: argparse.Namespace) -> tuple[int, int]:
     return total_clusters, total_rows
 
 
-def _run_remainder_backfill(args: argparse.Namespace) -> tuple[int, int]:
-    db_path = Path(args.db_path)
-    conn = connect_sqlite(str(db_path))
-    try:
-        ensure_analysis_tables(conn)
-        run_ids = _resolve_run_ids(conn, args.run_id)
-        processed_roots = 0
-        inserted = 0
-        for run_id in run_ids:
-            logger.info(
-                "Backfilling root remainders",
-                extra={"db": str(db_path), "run_id": run_id},
-            )
-            roots_seen, rows = backfill_root_remainders(conn, run_ids=[run_id])
-            processed_roots += roots_seen
-            inserted += rows
-            print(
-                f"[{run_id}] Backfilled {rows} remainder spans across {roots_seen} roots."
-            )
-    finally:
-        conn.close()
-
-    return processed_roots, inserted
-
 
 def _run_morph_factorize(args: argparse.Namespace) -> None:
     db_path = Path(args.db_path)
@@ -1555,22 +1530,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help=("Optional run id(s) to refresh (defaults to latest run in the database)"),
     )
     refresh.set_defaults(handler=_run_residual_refresh)
-
-    roots = subparsers.add_parser("roots", help="Root-level utilities")
-    roots_subparsers = roots.add_subparsers(dest="roots_command", required=True)
-    remainder_backfill = roots_subparsers.add_parser(
-        "backfill-remainders",
-        help="Backfill root remainder spans from existing analysis runs",
-    )
-    remainder_backfill.add_argument(
-        "--run-id",
-        nargs="+",
-        metavar="RUN_ID",
-        help=(
-            "Optional run id(s) to backfill (defaults to latest run in the database)"
-        ),
-    )
-    remainder_backfill.set_defaults(handler=_run_remainder_backfill)
 
     composite = subparsers.add_parser(
         "composite", help="Composite reconstruction utilities"

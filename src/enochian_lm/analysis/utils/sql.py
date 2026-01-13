@@ -107,28 +107,6 @@ ANALYSIS_TABLE_STATEMENTS: tuple[str, ...] = (
     );
     """,
     """
-    CREATE TABLE IF NOT EXISTS root_remainders (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT NOT NULL,
-      root TEXT NOT NULL,
-      word TEXT NOT NULL,
-      normalized TEXT NOT NULL,
-      remainder TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      span_start INTEGER NOT NULL,
-      span_end INTEGER NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_root_remainders_root
-    ON root_remainders(root);
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_root_remainders_root_remainder
-    ON root_remainders(root, remainder);
-    """,
-    """
     CREATE TABLE IF NOT EXISTS root_residual_semantics (
       run_id         TEXT NOT NULL,
       root           TEXT NOT NULL,
