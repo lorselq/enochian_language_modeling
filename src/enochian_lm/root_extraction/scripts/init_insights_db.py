@@ -276,16 +276,6 @@ CREATE TABLE IF NOT EXISTS citations (
   context       TEXT
 );
 
-CREATE TABLE IF NOT EXISTS synth_defs (
-  synth_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-  ngram         TEXT    NOT NULL,
-  cluster_id    INTEGER REFERENCES clusters(cluster_id) ON DELETE SET NULL,
-  synth_def     TEXT    NOT NULL,
-  notes         TEXT,
-  members       TEXT    NOT NULL,
-  method_meta   TEXT,
-  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
 
 CREATE TABLE IF NOT EXISTS skips (
   skip_id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -320,15 +310,6 @@ CREATE TABLE IF NOT EXISTS preanalysis_seeds (
   UNIQUE(preanalysis_id, ngram)
 );
 
--- raw
-CREATE TABLE IF NOT EXISTS agent_raw (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cluster_id INTEGER NOT NULL REFERENCES clusters(cluster_id) ON DELETE CASCADE,
-  role TEXT,                     -- e.g., 'raw_output'
-  payload_json TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_agent_raw_cluster ON agent_raw(cluster_id);
 
 -- llm jobs
 CREATE TABLE IF NOT EXISTS llm_job (
@@ -533,16 +514,6 @@ WHERE TRIM(COALESCE(glossator_def, '')) <> ''
   AND glossator_def NOT LIKE 'ERROR%';
 """
 
-_DEF_VIEW_ANCHORS = """
-CREATE VIEW IF NOT EXISTS anchor_candidates AS
-SELECT ngram, COUNT(*) AS uses, AVG(cohesion) AS avg_coh
-FROM clusters
-WHERE TRIM(glossator_def) <> ''
-  AND COALESCE(cohesion, 0.0) >= 0.40
-GROUP BY ngram
-HAVING COUNT(*) >= 3
-ORDER BY uses DESC, avg_coh DESC;
-"""
 
 ANALYSIS_TABLE_STATEMENTS = (
     """
@@ -692,9 +663,6 @@ def init_db(path: str | PathLike[str]) -> None:
                     _DEF_VIEW_SOLO_HEUR if variant == "solo" else _DEF_VIEW_DEBATE_HEUR
                 )
             conn.executescript(ddl)
-
-            # Add anchor view
-            conn.executescript(_DEF_VIEW_ANCHORS)
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)

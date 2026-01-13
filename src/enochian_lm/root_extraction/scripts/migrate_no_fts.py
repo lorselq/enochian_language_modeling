@@ -8,7 +8,6 @@ TABLES_ORDER = [
     "clusters",
     "raw_defs",
     "citations",
-    "synth_defs",
     "skips",
     "decisions",
 ]
@@ -86,7 +85,6 @@ def main(src_path: str, dst_path: str):
                 ("clusters", "cluster_id"),
                 ("raw_defs", "def_id"),
                 ("citations", "citation_id"),
-                ("synth_defs", "synth_id"),
                 ("skips", "skip_id"),
                 ("decisions", "decision_id"),
             ]:
