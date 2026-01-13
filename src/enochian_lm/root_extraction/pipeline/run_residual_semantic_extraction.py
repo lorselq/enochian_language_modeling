@@ -276,7 +276,8 @@ class RemainderExtractionCrew:
         return (None, None)
 
     def load_entries(self) -> list[EntryRecord]:
-        return load_dictionary(str(self.dictionary_path))
+        entries = load_dictionary(str(self.dictionary_path))
+        return [entry for entry in entries if entry.get("canon_word") is True]
 
     def load_subst_map(self):
         with open(self.subst_map_path, "r", encoding="utf-8") as f:
