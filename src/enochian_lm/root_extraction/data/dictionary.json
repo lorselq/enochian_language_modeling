@@ -3,11 +3,11 @@
         "word": "A",
         "normalized": "a",
         "canon_word": true,
-        "definition": "in,on,with",
+        "definition": "in, on, with",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "in,on,with"
+                "definition": "in, on, with"
             }
         ]
     },
@@ -15,7 +15,7 @@
         "word": "AAI",
         "normalized": "aai",
         "canon_word": true,
-        "definition": "amongst,amongst you",
+        "definition": "amongst, amongst you",
         "key_citations": [
             {
                 "location": "1.67",
@@ -37,7 +37,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "amongst,amongst you",
+                "definition": "amongst, amongst you",
                 "key_citations": [
                     {
                         "location": "1.67",
@@ -63,7 +63,7 @@
         "word": "AAIOM",
         "normalized": "aaiom",
         "canon_word": true,
-        "definition": "amongst,amongst us",
+        "definition": "amongst, amongst us",
         "key_citations": [
             {
                 "location": "3.71",
@@ -77,7 +77,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "amongst,amongst us",
+                "definition": "amongst, amongst us",
                 "key_citations": [
                     {
                         "location": "3.71",
@@ -167,12 +167,12 @@
         "word": "AATH",
         "normalized": "aath",
         "canon_word": true,
-        "definition": "work (noun),deeds",
+        "definition": "work (noun), deeds",
         "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "work (noun),deeds",
+                "definition": "work (noun), deeds",
                 "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do"
             }
         ]
@@ -181,7 +181,7 @@
         "word": "ABABALOND",
         "normalized": "ababalond",
         "canon_word": true,
-        "definition": "harlot,of a harlot",
+        "definition": "harlot, of a harlot",
         "key_citations": [
             {
                 "location": "30.113",
@@ -191,7 +191,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "harlot,of a harlot",
+                "definition": "harlot, of a harlot",
                 "key_citations": [
                     {
                         "location": "30.113",
@@ -205,12 +205,12 @@
         "word": "ABAI",
         "normalized": "abai",
         "canon_word": true,
-        "definition": "to stoop,to attack (by stooping)",
+        "definition": "to stoop, to attack (by stooping)",
         "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "to stoop,to attack (by stooping)",
+                "definition": "to stoop, to attack (by stooping)",
                 "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do"
             }
         ]
@@ -511,12 +511,12 @@
         "word": "AD",
         "normalized": "ad",
         "canon_word": false,
-        "definition": "in the third,with the third",
+        "definition": "in the third, with the third",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "in the third,with the third",
+                "definition": "in the third, with the third",
                 "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
             }
         ]
@@ -539,12 +539,12 @@
         "word": "ADAO",
         "normalized": "adao",
         "canon_word": false,
-        "definition": "in the third star,with the third star",
+        "definition": "in the third star, with the third star",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "in the third star,with the third star",
+                "definition": "in the third star, with the third star",
                 "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
             }
         ]
@@ -1825,7 +1825,7 @@
             },
             {
                 "sense_id": 2,
-                "definition": "to advance upon,to vanguard",
+                "definition": "to advance upon, to vanguard",
                 "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do",
                 "key_citations": [
                     {
@@ -1840,7 +1840,7 @@
         "word": "ARCAOSGI",
         "normalized": "arcaosgi",
         "canon_word": true,
-        "definition": "to advance upon the earth,to vanguard the earth",
+        "definition": "to advance upon the earth, to vanguard the earth",
         "key_citations": [
             {
                 "location": "6.17",
@@ -1850,7 +1850,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "to advance upon the earth,to vanguard the earth",
+                "definition": "to advance upon the earth, to vanguard the earth",
                 "key_citations": [
                     {
                         "location": "6.17",
@@ -2244,7 +2244,7 @@
         "word": "ASPIAN",
         "normalized": "aspian",
         "canon_word": true,
-        "definition": "qualities,characteristics",
+        "definition": "qualities, characteristics",
         "key_citations": [
             {
                 "location": "30.77",
@@ -2254,7 +2254,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "qualities,characteristics",
+                "definition": "qualities, characteristics",
                 "key_citations": [
                     {
                         "location": "30.77",
@@ -2268,7 +2268,7 @@
         "word": "ASPT",
         "normalized": "aspt",
         "canon_word": true,
-        "definition": "before,in front",
+        "definition": "before, in front",
         "key_citations": [
             {
                 "location": "30.144",
@@ -2278,7 +2278,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "before,in front",
+                "definition": "before, in front",
                 "key_citations": [
                     {
                         "location": "30.144",
@@ -2642,7 +2642,7 @@
         "word": "AZIAZOR",
         "normalized": "aziazor",
         "canon_word": true,
-        "definition": "likeness,in the likeness",
+        "definition": "likeness, in the likeness",
         "key_citations": [
             {
                 "location": "10.7",
@@ -2652,7 +2652,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "likeness,in the likeness",
+                "definition": "likeness, in the likeness",
                 "key_citations": [
                     {
                         "location": "10.7",
@@ -2690,12 +2690,12 @@
         "word": "BAB",
         "normalized": "bab",
         "canon_word": true,
-        "definition": "dominion,also possibly power ability or possibility",
+        "definition": "dominion, also possibly power ability or possibility",
         "commentary": "dominion definition from Corpus Omnium: ZNA BAB IAD, which translates as \"Moving Dominion of God\", whereas following possible definitions are from the dictionary found on archidox I started with",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "dominion,also possibly power ability or possibility",
+                "definition": "dominion, also possibly power ability or possibility",
                 "commentary": "dominion definition from Corpus Omnium: ZNA BAB IAD, which translates as \"Moving Dominion of God\", whereas following possible definitions are from the dictionary found on archidox I started with"
             }
         ]
@@ -2704,7 +2704,7 @@
         "word": "BABAGE",
         "normalized": "babage",
         "canon_word": true,
-        "definition": "south,in the south",
+        "definition": "south, in the south",
         "key_citations": [
             {
                 "location": "4.3",
@@ -2718,7 +2718,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "south,in the south",
+                "definition": "south, in the south",
                 "key_citations": [
                     {
                         "location": "4.3",
@@ -2736,7 +2736,7 @@
         "word": "BABAGEN",
         "normalized": "babagen",
         "canon_word": true,
-        "definition": "south,of the south",
+        "definition": "south, of the south",
         "key_citations": [
             {
                 "location": "13.2",
@@ -2746,7 +2746,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "south,of the south",
+                "definition": "south, of the south",
                 "key_citations": [
                     {
                         "location": "13.2",
@@ -2846,7 +2846,7 @@
         "word": "BAGLE",
         "normalized": "bagle",
         "canon_word": true,
-        "definition": "for,why,wherefore,because",
+        "definition": "for, why, wherefore, because",
         "commentary": "10.18 is the only instance where the sense of \"for\" is different than the others and more resembles LAP",
         "key_citations": [
             {
@@ -2897,7 +2897,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "for,why,wherefore,because",
+                "definition": "for, why, wherefore, because",
                 "commentary": "10.18 is the only instance where the sense of \"for\" is different than the others and more resembles LAP",
                 "key_citations": [
                     {
@@ -3362,12 +3362,12 @@
         "word": "BEVEGJAH",
         "normalized": "bevegjah",
         "canon_word": false,
-        "definition": "gathering all,gathering the all,coagula",
+        "definition": "gathering all, gathering the all, coagula",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "gathering all,gathering the all,coagula",
+                "definition": "gathering all, gathering the all, coagula",
                 "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
             }
         ]
@@ -3910,12 +3910,12 @@
         "word": "BVRISE",
         "normalized": "bvrise",
         "canon_word": false,
-        "definition": "glorious cry,infinite wail",
+        "definition": "glorious cry, infinite wail",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "glorious cry,infinite wail",
+                "definition": "glorious cry, infinite wail",
                 "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
             }
         ]
@@ -3980,7 +3980,7 @@
         "word": "BUSDIRTILB",
         "normalized": "busdirtilb",
         "canon_word": true,
-        "definition": "her glory,glory of her",
+        "definition": "her glory, glory of her",
         "key_citations": [
             {
                 "location": "30.50",
@@ -3990,7 +3990,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "her glory,glory of her",
+                "definition": "her glory, glory of her",
                 "key_citations": [
                     {
                         "location": "30.50",
@@ -4084,7 +4084,7 @@
             },
             {
                 "location": "2.43",
-                "context": "Move,*therefore*..."
+                "context": "Move, *therefore*..."
             },
             {
                 "location": "5.42",
@@ -4106,7 +4106,7 @@
                     },
                     {
                         "location": "2.43",
-                        "context": "Move,*therefore*..."
+                        "context": "Move, *therefore*..."
                     },
                     {
                         "location": "5.42",
@@ -4124,7 +4124,7 @@
         "word": "CAB",
         "normalized": "cab",
         "canon_word": true,
-        "definition": "rod,scepter",
+        "definition": "rod, scepter",
         "commentary": "sometimes T and C get switched in Enochian words; normally TA is used for \"as\", but as demonstrated by ICORSCA there are instances where CA gets used instead. Also consider TABA (to govern) and CABA (to govern) and related words",
         "key_citations": [
             {
@@ -4135,7 +4135,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "rod,scepter",
+                "definition": "rod, scepter",
                 "commentary": "sometimes T and C get switched in Enochian words; normally TA is used for \"as\", but as demonstrated by ICORSCA there are instances where CA gets used instead. Also consider TABA (to govern) and CABA (to govern) and related words",
                 "key_citations": [
                     {
@@ -4312,7 +4312,7 @@
         "word": "CAMLIAX",
         "normalized": "camliax",
         "canon_word": true,
-        "definition": "spoke,spake",
+        "definition": "spoke, spake",
         "key_citations": [
             {
                 "location": "11.2",
@@ -4322,7 +4322,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "spoke,spake",
+                "definition": "spoke, spake",
                 "key_citations": [
                     {
                         "location": "11.2",
@@ -4658,12 +4658,12 @@
         "word": "CAPIMAO",
         "normalized": "capimao",
         "canon_word": true,
-        "definition": "while,a period of time",
+        "definition": "while, a period of time",
         "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "while,a period of time",
+                "definition": "while, a period of time",
                 "commentary": "does not occur in the Keys by itself, but can be easily inferred from other words its a part of that do"
             }
         ]
@@ -4734,7 +4734,7 @@
         "word": "CARBAF",
         "normalized": "carbaf",
         "canon_word": true,
-        "definition": "to sink,to stoop,to dive",
+        "definition": "to sink, to stoop, to dive",
         "commentary": "Leitch notes a possible relation to ABAI, \"stooping\"",
         "key_citations": [
             {
@@ -4745,7 +4745,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "to sink,to stoop,to dive",
+                "definition": "to sink, to stoop, to dive",
                 "commentary": "Leitch notes a possible relation to ABAI, \"stooping\"",
                 "key_citations": [
                     {
@@ -4760,13 +4760,13 @@
         "word": "CARMA",
         "normalized": "carma",
         "canon_word": true,
-        "definition": "to come out,to arrive from,to arise",
-        "commentary": "from True and Faithful Relation..., Madimi exorcises spirits from Kelly saying, \"CARMA GETA BARMAN,\" where BARMA is the head spirit exorcised from Kelly. CARMA is not a phrase to be used with angels, contrasted with NIIS (come), NISSA (come away)",
+        "definition": "to come out, to arrive from, to arise",
+        "commentary": "from True and Faithful Relation..., Madimi exorcises spirits from Kelly saying, \"CARMA GETA BARMAN, \" where BARMA is the head spirit exorcised from Kelly. CARMA is not a phrase to be used with angels, contrasted with NIIS (come), NISSA (come away)",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "to come out,to arrive from,to arise",
-                "commentary": "from True and Faithful Relation..., Madimi exorcises spirits from Kelly saying, \"CARMA GETA BARMAN,\" where BARMA is the head spirit exorcised from Kelly. CARMA is not a phrase to be used with angels, contrasted with NIIS (come), NISSA (come away)"
+                "definition": "to come out, to arrive from, to arise",
+                "commentary": "from True and Faithful Relation..., Madimi exorcises spirits from Kelly saying, \"CARMA GETA BARMAN, \" where BARMA is the head spirit exorcised from Kelly. CARMA is not a phrase to be used with angels, contrasted with NIIS (come), NISSA (come away)"
             }
         ]
     },
@@ -4858,7 +4858,7 @@
         "word": "CASARMAN",
         "normalized": "casarman",
         "canon_word": true,
-        "definition": "whom,under whose",
+        "definition": "whom, under whose",
         "key_citations": [
             {
                 "location": "11.22",
@@ -4872,7 +4872,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "whom,under whose",
+                "definition": "whom, under whose",
                 "key_citations": [
                     {
                         "location": "11.22",
@@ -4994,12 +4994,12 @@
         "word": "CEM",
         "normalized": "cem",
         "canon_word": false,
-        "definition": "of the nine,unto the nine,with the nine",
+        "definition": "of the nine, unto the nine, with the nine",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "of the nine,unto the nine,with the nine",
+                "definition": "of the nine, unto the nine, with the nine",
                 "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
             }
         ]
@@ -5794,7 +5794,7 @@
         "word": "COLLAL",
         "normalized": "collal",
         "canon_word": true,
-        "definition": "sleeves,sheaths",
+        "definition": "sleeves, sheaths",
         "key_citations": [
             {
                 "location": "9.58",
@@ -5804,7 +5804,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "sleeves,sheaths",
+                "definition": "sleeves, sheaths",
                 "key_citations": [
                     {
                         "location": "9.58",
@@ -5818,7 +5818,7 @@
         "word": "COMMAH",
         "normalized": "commah",
         "canon_word": true,
-        "definition": "to truss together,join",
+        "definition": "to truss together, join",
         "key_citations": [
             {
                 "location": "1.25",
@@ -5828,7 +5828,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "to truss together,join",
+                "definition": "to truss together, join",
                 "key_citations": [
                     {
                         "location": "1.25",
@@ -5904,11 +5904,11 @@
         "word": "CONGAMPHLGH",
         "normalized": "congamphlgh",
         "canon_word": true,
-        "definition": "holy ghost,faith",
+        "definition": "holy ghost, faith",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "holy ghost,faith"
+                "definition": "holy ghost, faith"
             }
         ]
     },
@@ -5998,7 +5998,7 @@
         "word": "CORDZIZ",
         "normalized": "cordziz",
         "canon_word": true,
-        "definition": "reasoning creatures,mankind",
+        "definition": "reasoning creatures, mankind",
         "key_citations": [
             {
                 "location": "30.83",
@@ -6008,7 +6008,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "reasoning creatures,mankind",
+                "definition": "reasoning creatures, mankind",
                 "key_citations": [
                     {
                         "location": "30.83",
@@ -6150,11 +6150,11 @@
         "word": "CORONZOM",
         "normalized": "coronzom",
         "canon_word": true,
-        "definition": "Satan,the devil,the Enemy",
+        "definition": "Satan, the devil, the Enemy",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "Satan,the devil,the Enemy"
+                "definition": "Satan, the devil, the Enemy"
             }
         ]
     },
@@ -6330,12 +6330,12 @@
         "word": "CRUS",
         "normalized": "crus",
         "canon_word": true,
-        "definition": "more,greater",
+        "definition": "more, greater",
         "commentary": "from the Five Books; the etymology is broken down by Dee in the Five Books as to what CRUS signifies",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "more,greater",
+                "definition": "more, greater",
                 "commentary": "from the Five Books; the etymology is broken down by Dee in the Five Books as to what CRUS signifies"
             }
         ]
@@ -6396,12 +6396,12 @@
         "word": "DABIN",
         "normalized": "dabin",
         "canon_word": false,
-        "definition": "Logos,manifested word of God",
+        "definition": "Logos, manifested word of God",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "Logos,manifested word of God",
+                "definition": "Logos, manifested word of God",
                 "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website"
             }
         ]
@@ -6674,7 +6674,7 @@
         "word": "DARSAR",
         "normalized": "darsar",
         "canon_word": true,
-        "definition": "wherefore,therefore",
+        "definition": "wherefore, therefore",
         "key_citations": [
             {
                 "location": "6.31",
@@ -6684,7 +6684,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "wherefore,therefore",
+                "definition": "wherefore, therefore",
                 "key_citations": [
                     {
                         "location": "6.31",
@@ -7456,7 +7456,7 @@
         "word": "DORPHA",
         "normalized": "dorpha",
         "canon_word": true,
-        "definition": "to look upon,to look about",
+        "definition": "to look upon, to look about",
         "key_citations": [
             {
                 "location": "4.5",
@@ -7466,7 +7466,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "to look upon,to look about",
+                "definition": "to look upon, to look about",
                 "key_citations": [
                     {
                         "location": "4.5",
@@ -7786,7 +7786,7 @@
         "word": "DS",
         "normalized": "ds",
         "canon_word": true,
-        "definition": "which,that",
+        "definition": "which, that",
         "commentary": "per Leitch, AR is a conjunction, DS is a pronoun",
         "key_citations": [
             {
@@ -7857,7 +7857,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "which,that",
+                "definition": "which, that",
                 "commentary": "per Leitch, AR is a conjunction, DS is a pronoun",
                 "key_citations": [
                     {
@@ -8795,7 +8795,7 @@
         "word": "ERM",
         "normalized": "erm",
         "canon_word": true,
-        "definition": "ark,refuge,haven",
+        "definition": "ark, refuge, haven",
         "key_citations": [
             {
                 "location": "1.45",
@@ -8805,7 +8805,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "ark,refuge,haven",
+                "definition": "ark, refuge, haven",
                 "key_citations": [
                     {
                         "location": "1.45",
@@ -8923,7 +8923,7 @@
         "word": "FAAIP",
         "normalized": "faaip",
         "canon_word": true,
-        "definition": "voices ,voicings,psalms",
+        "definition": "voices , voicings, psalms",
         "key_citations": [
             {
                 "location": "2.5",
@@ -8933,7 +8933,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "voices ,voicings,psalms",
+                "definition": "voices , voicings, psalms",
                 "key_citations": [
                     {
                         "location": "2.5",
@@ -8985,7 +8985,7 @@
         "word": "FAFEN",
         "normalized": "fafen",
         "canon_word": true,
-        "definition": "intent,succession of events,consequences,something following another thing",
+        "definition": "intent, succession of events, consequences, something following another thing",
         "key_citations": [
             {
                 "location": "3.34",
@@ -8999,7 +8999,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "intent,succession of events,consequences,something following another thing",
+                "definition": "intent, succession of events, consequences, something following another thing",
                 "key_citations": [
                     {
                         "location": "3.34",
@@ -9135,7 +9135,7 @@
         "word": "FARZM",
         "normalized": "farzm",
         "canon_word": true,
-        "definition": "uplifted voices,to speak up",
+        "definition": "uplifted voices, to speak up",
         "key_citations": [
             {
                 "location": "1.48",
@@ -9145,7 +9145,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "uplifted voices,to speak up",
+                "definition": "uplifted voices, to speak up",
                 "key_citations": [
                     {
                         "location": "1.48",
@@ -9297,7 +9297,7 @@
         "word": "FISIS",
         "normalized": "fisis",
         "canon_word": true,
-        "definition": "to execute,to carry out",
+        "definition": "to execute, to carry out",
         "key_citations": [
             {
                 "location": "30.8",
@@ -9307,7 +9307,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "to execute,to carry out",
+                "definition": "to execute, to carry out",
                 "key_citations": [
                     {
                         "location": "30.8",
@@ -11430,7 +11430,7 @@
         "word": "IADOIASMOMAR",
         "normalized": "iadoiasmomar",
         "canon_word": true,
-        "definition": "him that is was and shall be crowned,eternal God who is crowned",
+        "definition": "him that is was and shall be crowned, eternal God who is crowned",
         "key_citations": [
             {
                 "location": "8.44",
@@ -11440,7 +11440,7 @@
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "him that is was and shall be crowned,eternal God who is crowned",
+                "definition": "him that is was and shall be crowned, eternal God who is crowned",
                 "key_citations": [
                     {
                         "location": "8.44",
@@ -14947,7 +14947,7 @@
         "normalized": "matb",
         "canon_word": true,
         "definition": "one thousand, 1000",
-        "commentary": "probably not literally 1,000—rather, this is probably one of those instances of \"a thousand\" being used to indicate a large, difficult to count amount of times",
+        "commentary": "probably not literally 1, 000—rather, this is probably one of those instances of \"a thousand\" being used to indicate a large, difficult to count amount of times",
         "key_citations": [
             {
                 "location": "10.45",
@@ -14962,7 +14962,7 @@
             {
                 "sense_id": 1,
                 "definition": "one thousand, 1000",
-                "commentary": "probably not literally 1,000—rather, this is probably one of those instances of \"a thousand\" being used to indicate a large, difficult to count amount of times",
+                "commentary": "probably not literally 1, 000—rather, this is probably one of those instances of \"a thousand\" being used to indicate a large, difficult to count amount of times",
                 "key_citations": [
                     {
                         "location": "10.45",
@@ -17177,12 +17177,12 @@
         "normalized": "obelison",
         "canon_word": true,
         "definition": "pleasant deliverer",
-        "commentary": "according to the angel BEFAFES in the Five Books, it is \"what the Egyptians called me,\" to which Dee asked for the etymology, and the definition given is what BEFAFES responded with",
+        "commentary": "according to the angel BEFAFES in the Five Books, it is \"what the Egyptians called me, \" to which Dee asked for the etymology, and the definition given is what BEFAFES responded with",
         "senses": [
             {
                 "sense_id": 1,
                 "definition": "pleasant deliverer",
-                "commentary": "according to the angel BEFAFES in the Five Books, it is \"what the Egyptians called me,\" to which Dee asked for the etymology, and the definition given is what BEFAFES responded with"
+                "commentary": "according to the angel BEFAFES in the Five Books, it is \"what the Egyptians called me, \" to which Dee asked for the etymology, and the definition given is what BEFAFES responded with"
             }
         ]
     },
