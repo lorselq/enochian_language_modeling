@@ -189,7 +189,7 @@ def debate_ngram(
     stats_summary: str,
     stream_callback=None,
     root_entry: EntryRecord | None = None,
-    blind_evaluation: bool = True,
+    blind_evaluation: bool = False,
     use_remote: bool = True,
     residual_prompt: str | None = None,
     query_db: sqlite3.Connection | None = None,
