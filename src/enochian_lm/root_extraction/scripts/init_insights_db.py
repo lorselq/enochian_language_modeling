@@ -631,6 +631,108 @@ WHERE TRIM(COALESCE(c.glossator_def, '')) <> ''
   AND LOWER(COALESCE(json_extract(c.glossator_def, '$.EVALUATION'), '')) = 'accepted';
 """
 
+_ROOT_DEFINITION_SUMMARY_VIEW = """
+CREATE VIEW IF NOT EXISTS root_definition_summary AS
+SELECT
+  root,
+  attachment_prefix_likelihood,
+  attachment_suffix_likelihood,
+  attachment_free_likelihood,
+  attachment_productivity,
+  confidence_score,
+  source_cluster_id
+FROM root_glosses;
+"""
+
+_ROOT_ATTACHMENT_PROFILE_VIEW = """
+CREATE VIEW IF NOT EXISTS root_attachment_profile AS
+WITH evidence_counts AS (
+  SELECT
+    LOWER(TRIM(json_extract(c.glossator_def, '$.ROOT'))) AS root,
+    c.cluster_id AS source_cluster_id,
+    SUM(
+      CASE
+        WHEN LOWER(COALESCE(json_extract(evidence.value, '$.note.role'), '')) = 'prefix'
+          THEN 1
+        ELSE 0
+      END
+    ) AS observed_prefix_count,
+    SUM(
+      CASE
+        WHEN LOWER(COALESCE(json_extract(evidence.value, '$.note.role'), '')) = 'suffix'
+          THEN 1
+        ELSE 0
+      END
+    ) AS observed_suffix_count,
+    SUM(
+      CASE
+        WHEN LOWER(COALESCE(json_extract(evidence.value, '$.note.role'), '')) = 'infix'
+          THEN 1
+        ELSE 0
+      END
+    ) AS observed_infix_count,
+    SUM(
+      CASE
+        WHEN LOWER(COALESCE(json_extract(evidence.value, '$.note.role'), '')) = 'free'
+          THEN 1
+        ELSE 0
+      END
+    ) AS observed_free_count
+  FROM clusters c
+  JOIN json_each(c.glossator_def, '$.EVIDENCE') AS evidence
+  WHERE TRIM(COALESCE(c.glossator_def, '')) <> ''
+    AND json_valid(c.glossator_def) = 1
+    AND LOWER(COALESCE(json_extract(c.glossator_def, '$.EVALUATION'), '')) = 'accepted'
+  GROUP BY root, source_cluster_id
+)
+SELECT
+  defs.root AS root,
+  COALESCE(evidence.observed_prefix_count, 0) AS observed_prefix_count,
+  COALESCE(evidence.observed_suffix_count, 0) AS observed_suffix_count,
+  COALESCE(evidence.observed_infix_count, 0) AS observed_infix_count,
+  COALESCE(evidence.observed_free_count, 0) AS observed_free_count,
+  CASE
+    WHEN
+      (COALESCE(evidence.observed_prefix_count, 0) + COALESCE(defs.attachment_prefix_likelihood, 0))
+        > (COALESCE(evidence.observed_suffix_count, 0) + COALESCE(defs.attachment_suffix_likelihood, 0))
+      AND (COALESCE(evidence.observed_prefix_count, 0) + COALESCE(defs.attachment_prefix_likelihood, 0))
+        > COALESCE(evidence.observed_infix_count, 0)
+      AND (COALESCE(evidence.observed_prefix_count, 0) + COALESCE(defs.attachment_prefix_likelihood, 0))
+        > (COALESCE(evidence.observed_free_count, 0) + COALESCE(defs.attachment_free_likelihood, 0))
+      THEN 'prefix-heavy'
+    WHEN
+      (COALESCE(evidence.observed_suffix_count, 0) + COALESCE(defs.attachment_suffix_likelihood, 0))
+        > (COALESCE(evidence.observed_prefix_count, 0) + COALESCE(defs.attachment_prefix_likelihood, 0))
+      AND (COALESCE(evidence.observed_suffix_count, 0) + COALESCE(defs.attachment_suffix_likelihood, 0))
+        > COALESCE(evidence.observed_infix_count, 0)
+      AND (COALESCE(evidence.observed_suffix_count, 0) + COALESCE(defs.attachment_suffix_likelihood, 0))
+        > (COALESCE(evidence.observed_free_count, 0) + COALESCE(defs.attachment_free_likelihood, 0))
+      THEN 'suffix-heavy'
+    WHEN
+      COALESCE(evidence.observed_infix_count, 0)
+        > (COALESCE(evidence.observed_prefix_count, 0) + COALESCE(defs.attachment_prefix_likelihood, 0))
+      AND COALESCE(evidence.observed_infix_count, 0)
+        > (COALESCE(evidence.observed_suffix_count, 0) + COALESCE(defs.attachment_suffix_likelihood, 0))
+      AND COALESCE(evidence.observed_infix_count, 0)
+        > (COALESCE(evidence.observed_free_count, 0) + COALESCE(defs.attachment_free_likelihood, 0))
+      THEN 'infix-heavy'
+    WHEN
+      (COALESCE(evidence.observed_free_count, 0) + COALESCE(defs.attachment_free_likelihood, 0))
+        > (COALESCE(evidence.observed_prefix_count, 0) + COALESCE(defs.attachment_prefix_likelihood, 0))
+      AND (COALESCE(evidence.observed_free_count, 0) + COALESCE(defs.attachment_free_likelihood, 0))
+        > (COALESCE(evidence.observed_suffix_count, 0) + COALESCE(defs.attachment_suffix_likelihood, 0))
+      AND (COALESCE(evidence.observed_free_count, 0) + COALESCE(defs.attachment_free_likelihood, 0))
+        > COALESCE(evidence.observed_infix_count, 0)
+      THEN 'free'
+    ELSE 'mixed'
+  END AS estimated_profile,
+  defs.source_cluster_id AS source_cluster_id
+FROM root_definition_summary defs
+LEFT JOIN evidence_counts AS evidence
+  ON evidence.root = defs.root
+  AND evidence.source_cluster_id = defs.source_cluster_id;
+"""
+
 ANALYSIS_TABLE_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS attribution_marginals (
@@ -726,6 +828,10 @@ def init_db(path: str | PathLike[str]) -> None:
                 conn.execute("DROP VIEW IF EXISTS root_glosses;")
             if _table_or_view_exists(conn, "root_evidence_examples"):
                 conn.execute("DROP VIEW IF EXISTS root_evidence_examples;")
+            if _table_or_view_exists(conn, "root_definition_summary"):
+                conn.execute("DROP VIEW IF EXISTS root_definition_summary;")
+            if _table_or_view_exists(conn, "root_attachment_profile"):
+                conn.execute("DROP VIEW IF EXISTS root_attachment_profile;")
 
             # Ensure newly introduced columns exist for older databases
             shared_columns = {
@@ -786,6 +892,8 @@ def init_db(path: str | PathLike[str]) -> None:
             if _has_json1(conn):
                 conn.executescript(_ROOT_GLOSSES_VIEW)
                 conn.executescript(_ROOT_EVIDENCE_EXAMPLES_VIEW)
+                conn.executescript(_ROOT_DEFINITION_SUMMARY_VIEW)
+                conn.executescript(_ROOT_ATTACHMENT_PROFILE_VIEW)
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)
