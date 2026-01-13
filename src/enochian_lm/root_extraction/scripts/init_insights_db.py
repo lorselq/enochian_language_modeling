@@ -18,10 +18,12 @@ The script is idempotent and safe to re-run.
 """
 from __future__ import annotations
 from os import PathLike
+import json
 import os
 from pathlib import Path
 
 from enochian_lm.common.sqlite_bootstrap import sqlite3
+from enochian_lm.common.config import get_config_paths
 
 INTERPRETATION_DIR = Path(__file__).resolve().parents[1] / "interpretation"
 
@@ -97,6 +99,61 @@ def _has_json1(conn: sqlite3.Connection) -> bool:
         return bool(row and row[0] == 1)
     except sqlite3.Error:
         return False
+
+
+def _load_canon_words() -> list[tuple[str, str, str, int, str | None, int]]:
+    dict_path = get_config_paths()["dictionary"]
+    if not dict_path.exists():
+        raise FileNotFoundError(f"dictionary.json not found at {dict_path}")
+    raw = json.loads(dict_path.read_text())
+    if not isinstance(raw, list):
+        raise ValueError("dictionary.json must be a list of entries")
+    rows: list[tuple[str, str, str, int, str | None, int]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("canon_word") is False:
+            continue
+        word = (entry.get("word") or "").strip()
+        normalized = (entry.get("normalized") or word).strip()
+        if not word or not normalized:
+            continue
+        is_original_canon = 1 if entry.get("canon_word") else 0
+        senses = entry.get("senses") or []
+        if not senses:
+            definition = (entry.get("definition") or "").strip()
+            if definition:
+                citations = entry.get("key_citations")
+                rows.append(
+                    (
+                        word,
+                        normalized,
+                        definition,
+                        1,
+                        json.dumps(citations) if citations else None,
+                        is_original_canon,
+                    )
+                )
+            continue
+        for idx, sense in enumerate(senses, start=1):
+            if not isinstance(sense, dict):
+                continue
+            definition = (sense.get("definition") or entry.get("definition") or "").strip()
+            if not definition:
+                continue
+            sense_id = sense.get("sense_id") or idx
+            citations = sense.get("key_citations") or entry.get("key_citations")
+            rows.append(
+                (
+                    word,
+                    normalized,
+                    definition,
+                    int(sense_id),
+                    json.dumps(citations) if citations else None,
+                    is_original_canon,
+                )
+            )
+    return rows
 
 
 # -------------------------
@@ -267,6 +324,16 @@ CREATE TABLE IF NOT EXISTS residual_details (
   uncovered_json     TEXT,
   low_conf_json      TEXT,
   created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS canon_words (
+  word       TEXT NOT NULL,
+  normalized TEXT NOT NULL,
+  definition TEXT NOT NULL,
+  sense_id   INTEGER NOT NULL,
+  citations  TEXT,
+  is_original_canon INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (normalized, sense_id)
 );
 
 CREATE TABLE IF NOT EXISTS citations (
@@ -666,6 +733,26 @@ def init_db(path: str | PathLike[str]) -> None:
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)
+
+            try:
+                canon_rows = _load_canon_words()
+            except (FileNotFoundError, ValueError) as exc:
+                raise RuntimeError(f"Failed to load dictionary.json: {exc}") from exc
+            conn.execute("DELETE FROM canon_words;")
+            if canon_rows:
+                conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO canon_words (
+                      word,
+                      normalized,
+                      definition,
+                      sense_id,
+                      citations,
+                      is_original_canon
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    canon_rows,
+                )
 
         except sqlite3.Error as e:
             raise RuntimeError(f"Database initialization failed: {e}") from e
