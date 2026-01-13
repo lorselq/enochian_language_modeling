@@ -101,7 +101,7 @@ def _has_json1(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def _load_canon_words() -> list[tuple[str, str, str, int, str | None, int]]:
+def _load_dictionary_entries() -> list[tuple[str, str, str, int, str | None, int]]:
     dict_path = get_config_paths()["dictionary"]
     if not dict_path.exists():
         raise FileNotFoundError(f"dictionary.json not found at {dict_path}")
@@ -111,8 +111,6 @@ def _load_canon_words() -> list[tuple[str, str, str, int, str | None, int]]:
     rows: list[tuple[str, str, str, int, str | None, int]] = []
     for entry in raw:
         if not isinstance(entry, dict):
-            continue
-        if entry.get("canon_word") is False:
             continue
         word = (entry.get("word") or "").strip()
         normalized = (entry.get("normalized") or word).strip()
@@ -340,7 +338,7 @@ CREATE TABLE IF NOT EXISTS roots_via_subtraction (
   updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-CREATE TABLE IF NOT EXISTS canon_words (
+CREATE TABLE IF NOT EXISTS dictionary (
   word       TEXT NOT NULL,
   normalized TEXT NOT NULL,
   definition TEXT NOT NULL,
@@ -771,6 +769,11 @@ def init_db(path: str | PathLike[str]) -> None:
     variant = _infer_variant_from_path(path)
     with _open(path) as conn:
         try:
+            if _table_or_view_exists(conn, "canon_words") and not _table_or_view_exists(
+                conn, "dictionary"
+            ):
+                conn.execute("ALTER TABLE canon_words RENAME TO dictionary;")
+
             schema = SCHEMA_CREATE.replace(
                 "[[[CLUSTERS_BLOCK]]]",
                 CLUSTERS_SOLO if variant == "solo" else CLUSTERS_DEBATE,
@@ -853,14 +856,14 @@ def init_db(path: str | PathLike[str]) -> None:
 
             # Analytics tables are intentionally omitted from the core insights DB.
             try:
-                canon_rows = _load_canon_words()
+                dictionary_rows = _load_dictionary_entries()
             except (FileNotFoundError, ValueError) as exc:
                 raise RuntimeError(f"Failed to load dictionary.json: {exc}") from exc
-            conn.execute("DELETE FROM canon_words;")
-            if canon_rows:
+            conn.execute("DELETE FROM dictionary;")
+            if dictionary_rows:
                 conn.executemany(
                     """
-                    INSERT OR REPLACE INTO canon_words (
+                    INSERT OR REPLACE INTO dictionary (
                       word,
                       normalized,
                       definition,
@@ -869,7 +872,7 @@ def init_db(path: str | PathLike[str]) -> None:
                       is_original_canon
                     ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    canon_rows,
+                    dictionary_rows,
                 )
 
         except sqlite3.Error as e:
