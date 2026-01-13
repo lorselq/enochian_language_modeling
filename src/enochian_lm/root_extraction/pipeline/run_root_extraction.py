@@ -30,16 +30,7 @@ from enochian_lm.root_extraction.utils.embeddings import (
     get_sentence_transformer,
     stream_text,
 )
-from enochian_lm.root_extraction.utils.residual_analysis import (
-    exclude_root_segments,
-    summarize_residuals,
-)
-from enochian_lm.root_extraction.utils.remainders import (
-    RootRemainder,
-    extract_root_remainders,
-    persist_root_remainders,
-    summarize_root_remainders,
-)
+from enochian_lm.root_extraction.utils.residual_analysis import exclude_root_segments
 from enochian_lm.root_extraction.utils.analytics_bridge import gather_morph_evidence
 from enochian_lm.root_extraction.utils.preanalysis import (
     fetch_preanalysis_summary,
@@ -485,14 +476,6 @@ class RootExtractionCrew:
             self.incomplete_roots.discard(norm)
             self._advance_queue(norm)
 
-    def _persist_root_remainders(self, rows: list[RootRemainder]) -> None:
-        """Persist deterministic root remainder spans for the current run."""
-
-        if not rows:
-            return
-
-        persist_root_remainders(self.new_definitions_db, rows=rows)
-
     def _get_candidate_breakdown(self, word: str) -> dict | None:
         norm = self._normalize_root(word)
         if not norm:
@@ -692,7 +675,6 @@ class RootExtractionCrew:
         sem_count: int,
         idx_count: int,
         overlap_count: int,
-        residual_report: dict | None = None,
     ) -> str:
         """
         Compact, human-readable summary passed to debate/solo engines.
@@ -706,16 +688,6 @@ class RootExtractionCrew:
             f"coverage={semantic_coverage:.3f} | "
             f"sem={sem_count} | idx={idx_count} | overlap_count={overlap_count}"
         )
-        if residual_report:
-            explained = residual_report.get("explained_ratio")
-            residual = residual_report.get("residual_ratio")
-            headline = residual_report.get("headline")
-            if explained is not None:
-                summary += f" | explained={float(explained):.2f}"
-            if residual is not None:
-                summary += f" | residual={float(residual):.2f}"
-            if headline:
-                summary += f" | residues={headline}"
         return summary
 
     def _dynamic_coh_floor(self, n: int | None, gram_len: int | None) -> float:
@@ -978,11 +950,8 @@ class RootExtractionCrew:
             1 for c in cluster if _get_str(c, "source", "") in ("semantic", "both")
         )
 
-        residual_inputs = []
         segment_counter: Counter[str] = Counter()
         residual_counter: Counter[str] = Counter()
-        remainder_rows: list[RootRemainder] = []
-        now_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
         seen_norms = set()
         for original in cluster:
             norm_form = _get_str(original, "normalized", "").lower()
@@ -1026,44 +995,7 @@ class RootExtractionCrew:
                             frag = str(uncovered_entry).strip()
                         if frag and frag.lower() != ngram_lower:
                             residual_counter[frag] += 1
-            residual_inputs.append(
-                {
-                    "word": display_word,
-                    "normalized": norm_form,
-                    "definition": _get_str(original, "definition", ""),
-                    "breakdown": breakdown,
-                }
-            )
-
-            for remainder in extract_root_remainders(ngram_lower, norm_form):
-                remainder_rows.append(
-                    RootRemainder(
-                        run_id=self.run_id,
-                        root=ngram_lower,
-                        word=str(display_word or norm_form),
-                        normalized=norm_form,
-                        remainder=remainder["remainder"],
-                        kind=remainder["kind"],
-                        span_start=int(remainder["span_start"]),
-                        span_end=int(remainder["span_end"]),
-                        created_at=now_ts,
-                    )
-                )
-
-        residual_report = summarize_residuals(
-            root=ngram_lower,
-            analyses=residual_inputs,
-        )
-
-        self._persist_root_remainders(remainder_rows)
-        remainder_summary = summarize_root_remainders(
-            self.new_definitions_db, run_id=self.run_id, root=ngram_lower
-        )
-        if isinstance(residual_report, dict):
-            guidance_raw = residual_report.get("residual_guidance_json")
-            guidance_json: dict[str, object] = guidance_raw if isinstance(guidance_raw, dict) else {}
-            guidance_json["remainders"] = remainder_summary
-            residual_report["residual_guidance_json"] = guidance_json
+        residual_report = None
 
         analytics_summary = gather_morph_evidence(
             self.new_definitions_db,
@@ -1106,13 +1038,6 @@ class RootExtractionCrew:
             f"- Semantic Coverage: {coverage_pct}% ({semantic_hits}/{len(cluster)} words match semantically)",
             f"- Candidate Count: {len(cluster)}",
         ]
-        focus_prompt_raw = residual_report.get("focus_prompt") if isinstance(residual_report, dict) else None
-        focus_prompt: str = str(focus_prompt_raw) if focus_prompt_raw else ""
-        if focus_prompt:
-            stats_lines.append("")
-            stats_lines.append("Morphological diagnostics:")
-            stats_lines.append(focus_prompt)
-
         analytics_summary = analytics_summary or {}
         analytics_lines_raw = analytics_summary.get("summary_lines") if isinstance(analytics_summary, dict) else None
         analytics_lines: list[str] = [str(ln) for ln in analytics_lines_raw] if isinstance(analytics_lines_raw, list) else []
@@ -1120,17 +1045,6 @@ class RootExtractionCrew:
             stats_lines.append("")
             stats_lines.append("Analytics priors:")
             stats_lines.extend(analytics_lines)
-
-        analytics_focus_raw = analytics_summary.get("focus_lines") if isinstance(analytics_summary, dict) else None
-        analytics_focus: list[str] = [str(ln) for ln in analytics_focus_raw] if isinstance(analytics_focus_raw, list) else []
-        if analytics_focus:
-            focus_block = "Attribution highlights:\n" + "\n".join(
-                f"- {line}" for line in analytics_focus
-            )
-            if focus_prompt:
-                focus_prompt = f"{focus_prompt}\n\n{focus_block}"
-            else:
-                focus_prompt = focus_block
 
         compact_summary = self._build_stats_summary(
             ngram,  # or ngram if iterating strings
@@ -1141,7 +1055,6 @@ class RootExtractionCrew:
             sem_count=sem_count,
             idx_count=idx_count,
             overlap_count=overlap_count,
-            residual_report=residual_report,
         )
 
         stats_summary = (
@@ -1157,17 +1070,11 @@ class RootExtractionCrew:
                 stream_callback=stream_callback,
                 root_entry=None,  # can be None; debate engine will handle
                 use_remote=self.use_remote,
-                residual_prompt=focus_prompt,
+                residual_prompt=None,
                 query_db=self.new_definitions_db,
                 query_run_id=self.run_id,
             )
         else:
-            residual_guidance_raw = (
-                residual_report.get("residual_guidance_json")
-                if isinstance(residual_report, dict)
-                else None
-            )
-            residual_guidance = residual_guidance_raw if isinstance(residual_guidance_raw, dict) else None
             the_result = solo_agent_ngram_analysis(
                 root=ngram.upper(),
                 candidates=trimmed_cluster,
@@ -1175,14 +1082,13 @@ class RootExtractionCrew:
                 stream_callback=stream_callback,
                 root_entry=None,   # can be None; debate engine will handle
                 use_remote=self.use_remote,
-                residual_prompt=focus_prompt,
-                residual_guidance=residual_guidance,
+                residual_prompt=None,
+                residual_guidance=None,
                 query_db=self.new_definitions_db,
                 query_run_id=self.run_id,
             )
 
         if isinstance(the_result, dict):
-            the_result.setdefault("residual_report", residual_report)
             the_result.setdefault("analytics_summary", analytics_summary)
 
         # Normalize expected keys (be defensive)
@@ -1202,9 +1108,7 @@ class RootExtractionCrew:
             "Archivist": the_result.get("Archivist", "") or "",
             "raw_output": the_result,
         }
-        if isinstance(residual_report, dict):
-            residual_report.setdefault("analytics_summary", analytics_summary)
-        normalized["residual_report"] = residual_report
+        normalized["residual_report"] = None
         normalized["analytics_summary"] = analytics_summary
         return normalized
 
@@ -1767,108 +1671,10 @@ class RootExtractionCrew:
                         except (TypeError, ValueError):
                             return None
 
-                    residual_report_raw = evaluated.get("residual_report")
-                    residual_report = residual_report_raw if isinstance(residual_report_raw, dict) else {}
-                    residual_explained = _safe_float(
-                        residual_report.get("explained_ratio")
-                    )
-                    residual_ratio = _safe_float(residual_report.get("residual_ratio"))
-
-                    # Per-word residual diagnostics (used for both headline and prompt)
-                    word_details_raw = residual_report.get("word_details")
-                    residual_word_details = word_details_raw if isinstance(word_details_raw, list) else []
-
-                    # --- 1) Build a clearer residual_headline ---------------------------------
-                    # Example target:
-                    #   "Top residuals: GEBOFAL:1.00, ZEBOG:1.00"
+                    residual_explained = None
+                    residual_ratio = None
                     residual_headline = None
-                    if residual_word_details:
-                        # sort by highest residual_ratio first
-                        sorted_details = sorted(
-                            residual_word_details,
-                            key=lambda d: _safe_float(d.get("residual_ratio")) or 0.0,
-                            reverse=True,
-                        )
-                        bits: list[str] = []
-                        for d in sorted_details[:3]:
-                            w = str(d.get("word") or d.get("normalized") or "").strip()
-                            r = _safe_float(d.get("residual_ratio"))
-                            if w and r is not None:
-                                bits.append(f"{w}:{r:.2f}")
-                        if bits:
-                            residual_headline = "Top residuals: " + ", ".join(bits)
-
-                    # --- 2) Build an explicit, LLM-friendly residual_focus_prompt --------------
                     residual_focus_prompt = None
-                    if residual_word_details:
-                        cov_vals = [
-                            _safe_float(d.get("coverage_ratio"))
-                            for d in residual_word_details
-                            if d.get("coverage_ratio") is not None
-                        ]
-                        res_vals = [
-                            _safe_float(d.get("residual_ratio"))
-                            for d in residual_word_details
-                            if d.get("residual_ratio") is not None
-                        ]
-
-                        # simple averages over words in this cluster
-                        avg_cov = (
-                            sum(v for v in cov_vals if v is not None) / len(cov_vals)
-                            if cov_vals
-                            else None
-                        )
-                        avg_res = (
-                            sum(v for v in res_vals if v is not None) / len(res_vals)
-                            if res_vals
-                            else None
-                        )
-
-                        n_words = len(residual_word_details)
-
-                        # Human / LLM readable explanation
-                        pieces: list[str] = [
-                            f"ROOT={root_token.upper()}",
-                            f"N={n_words}",
-                        ]
-                        if avg_cov is not None:
-                            pieces.append(f"avg_cov={avg_cov:.2f}")
-                        if avg_res is not None:
-                            pieces.append(f"avg_res={avg_res:.2f}")
-                        if residual_explained is not None:
-                            pieces.append(f"explained={residual_explained:.2f}")
-                        if residual_ratio is not None:
-                            pieces.append(f"residual={residual_ratio:.2f}")
-                        if residual_headline:
-                            pieces.append(residual_headline)
-
-                        summary_line = " | ".join(pieces)
-
-                        # Short instruction that explains what these metrics are and how to use them
-                        metric_explainer = (
-                            "Here, N is the number of candidate words in this cluster. "
-                            "avg_cov is the average fraction of each word that is morphologically covered "
-                            "by the proposed root (0.0–1.0). "
-                            "avg_res is the average fraction of each word that remains morphologically "
-                            "unexplained by the root (0.0–1.0). "
-                            "'explained' is a cluster-level score for how much of the residual morphology "
-                            "is accounted for by the root, and 'residual' is the remaining unexplained "
-                            "portion (roughly 1.0 - explained). "
-                        )
-
-                        usage_hint = (
-                            "Use these values when deciding whether to accept the root: higher avg_cov and "
-                            "explained, and lower residual, mean the root morphologically explains more of "
-                            "the cluster. If residual is close to 1.0 and avg_cov is near 0.0, treat the "
-                            "listed words as unexplained residuals and be skeptical of the root."
-                        )
-
-                        residual_focus_prompt = (
-                            summary_line + ". " + metric_explainer + usage_hint
-                        )
-
-                        if isinstance(residual_report, dict):
-                            residual_report["focus_prompt"] = residual_focus_prompt
 
 
                     # 2) insert cluster and llm records into sqlite
@@ -2009,56 +1815,6 @@ class RootExtractionCrew:
                         )
 
                     cluster_rowid = cursor.lastrowid
-
-                    if residual_word_details:
-                        detail_rows = []
-                        for detail in residual_word_details:
-                            if not isinstance(detail, dict):
-                                continue
-                            residual_span = str(detail.get("word") or "").strip()
-                            normalized_word = str(
-                                detail.get("normalized") or residual_span
-                            ).strip()
-                            if not (residual_span or normalized_word):
-                                continue
-                            uncovered = detail.get("uncovered") or []
-                            if not isinstance(uncovered, list):
-                                uncovered = [str(uncovered)] if uncovered else []
-                            low_conf = detail.get("low_conf_segments") or []
-                            if not isinstance(low_conf, list):
-                                low_conf = [str(low_conf)] if low_conf else []
-
-                            detail_rows.append(
-                                (
-                                    cluster_rowid,
-                                    residual_span or normalized_word,
-                                    normalized_word,
-                                    str(detail.get("definition") or ""),
-                                    _safe_float(detail.get("coverage_ratio")),
-                                    _safe_float(detail.get("residual_ratio")),
-                                    _safe_float(detail.get("avg_confidence")),
-                                    json.dumps(uncovered, ensure_ascii=False),
-                                    json.dumps(low_conf, ensure_ascii=False),
-                                )
-                            )
-
-                        if detail_rows:
-                            cursor.executemany(
-                                """
-                                INSERT INTO residual_details (
-                                    cluster_id,
-                                    residual_span,
-                                    normalized,
-                                    definition,
-                                    coverage_ratio,
-                                    residual_ratio,
-                                    avg_confidence,
-                                    uncovered_json,
-                                    low_conf_json
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """,
-                                detail_rows,
-                            )
 
                     # 3) Insert each of the merged defs into `raw_defs`
                     for entry in merged_cluster:
