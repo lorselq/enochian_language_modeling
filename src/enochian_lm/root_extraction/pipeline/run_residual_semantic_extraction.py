@@ -49,7 +49,6 @@ from enochian_lm.root_extraction.utils.preanalysis import (
     mark_preanalysis_consumed,
     load_trusted_ngrams,
 )
-from enochian_lm.analysis.utils.sql import ensure_analysis_tables
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +83,6 @@ class RemainderExtractionCrew:
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
         self.new_definitions_db = sqlite3.connect(paths[style])
         self._prepare_db(self.new_definitions_db)
-        ensure_analysis_tables(self.new_definitions_db)
         self._init_queue_table()
         self._ngram_inventory: list[tuple[str, int]] = []
         self._ngram_df: dict[str, int] = {}
@@ -811,7 +809,11 @@ class RemainderExtractionCrew:
         if not composites:
             return
 
-        ensure_analysis_tables(self.new_definitions_db)
+        if not self._analysis_tables_available():
+            logger.debug(
+                "Skipping composite reconstruction persistence; analysis tables not present.",
+            )
+            return
 
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         composite_rows: list[tuple[str, str | None, str, float, str, str, str]] = []
@@ -893,6 +895,23 @@ class RemainderExtractionCrew:
             "Persisted composite reconstructions and morph vectors",
             extra={"composites": len(composite_rows), "morphs": len(morph_rows)},
         )
+
+    def _analysis_tables_available(self) -> bool:
+        try:
+            rows = self.new_definitions_db.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table'
+                  AND name IN ('composite_reconstruction', 'morph_semantic_vectors')
+                """
+            ).fetchall()
+        except sqlite3.Error:
+            return False
+        names = {row[0] for row in rows}
+        return {
+            "composite_reconstruction",
+            "morph_semantic_vectors",
+        }.issubset(names)
 
     def _get_candidate_breakdown(self, word: str) -> dict | None:
         norm = self._normalize_root(word)
