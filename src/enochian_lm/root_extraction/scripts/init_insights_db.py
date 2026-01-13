@@ -610,6 +610,27 @@ WHERE TRIM(COALESCE(glossator_def, '')) <> ''
   AND LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) = 'accepted';
 """
 
+_ROOT_EVIDENCE_EXAMPLES_VIEW = """
+CREATE VIEW IF NOT EXISTS root_evidence_examples AS
+SELECT
+  LOWER(TRIM(json_extract(c.glossator_def, '$.ROOT'))) AS root,
+  json_extract(evidence.value, '$.word') AS evidence_word,
+  json_extract(evidence.value, '$.sense') AS evidence_definition,
+  json_extract(evidence.value, '$.loc') AS evidence_loc,
+  json_extract(evidence.value, '$.note.role') AS role,
+  json_extract(evidence.value, '$.note.effect') AS effect,
+  json_extract(evidence.value, '$.note.sense_alignment') AS sense_alignment,
+  json_extract(evidence.value, '$.note.confidence') AS confidence,
+  json_extract(evidence.value, '$.note.note') AS note,
+  c.cluster_id AS source_cluster_id,
+  evidence.value AS raw_evidence_json
+FROM clusters c
+JOIN json_each(c.glossator_def, '$.EVIDENCE') AS evidence
+WHERE TRIM(COALESCE(c.glossator_def, '')) <> ''
+  AND json_valid(c.glossator_def) = 1
+  AND LOWER(COALESCE(json_extract(c.glossator_def, '$.EVALUATION'), '')) = 'accepted';
+"""
+
 ANALYSIS_TABLE_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS attribution_marginals (
@@ -703,6 +724,8 @@ def init_db(path: str | PathLike[str]) -> None:
                 conn.execute("DROP VIEW IF EXISTS clusters_processed;")
             if _table_or_view_exists(conn, "root_glosses"):
                 conn.execute("DROP VIEW IF EXISTS root_glosses;")
+            if _table_or_view_exists(conn, "root_evidence_examples"):
+                conn.execute("DROP VIEW IF EXISTS root_evidence_examples;")
 
             # Ensure newly introduced columns exist for older databases
             shared_columns = {
@@ -762,6 +785,7 @@ def init_db(path: str | PathLike[str]) -> None:
             conn.executescript(ddl)
             if _has_json1(conn):
                 conn.executescript(_ROOT_GLOSSES_VIEW)
+                conn.executescript(_ROOT_EVIDENCE_EXAMPLES_VIEW)
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)
