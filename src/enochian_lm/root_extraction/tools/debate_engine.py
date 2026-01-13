@@ -601,6 +601,8 @@ HYPOTHESIS: <one-sentence candidate meaning>
 EVIDENCE: <up to 6 bullets, synthesizing the strongest arguments from the junior linguists>
 COUNTEREVIDENCE: <up to 4 bullets; optional>
 CONFIDENCE: <0.00–1.00>
+DRIVERS: <up to 3 bullets; each bullet is a short phrase explaining why you are confident in this analysis>
+RISKS: <up to 3 bullets; each bullet is a short phrase explaining where your reservations are in this analysis>
 """,
         ),
         "counter": Task(
@@ -632,7 +634,10 @@ Your tone must be **sharp, disciplined, and logically rigorous**. You are not he
 **CRITIQUE**: <an indication whether or not {root.upper()} has a valid proposed definition>
 **EVIDENCE**: <up to 5 bullets; each bullet names {root.upper()} and directly addresses the claim's evidence (supporting or undercutting) with citations to this list: {candidate_list}>
 **ALTERNATIVE**: <up to 2 bullets; optional>
-**CONFIDENCE**: <0.00–1.00>""",
+**CONFIDENCE**: <0.00–1.00>
+**DRIVERS**: <up to 3 bullets; each bullet is a short phrase explaining why you are confident in this analysis>
+**RISKS**: <up to 3 bullets; each bullet is a short phrase explaining where your reservations are in this analysis>
+""",
         ),
         "defend": Task(
             description=f"""
@@ -669,6 +674,8 @@ EVIDENCE: <up to 5 bullets; each bullet cites only words from {candidate_list}; 
 POINTS_OF_AGREEMENT: <up to 3 bullets only if warranted; each bullet must name the specific claim/evidence from the Lead Linguist you accept and give a 1-sentence reason; do not introduce new evidence here; if none, write "None">
 DELTA: <up to 3 bullets of what's changed in your position since last round; else "None">
 CONFIDENCE: <0.00–1.00>
+DRIVERS: <up to 3 bullets; each bullet is a short phrase explaining why you are confident in this analysis>
+RISKS: <up to 3 bullets; each bullet is a short phrase explaining where your reservations are in this analysis>
 """,
         ),
         "rebuttal": Task(
