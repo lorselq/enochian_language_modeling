@@ -589,9 +589,6 @@ class MorphemeCandidateFinder:
         """
         # 1) Segment the target into possible ngram paths
         parses = self.segment_target(target)
-        print(
-            f"[Debug][find_candidates] parses for '{target}': {parses[:3]}"
-        )  # peek first 3
 
         # 2) Score each path and force a normalized value
         scored = []
@@ -605,11 +602,6 @@ class MorphemeCandidateFinder:
             c["target_length"] = len(target)
             c["breakdown"] = self._build_breakdown(target, coverage)
             scored.append(c)
-
-        print(
-            "[Debug][find_candidates] scored (normalized, cos_sim):",
-            [(c["normalized"], c["cos_sim"]) for c in scored[:5]],
-        )
 
         # 3) Prune low-semantic matches (skip for very short targets)
         cos_cutoff = max(self.prune_threshold, self.min_candidate_cos_sim)
@@ -633,9 +625,6 @@ class MorphemeCandidateFinder:
         }
 
         if not filtered:
-            print(
-                f"[Debug][find_candidates] no survivors, falling back to root '{root_norm}'"
-            )
             filtered = [fallback]
         else:
             # Prepend the root if it's not already in the list
@@ -665,10 +654,6 @@ class MorphemeCandidateFinder:
 
         top_limit = top_k if top_k is not None else self.max_candidates
         candidates = sorted(filtered, key=_score_for_sort, reverse=True)[:top_limit]
-        print(
-            "[Debug][find_candidates] final candidates:",
-            [c["normalized"] for c in candidates],
-        )
 
         # --- stats & debug logging ---
         self.stats["tokens"] += 1
