@@ -259,10 +259,10 @@ def debate_ngram(
 
     is_canon = bool(root_entry and _get_field(root_entry, "definition", ""))
 
-    if root_entry and _get_field(root_entry, "definition", ""):
+    if root_entry and _get_field(root_entry, "definition", "") and not blind_evaluation:
         definition = _get_field(root_entry, "definition", "")
-        extra_prompt = f"⚠️ Reminder: The root '{root.upper()}' is already defined in the corpus as '{definition}'. Consider this as a potential anchor.\n"
-        skeptic_hint = f"\n\n🧐 Note: The root '{root.upper()}' is already defined in the corpus as '{definition}'. This lends strong weight towards its inclusion as a root word that should be accepted. Consider this in your critique."
+        extra_prompt = f"⚠️ Reminder: The root '{root.upper()}' is already defined in the corpus as '{definition}'. Treat as a baseline to compare against after forming your hypothesis. *Do not use as evidence*.\n"
+        skeptic_hint = f"If the Lead Linguist uses the root '{root.upper()}' to mean something different than its existing definition '{definition}', call them out on this discrepancy and require strong evidence to justify deviating from the established meaning.\n"
     else:
         extra_prompt = ""
         skeptic_hint = ""
@@ -527,7 +527,10 @@ Your tone must be scholarly and confident. Avoid vague generalizations. Use exam
 HYPOTHESIS: <one-sentence candidate meaning>
 EVIDENCE: <up to 5 bullets; each bullet names {root.upper()} and provides an argument, citing relevant fasttext, semantic, or tier>
 COUNTEREVIDENCE: <up to 2 bullets; optional>
+FALSIFIER: <one sentence: what observation would most strongly disconfirm your hypothesis?>
 CONFIDENCE: <0.00–1.00>
+DRIVERS: <up to 3 bullets; each bullet is a short phrase explaining why you are confident in this analysis>
+RISKS: <up to 3 bullets; each bullet is a short phrase explaining where your reservations are in this analysis>
 """,
         ),
         "initial_ruling": Task(
