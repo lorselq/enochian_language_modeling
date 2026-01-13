@@ -581,6 +581,34 @@ WHERE TRIM(COALESCE(glossator_def, '')) <> ''
   AND glossator_def NOT LIKE 'ERROR%';
 """
 
+_ROOT_GLOSSES_VIEW = """
+CREATE VIEW IF NOT EXISTS root_glosses AS
+SELECT
+  LOWER(TRIM(json_extract(glossator_def, '$.ROOT'))) AS root,
+  LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS evaluation,
+  json_extract(glossator_def, '$.DEFINITION') AS definition,
+  json_extract(glossator_def, '$.REASON') AS reason,
+  json_extract(glossator_def, '$.SEMANTIC_CORE') AS semantic_core,
+  json_extract(glossator_def, '$.NEGATIVE_CONTRAST') AS negative_contrast,
+  json_extract(glossator_def, '$.DECODING_GUIDE') AS decoding_guide,
+  json_extract(glossator_def, '$.POS_BIAS.NOUNNESS') AS pos_bias_nounness,
+  json_extract(glossator_def, '$.POS_BIAS.MODIFIER') AS pos_bias_modifier,
+  json_extract(glossator_def, '$.POS_BIAS.VERBNESS') AS pos_bias_verbness,
+  json_extract(glossator_def, '$.ATTACHMENT.PREFIX_LIKELIHOOD') AS attachment_prefix_likelihood,
+  json_extract(glossator_def, '$.ATTACHMENT.SUFFIX_LIKELIHOOD') AS attachment_suffix_likelihood,
+  json_extract(glossator_def, '$.ATTACHMENT.FREE_LIKELIHOOD') AS attachment_free_likelihood,
+  json_extract(glossator_def, '$.ATTACHMENT.PRODUCTIVITY') AS attachment_productivity,
+  json_extract(glossator_def, '$.CONFIDENCE.SCORE') AS confidence_score,
+  json_extract(glossator_def, '$.CONFIDENCE.DRIVERS') AS confidence_drivers,
+  json_extract(glossator_def, '$.CONFIDENCE.RISKS') AS confidence_risks,
+  cluster_id AS source_cluster_id,
+  json_extract(glossator_def, '$.N_EXAMPLES') AS examples_in_cluster,
+  glossator_def AS raw_glossator_json
+FROM clusters
+WHERE TRIM(COALESCE(glossator_def, '')) <> ''
+  AND json_valid(glossator_def) = 1
+  AND LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) = 'accepted';
+"""
 
 ANALYSIS_TABLE_STATEMENTS = (
     """
@@ -673,6 +701,8 @@ def init_db(path: str | PathLike[str]) -> None:
             # Rebuild the processed VIEW to ensure the latest filter logic
             if _table_or_view_exists(conn, "clusters_processed"):
                 conn.execute("DROP VIEW IF EXISTS clusters_processed;")
+            if _table_or_view_exists(conn, "root_glosses"):
+                conn.execute("DROP VIEW IF EXISTS root_glosses;")
 
             # Ensure newly introduced columns exist for older databases
             shared_columns = {
@@ -730,6 +760,8 @@ def init_db(path: str | PathLike[str]) -> None:
                     _DEF_VIEW_SOLO_HEUR if variant == "solo" else _DEF_VIEW_DEBATE_HEUR
                 )
             conn.executescript(ddl)
+            if _has_json1(conn):
+                conn.executescript(_ROOT_GLOSSES_VIEW)
 
             for ddl in ANALYSIS_TABLE_STATEMENTS:
                 conn.execute(ddl)
