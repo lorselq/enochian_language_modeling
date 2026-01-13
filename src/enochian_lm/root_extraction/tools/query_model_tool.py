@@ -83,7 +83,7 @@ class QueryModelTool(BaseTool):
             "Such a happy shark! (we're waiting... 🙃) ",
             "Marooned in shark-waters. 🏝️ But it's okay, the LLM-ship will come save us! ",
             "Waiting on the LLM. In the meantime, enjoy this shark. ",
-            "Sharks as a species are older than Jupiter's rings. Not exactly relevant, but cool. ",
+            "Sharks as a species are older than Saturn's rings. Not exactly relevant, but cool. ",
             "If I were a shark, I, too, would swim laps while waiting for LLM API calls. ",
             "CLI aquariums are too small for LLM-sharks. Waiting to set the critter free... ",
             "Look! A shark! A distraction and indication that the stream didn't crash! ",
