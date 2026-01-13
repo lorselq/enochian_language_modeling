@@ -4259,7 +4259,7 @@
     {
         "word": "CAFAFAM",
         "normalized": "cafafam",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "abiding",
         "commentary": "an alternate spelling",
         "senses": [
@@ -5643,7 +5643,7 @@
     {
         "word": "CNOQOD",
         "normalized": "cnoqod",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "(unto) servants",
         "key_citations": [
             {
@@ -5667,7 +5667,7 @@
     {
         "word": "CNOQUODI",
         "normalized": "cnoqodi",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "(with) ministers",
         "key_citations": [
             {
@@ -5691,7 +5691,7 @@
     {
         "word": "CNOQUOL",
         "normalized": "cnoqol",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "servants",
         "key_citations": [
             {
@@ -5902,7 +5902,7 @@
     },
     {
         "word": "CONGAMPHLGH",
-        "normalized": "congamphilgh",
+        "normalized": "congamphlgh",
         "canon_word": true,
         "definition": "holy ghost,faith",
         "senses": [
@@ -6101,7 +6101,7 @@
     {
         "word": "CORMPO",
         "normalized": "cormpo",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "hath (yet) numbered",
         "key_citations": [
             {
@@ -6888,7 +6888,7 @@
     },
     {
         "word": "DEMPHE",
-        "normalized": "demfe",
+        "normalized": "demphe",
         "canon_word": false,
         "definition": "separate unto the Daughter of Light",
         "commentary": "\"new word\" derived from Liber Loagaeth according to the dictionary from the archidox website",
@@ -7639,7 +7639,7 @@
     {
         "word": "DRIX",
         "normalized": "drix",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "to bring down",
         "key_citations": [
             {
@@ -11267,7 +11267,7 @@
     {
         "word": "I",
         "normalized": "i",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "is",
         "key_citations": [
             {
@@ -12794,7 +12794,7 @@
     {
         "word": "IZIZOP",
         "normalized": "izizop",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "(your) vessels",
         "key_citations": [
             {
@@ -21244,12 +21244,24 @@
     {
         "word": "PRIAZI",
         "normalized": "priazi",
-        "canon_word": false,
+        "canon_word": true,
         "definition": "those",
+        "key_citations": [
+            {
+                "location": "30.128",
+                "context": "Bring forth with *those* that increase..."
+            }
+        ],
         "senses": [
             {
                 "sense_id": 1,
-                "definition": "those"
+                "definition": "those",
+                "key_citations": [
+                    {
+                        "location": "30.128",
+                        "context": "Bring forth with *those* that increase..."
+                    }
+                ]
             }
         ]
     },
