@@ -10,7 +10,6 @@ import random
 import statistics as st
 import time
 import uuid, json, sys, platform, datetime
-from collections.abc import Sequence
 from collections import defaultdict, Counter
 from enochian_lm.root_extraction.utils.logger import save_log
 from enochian_lm.root_extraction.tools.debate_residual_semantic_engine import (
@@ -787,15 +786,6 @@ class RemainderExtractionCrew:
             self.incomplete_roots.discard(norm)
             self._advance_queue(norm)
 
-    @staticmethod
-    def _round_vector(values: Sequence[float], places: int = 6) -> list[float]:
-        factor = 10**places
-        return [math.floor(float(val) * factor + 0.5) / factor for val in values]
-
-    @staticmethod
-    def _vector_norm(values: Sequence[float]) -> float:
-        return math.sqrt(sum(float(v) * float(v) for v in values))
-
     def _persist_root_remainders(self, rows: list[RootRemainder]) -> None:
         """Persist deterministic root remainder spans for the current run."""
 
@@ -803,116 +793,6 @@ class RemainderExtractionCrew:
             return
 
         persist_root_remainders(self.new_definitions_db, rows=rows)
-
-    def _persist_composite_reconstruction(
-        self, composites: list[dict[str, object]]
-    ) -> None:
-        if not composites:
-            return
-
-        if not self._analysis_tables_available():
-            logger.debug(
-                "Skipping composite reconstruction persistence; analysis tables not present.",
-            )
-            return
-
-        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        composite_rows: list[tuple[str, str | None, str, float, str, str, str]] = []
-        morph_rows: dict[str, tuple[str, float, str]] = {}
-
-        for item in composites:
-            norm = self._normalize_root(item.get("normalized"))
-            if not norm:
-                continue
-
-            breakdown = item.get("breakdown") or {}
-            vector = self.fasttext.get_word_vector(norm)
-            morphs: list[str] = []
-            for seg in breakdown.get("segments") or []:
-                canonical = str(seg.get("canonical") or "").strip()
-                if canonical and canonical not in morphs:
-                    morphs.append(canonical)
-                if canonical and canonical not in morph_rows:
-                    morph_vector = self.fasttext.get_word_vector(canonical)
-                    morph_rows[canonical] = (
-                        json.dumps(self._round_vector(morph_vector)),
-                        round(self._vector_norm(morph_vector), 4),
-                        timestamp,
-                    )
-
-            gold_gloss = item.get("definition") or None
-            composite_rows.append(
-                (
-                    norm,
-                    (
-                        gold_gloss
-                        if isinstance(gold_gloss, str) and gold_gloss.strip()
-                        else None
-                    ),
-                    json.dumps(self._round_vector(vector)),
-                    round(float(breakdown.get("residual_ratio") or 0.0), 4),
-                    json.dumps(morphs),
-                    "fasttext",
-                    timestamp,
-                )
-            )
-
-        if not composite_rows:
-            return
-
-        tokens = [(row[0],) for row in composite_rows]
-
-        with self.new_definitions_db:
-            self.new_definitions_db.executemany(
-                "DELETE FROM composite_reconstruction WHERE token = ?",
-                tokens,
-            )
-            self.new_definitions_db.executemany(
-                """
-                INSERT INTO composite_reconstruction (
-                  token, gold_gloss, pred_vector_json, recon_error, used_morphs_json, vector_source, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                composite_rows,
-            )
-
-            if morph_rows:
-                self.new_definitions_db.executemany(
-                    """
-                    INSERT INTO morph_semantic_vectors (morph, vector_json, l2_norm, updated_at)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(morph) DO UPDATE SET
-                        vector_json=excluded.vector_json,
-                        l2_norm=excluded.l2_norm,
-                        updated_at=excluded.updated_at
-                    """,
-                    [
-                        (morph, vector_json, l2_norm, ts)
-                        for morph, (vector_json, l2_norm, ts) in morph_rows.items()
-                    ],
-                )
-
-        logger.info(
-            "Persisted composite reconstructions and morph vectors",
-            extra={"composites": len(composite_rows), "morphs": len(morph_rows)},
-        )
-
-    def _analysis_tables_available(self) -> bool:
-        try:
-            rows = self.new_definitions_db.execute(
-                """
-                SELECT name FROM sqlite_master
-                WHERE type = 'table'
-                  AND name IN ('composite_reconstruction', 'morph_semantic_vectors')
-                """
-            ).fetchall()
-        except sqlite3.Error:
-            return False
-        names = {row[0] for row in rows}
-        return {
-            "composite_reconstruction",
-            "morph_semantic_vectors",
-        }.issubset(names)
 
     def _get_candidate_breakdown(self, word: str) -> dict | None:
         norm = self._normalize_root(word)
@@ -1375,8 +1255,6 @@ class RemainderExtractionCrew:
             guidance_json = residual_report.get("residual_guidance_json") or {}
             guidance_json["cooccurring_root_analyses"] = cooccurring_root_analyses
             residual_report["residual_guidance_json"] = guidance_json
-
-        self._persist_composite_reconstruction(residual_inputs)
 
         fallback_summary = fetch_preanalysis_summary(
             self.new_definitions_db,
