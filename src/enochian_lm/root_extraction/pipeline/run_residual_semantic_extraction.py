@@ -1805,8 +1805,8 @@ class RemainderExtractionCrew:
                     #             rows,
                     #         )
 
-                        # 4) commit once per cluster-member
-                        self.new_definitions_db.commit()
+                    # 4) commit once per cluster-member
+                    self.new_definitions_db.commit()
 
                         # cluster_rowid = cursor.lastrowid
 
