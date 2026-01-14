@@ -679,7 +679,7 @@ RISKS: <up to 3 bullets; each bullet is a short phrase explaining where your res
 """,
         ),
         "rebuttal": Task(
-            description="""
+            description=f"""
 You are the **Skeptical Linguist**, issuing a follow-up criticisms on the proposed Enochian root.
 
 Your primary task:
