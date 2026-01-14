@@ -75,7 +75,9 @@ class RootExtractionCrew:
         self.sentence_model_name = "paraphrase-MiniLM-L6-v2"
         self.sentence_model = get_sentence_transformer(self.sentence_model_name)
         self.trusted_ngrams = set(load_trusted_ngrams())
-        self._trusted_max_len = max((len(token) for token in self.trusted_ngrams), default=0)
+        self._trusted_max_len = max(
+            (len(token) for token in self.trusted_ngrams), default=0
+        )
         self.completed_roots, self.incomplete_roots = self._load_cluster_progress()
         self.completed_roots |= self._load_root_level_skips()
         self._breakdown_cache: dict[str, dict | None] = {}
@@ -266,9 +268,7 @@ class RootExtractionCrew:
         cols = {row[1] for row in cursor.fetchall()}  # row[1] = column name
 
         if "queue_cycle" not in cols:
-            cursor.execute(
-                "ALTER TABLE runs ADD COLUMN queue_cycle INTEGER DEFAULT 0"
-            )
+            cursor.execute("ALTER TABLE runs ADD COLUMN queue_cycle INTEGER DEFAULT 0")
 
         self.new_definitions_db.commit()
 
@@ -284,7 +284,9 @@ class RootExtractionCrew:
     def _sync_queue_with_inventory(self) -> None:
         cursor = self.new_definitions_db.cursor()
         rows = cursor.execute("SELECT ngram, queue_index FROM ngram_queue").fetchall()
-        seen = {self._normalize_root(row[0]): int(row[1]) for row in rows if row and row[0]}
+        seen = {
+            self._normalize_root(row[0]): int(row[1]) for row in rows if row and row[0]
+        }
         inserts = []
         for idx, (ngram, _) in enumerate(self._ngram_inventory):
             if not ngram or ngram in seen:
@@ -354,9 +356,7 @@ class RootExtractionCrew:
 
     def _get_current_cycle(self) -> int:
         cursor = self.new_definitions_db.cursor()
-        row = cursor.execute(
-            "SELECT MIN(cycles_completed) FROM ngram_queue"
-        ).fetchone()
+        row = cursor.execute("SELECT MIN(cycles_completed) FROM ngram_queue").fetchone()
         if not row or row[0] is None:
             return 0
         return int(row[0])
@@ -412,14 +412,12 @@ class RootExtractionCrew:
             rows = cursor.execute(query).fetchall()
         except sqlite3.OperationalError:
             try:
-                fallback = cursor.execute("SELECT DISTINCT ngram FROM clusters").fetchall()
+                fallback = cursor.execute(
+                    "SELECT DISTINCT ngram FROM clusters"
+                ).fetchall()
             except sqlite3.Error:
                 return set(), set()
-            completed = {
-                self._normalize_root(row[0])
-                for row in fallback
-                if row[0]
-            }
+            completed = {self._normalize_root(row[0]) for row in fallback if row[0]}
             return completed, set()
 
         for row in rows:
@@ -450,13 +448,11 @@ class RootExtractionCrew:
             ).fetchall()
         except sqlite3.Error:
             return set()
-        return {
-            self._normalize_root(row[0])
-            for row in rows
-            if row and row[0]
-        }
+        return {self._normalize_root(row[0]) for row in rows if row and row[0]}
 
-    def _is_root_processed(self, root: str, *, current_cycle: int | None = None) -> bool:
+    def _is_root_processed(
+        self, root: str, *, current_cycle: int | None = None
+    ) -> bool:
         norm = self._normalize_root(root)
         if not norm:
             return False
@@ -572,7 +568,9 @@ class RootExtractionCrew:
                 break
             prefix = haystack[:idx]
             suffix = haystack[idx + len(target) :]
-            if self._is_text_covered_by_trusted(prefix) and self._is_text_covered_by_trusted(suffix):
+            if self._is_text_covered_by_trusted(
+                prefix
+            ) and self._is_text_covered_by_trusted(suffix):
                 return True
             start = idx + 1
         return False
@@ -869,7 +867,11 @@ class RootExtractionCrew:
                 continue
 
             citations = _get_field(c, "key_citations", "")
-            if isinstance(citations, list) and citations and isinstance(citations[0], dict):
+            if (
+                isinstance(citations, list)
+                and citations
+                and isinstance(citations[0], dict)
+            ):
                 contexts = [
                     _get_str(cite, "context", "").strip()
                     for cite in citations
@@ -1009,9 +1011,19 @@ class RootExtractionCrew:
         )
         if fallback_summary:
             analytics_summary = analytics_summary or {}
-            summary_lines_raw = analytics_summary.get("summary_lines") if isinstance(analytics_summary, dict) else None
-            merged_summary: list[str] = list(summary_lines_raw) if isinstance(summary_lines_raw, list) else []
-            fallback_lines = fallback_summary.get("summary_lines", []) if isinstance(fallback_summary, dict) else []
+            summary_lines_raw = (
+                analytics_summary.get("summary_lines")
+                if isinstance(analytics_summary, dict)
+                else None
+            )
+            merged_summary: list[str] = (
+                list(summary_lines_raw) if isinstance(summary_lines_raw, list) else []
+            )
+            fallback_lines = (
+                fallback_summary.get("summary_lines", [])
+                if isinstance(fallback_summary, dict)
+                else []
+            )
             if isinstance(fallback_lines, list):
                 for line in fallback_lines:
                     if isinstance(line, str) and line not in merged_summary:
@@ -1019,9 +1031,19 @@ class RootExtractionCrew:
             if isinstance(analytics_summary, dict):
                 analytics_summary["summary_lines"] = merged_summary
 
-            focus_lines_raw = analytics_summary.get("focus_lines") if isinstance(analytics_summary, dict) else None
-            merged_focus: list[str] = list(focus_lines_raw) if isinstance(focus_lines_raw, list) else []
-            fallback_focus = fallback_summary.get("focus_lines", []) if isinstance(fallback_summary, dict) else []
+            focus_lines_raw = (
+                analytics_summary.get("focus_lines")
+                if isinstance(analytics_summary, dict)
+                else None
+            )
+            merged_focus: list[str] = (
+                list(focus_lines_raw) if isinstance(focus_lines_raw, list) else []
+            )
+            fallback_focus = (
+                fallback_summary.get("focus_lines", [])
+                if isinstance(fallback_summary, dict)
+                else []
+            )
             if isinstance(fallback_focus, list):
                 for line in fallback_focus:
                     if isinstance(line, str) and line not in merged_focus:
@@ -1038,8 +1060,20 @@ class RootExtractionCrew:
             f"- Candidate Count: {len(cluster)}",
         ]
         analytics_summary = analytics_summary or {}
-        analytics_lines_raw = analytics_summary.get("summary_lines") if isinstance(analytics_summary, dict) else None
-        analytics_lines: list[str] = [str(ln) for ln in analytics_lines_raw] if isinstance(analytics_lines_raw, list) else []
+        analytics_lines_raw = (
+            analytics_summary.get("summary_lines")
+            if isinstance(analytics_summary, dict)
+            else None
+        )
+        analytics_lines = (
+            [str(ln).strip() for ln in analytics_lines_raw]
+            if isinstance(analytics_lines_raw, list)
+            else []
+        )
+        analytics_lines = list(
+            dict.fromkeys(analytics_lines)
+        )  # preserves order, removes exact dupes
+
         if analytics_lines:
             stats_lines.append("")
             stats_lines.append("Analytics priors:")
@@ -1078,7 +1112,7 @@ class RootExtractionCrew:
                 candidates=trimmed_cluster,
                 stats_summary=stats_summary,
                 stream_callback=stream_callback,
-                root_entry=None,   # can be None; debate engine will handle
+                root_entry=None,  # can be None; debate engine will handle
                 use_remote=self.use_remote,
                 query_db=self.new_definitions_db,
                 query_run_id=self.run_id,
@@ -1172,28 +1206,24 @@ class RootExtractionCrew:
                     (ngram, df)
                     for ngram, df, cycles in skipped_stream
                     if cycles <= current_cycle
-                    and not self._is_root_processed(
-                        ngram, current_cycle=current_cycle
-                    )
+                    and not self._is_root_processed(ngram, current_cycle=current_cycle)
                 ]
-                cycle_msg = (
-                    "🎯 Replaying previously skipped n-grams before resuming the main queue.\n\n"
-                )
+                cycle_msg = "🎯 Replaying previously skipped n-grams before resuming the main queue.\n\n"
             else:
                 pending = [
                     (ngram, df)
                     for ngram, df, cycles in stream
                     if cycles <= current_cycle
-                    and not self._is_root_processed(
-                        ngram, current_cycle=current_cycle
-                    )
+                    and not self._is_root_processed(ngram, current_cycle=current_cycle)
                 ]
                 cycle_msg = (
                     f"♻️ Continuing queue cycle #{current_cycle + 1}; prior passes remain archived and new analyses append to them.\n\n"
                     if current_cycle > 0
                     else "♻️ Beginning the first full queue cycle across all n-grams.\n\n"
                 )
-            incomplete_roots = {item[0] for item in pending if self._is_root_incomplete(item[0])}
+            incomplete_roots = {
+                item[0] for item in pending if self._is_root_incomplete(item[0])
+            }
             ngrams = [item for item in pending if item[0] in incomplete_roots] + [
                 item for item in pending if item[0] not in incomplete_roots
             ]
@@ -1210,7 +1240,10 @@ class RootExtractionCrew:
 
         for count, ngram in enumerate(ngrams):
             root_token, df_count = ngram
-            if self._is_root_processed(root_token, current_cycle=current_cycle if 'current_cycle' in locals() else None):
+            if self._is_root_processed(
+                root_token,
+                current_cycle=current_cycle if "current_cycle" in locals() else None,
+            ):
                 continue
 
             if self._should_skip_single_occurrence(root_token, df_count):
@@ -1235,7 +1268,9 @@ class RootExtractionCrew:
                 min_similarity=min_semantic_similarity,
             )
 
-            index_candidates = self.candidate_finder.get_all_ngram_candidates(root_token)
+            index_candidates = self.candidate_finder.get_all_ngram_candidates(
+                root_token
+            )
 
             if not semantic_candidates or len(semantic_candidates) < 2:
                 self._insert_skip(
@@ -1556,7 +1591,9 @@ class RootExtractionCrew:
                     1 for c in cluster if _get_field(c, "source", "") == "both"
                 )
                 semantic_hits = sum(
-                    1 for c in cluster if _get_field(c, "source", "") in ("semantic", "both")
+                    1
+                    for c in cluster
+                    if _get_field(c, "source", "") in ("semantic", "both")
                 )
                 clustering_meta_json = json.dumps(best_config)
                 stats_summary = self._build_stats_summary(
@@ -1571,7 +1608,8 @@ class RootExtractionCrew:
                 )
 
                 prefix_count = sum(
-                    e["normalized"].startswith(root_token.lower()) for e in merged_cluster
+                    e["normalized"].startswith(root_token.lower())
+                    for e in merged_cluster
                 )
                 suffix_count = sum(
                     e["normalized"].endswith(root_token.lower()) for e in merged_cluster
@@ -1614,8 +1652,12 @@ class RootExtractionCrew:
 
                     # 1) Save the log
                     raw_output_eval = evaluated.get("raw_output")
-                    raw_output_dict = raw_output_eval if isinstance(raw_output_eval, dict) else {}
-                    archivist_val = evaluated.get("Archivist") or raw_output_dict.get("Archivist")
+                    raw_output_dict = (
+                        raw_output_eval if isinstance(raw_output_eval, dict) else {}
+                    )
+                    archivist_val = evaluated.get("Archivist") or raw_output_dict.get(
+                        "Archivist"
+                    )
                     archivist_str = str(archivist_val) if archivist_val else ""
                     glossator_val = evaluated.get("Glossator")
                     glossator_str = str(glossator_val) if glossator_val else ""
@@ -1629,9 +1671,7 @@ class RootExtractionCrew:
                             style=style,
                         )
                     elif style == "solo":
-                        txt = self._extract_evaluation(
-                            glossator_str.strip().lower()
-                        )
+                        txt = self._extract_evaluation(glossator_str.strip().lower())
                         print(f"\n\n[Debug] Just so you know: {txt}\n\n")
                         verdict = "accept" in txt.lower() if txt else False
                         save_log(
@@ -1666,11 +1706,12 @@ class RootExtractionCrew:
                     residual_focus_prompt = None
                     residual_word_details: list[dict[str, object]] = []
 
-
                     # 2) insert cluster and llm records into sqlite
                     xstr = lambda s: str(s).lower() or ""
                     eval_raw_output = evaluated.get("raw_output")
-                    eval_raw = eval_raw_output if isinstance(eval_raw_output, dict) else {}
+                    eval_raw = (
+                        eval_raw_output if isinstance(eval_raw_output, dict) else {}
+                    )
                     if style == "debate":
                         cursor.execute(
                             """
@@ -1734,7 +1775,8 @@ class RootExtractionCrew:
                                 or _to_text(eval_raw.get("Glossator")),
                                 # verdict
                                 str(
-                                    "accepted" in xstr(_to_text(evaluated.get("Glossator")))
+                                    "accepted"
+                                    in xstr(_to_text(evaluated.get("Glossator")))
                                     or "accepted"
                                     in xstr(_to_text(eval_raw.get("Glossator")))
                                 ),
@@ -1788,7 +1830,8 @@ class RootExtractionCrew:
                                 or _to_text(eval_raw.get("Glossator_Prompt")),
                                 # verdict
                                 str(
-                                    "accepted" in xstr(_to_text(evaluated.get("Glossator")))
+                                    "accepted"
+                                    in xstr(_to_text(evaluated.get("Glossator")))
                                     or "accepted"
                                     in xstr(_to_text(eval_raw.get("Glossator")))
                                 ),
