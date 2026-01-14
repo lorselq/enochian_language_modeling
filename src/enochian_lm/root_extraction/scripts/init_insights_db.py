@@ -136,7 +136,9 @@ def _load_dictionary_entries() -> list[tuple[str, str, str, int, str | None, int
         for idx, sense in enumerate(senses, start=1):
             if not isinstance(sense, dict):
                 continue
-            definition = (sense.get("definition") or entry.get("definition") or "").strip()
+            definition = (
+                sense.get("definition") or entry.get("definition") or ""
+            ).strip()
             if not definition:
                 continue
             sense_id = sense.get("sense_id") or idx
@@ -594,32 +596,151 @@ WHERE TRIM(COALESCE(glossator_def, '')) <> ''
 """
 
 _ROOT_GLOSSES_VIEW = """
-CREATE VIEW IF NOT EXISTS root_glosses AS
+-- Drop dependents first (avoid broken view references)
+DROP VIEW IF EXISTS root_attachment_profile;
+DROP VIEW IF EXISTS root_evidence_examples;
+DROP VIEW IF EXISTS roots_via_subtraction_accepted_roots;
+DROP VIEW IF EXISTS root_glosses;
+
+CREATE VIEW root_glosses AS
 SELECT
-  LOWER(TRIM(json_extract(glossator_def, '$.ROOT'))) AS root,
-  LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) AS evaluation,
-  json_extract(glossator_def, '$.DEFINITION') AS definition,
-  json_extract(glossator_def, '$.REASON') AS reason,
-  json_extract(glossator_def, '$.SEMANTIC_CORE') AS semantic_core,
-  json_extract(glossator_def, '$.NEGATIVE_CONTRAST') AS negative_contrast,
-  json_extract(glossator_def, '$.DECODING_GUIDE') AS decoding_guide,
-  json_extract(glossator_def, '$.POS_BIAS.NOUNNESS') AS pos_bias_nounness,
-  json_extract(glossator_def, '$.POS_BIAS.MODIFIER') AS pos_bias_modifier,
-  json_extract(glossator_def, '$.POS_BIAS.VERBNESS') AS pos_bias_verbness,
-  json_extract(glossator_def, '$.ATTACHMENT.PREFIX_LIKELIHOOD') AS attachment_prefix_likelihood,
-  json_extract(glossator_def, '$.ATTACHMENT.SUFFIX_LIKELIHOOD') AS attachment_suffix_likelihood,
-  json_extract(glossator_def, '$.ATTACHMENT.FREE_LIKELIHOOD') AS attachment_free_likelihood,
-  json_extract(glossator_def, '$.ATTACHMENT.PRODUCTIVITY') AS attachment_productivity,
-  json_extract(glossator_def, '$.CONFIDENCE.SCORE') AS confidence_score,
-  json_extract(glossator_def, '$.CONFIDENCE.DRIVERS') AS confidence_drivers,
-  json_extract(glossator_def, '$.CONFIDENCE.RISKS') AS confidence_risks,
+  LOWER(TRIM(COALESCE(
+    json_extract(glossator_def, '$.ROOT'),
+    json_extract(glossator_def, '$.root')
+  ))) AS root,
+
+  LOWER(TRIM(COALESCE(
+    json_extract(glossator_def, '$.EVALUATION'),
+    json_extract(glossator_def, '$.evaluation'),
+    json_extract(glossator_def, '$.VERDICT'),
+    json_extract(glossator_def, '$.verdict'),
+    ''
+  ))) AS evaluation,
+
+  COALESCE(
+    json_extract(glossator_def, '$.DEFINITION'),
+    json_extract(glossator_def, '$.definition')
+  ) AS definition,
+
+  COALESCE(
+    json_extract(glossator_def, '$.REASON'),
+    json_extract(glossator_def, '$.reason')
+  ) AS reason,
+
+  COALESCE(
+    json_extract(glossator_def, '$.DECODING_GUIDE'),
+    json_extract(glossator_def, '$.decoding_guide')
+  ) AS decoding_guide,
+
+  COALESCE(
+    json_extract(glossator_def, '$.SEMANTIC_CORE'),
+    json_extract(glossator_def, '$.semantic_core')
+  ) AS semantic_core,
+
+  COALESCE(
+    json_extract(glossator_def, '$.NEGATIVE_CONTRAST'),
+    json_extract(glossator_def, '$.negative_contrast')
+  ) AS negative_contrast,
+
+  -- Optional but useful to have
+  COALESCE(
+    json_extract(glossator_def, '$.EXAMPLE'),
+    json_extract(glossator_def, '$.example')
+  ) AS examples_json,
+
+  COALESCE(
+    json_extract(glossator_def, '$.CONTRIBUTION'),
+    json_extract(glossator_def, '$.contribution')
+  ) AS contribution_json,
+
+  -- POS_BIAS: your JSON uses nounness/modifier/verbness (lowercase)
+  COALESCE(
+    json_extract(glossator_def, '$.POS_BIAS.nounness'),
+    json_extract(glossator_def, '$.pos_bias.nounness'),
+    json_extract(glossator_def, '$.POS_BIAS.NOUNNESS'),
+    json_extract(glossator_def, '$.pos_bias.NOUNNESS')
+  ) AS pos_bias_nounness,
+
+  COALESCE(
+    json_extract(glossator_def, '$.POS_BIAS.modifier'),
+    json_extract(glossator_def, '$.pos_bias.modifier'),
+    json_extract(glossator_def, '$.POS_BIAS.MODIFIER'),
+    json_extract(glossator_def, '$.pos_bias.MODIFIER')
+  ) AS pos_bias_modifier,
+
+  COALESCE(
+    json_extract(glossator_def, '$.POS_BIAS.verbness'),
+    json_extract(glossator_def, '$.pos_bias.verbness'),
+    json_extract(glossator_def, '$.POS_BIAS.VERBNESS'),
+    json_extract(glossator_def, '$.pos_bias.VERBNESS')
+  ) AS pos_bias_verbness,
+
+  -- ATTACHMENT: your JSON uses {prefix:{prob}, suffix:{prob}, free:{prob}}
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.prefix.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.PREFIX.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.PREFIX_LIKELIHOOD')
+  ) AS attachment_prefix_likelihood,
+
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.suffix.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.SUFFIX.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.SUFFIX_LIKELIHOOD')
+  ) AS attachment_suffix_likelihood,
+
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.free.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.FREE.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.FREE_LIKELIHOOD')
+  ) AS attachment_free_likelihood,
+
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.productivity'),
+    json_extract(glossator_def, '$.ATTACHMENT.PRODUCTIVITY')
+  ) AS attachment_productivity,
+
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.exceptions'),
+    json_extract(glossator_def, '$.ATTACHMENT.EXCEPTIONS')
+  ) AS attachment_exceptions,
+
+  -- CONFIDENCE: your JSON uses score/drivers/risks (lowercase)
+  COALESCE(
+    json_extract(glossator_def, '$.CONFIDENCE.score'),
+    json_extract(glossator_def, '$.CONFIDENCE.SCORE')
+  ) AS confidence_score,
+
+  COALESCE(
+    json_extract(glossator_def, '$.CONFIDENCE.drivers'),
+    json_extract(glossator_def, '$.CONFIDENCE.DRIVERS')
+  ) AS confidence_drivers,
+
+  COALESCE(
+    json_extract(glossator_def, '$.CONFIDENCE.risks'),
+    json_extract(glossator_def, '$.CONFIDENCE.RISKS')
+  ) AS confidence_risks,
+
+  -- n_examples: lives under RESIDUAL_IMPACT in your sample
+  COALESCE(
+    json_extract(glossator_def, '$.RESIDUAL_IMPACT.n_examples'),
+    json_extract(glossator_def, '$.RESIDUAL_IMPACT.N_EXAMPLES'),
+    json_extract(glossator_def, '$.N_EXAMPLES'),
+    json_extract(glossator_def, '$.n_examples')
+ ) AS examples_in_cluster,
+
   cluster_id AS source_cluster_id,
-  json_extract(glossator_def, '$.N_EXAMPLES') AS examples_in_cluster,
   glossator_def AS raw_glossator_json
+
 FROM clusters
 WHERE TRIM(COALESCE(glossator_def, '')) <> ''
   AND json_valid(glossator_def) = 1
-  AND LOWER(COALESCE(json_extract(glossator_def, '$.EVALUATION'), '')) = 'accepted';
+  AND LOWER(COALESCE(
+        json_extract(glossator_def, '$.EVALUATION'),
+        json_extract(glossator_def, '$.evaluation'),
+        json_extract(glossator_def, '$.VERDICT'),
+        json_extract(glossator_def, '$.verdict'),
+        ''
+      )) = 'accepted';
 """
 
 _ROOT_EVIDENCE_EXAMPLES_VIEW = """
@@ -790,7 +911,9 @@ def init_db(path: str | PathLike[str]) -> None:
             if _table_or_view_exists(conn, "root_attachment_profile"):
                 conn.execute("DROP VIEW IF EXISTS root_attachment_profile;")
             if _table_or_view_exists(conn, "roots_via_subtraction_accepted_roots"):
-                conn.execute("DROP VIEW IF EXISTS roots_via_subtraction_accepted_roots;")
+                conn.execute(
+                    "DROP VIEW IF EXISTS roots_via_subtraction_accepted_roots;"
+                )
 
             # Ensure newly introduced columns exist for older databases
             shared_columns = {
