@@ -123,12 +123,20 @@ def load_dictionary(
     # --- Group/merge phase ---
     grouped: dict[str, dict[str, object]] = {}
     for key, val in items:
-        canonical = unicodedata.normalize("NFKC", str(key).strip().lower())
-        norm = canonical
+        raw_canonical = val.get("canonical") or val.get("word") or key or ""
+        raw_normalized = val.get("normalized") or raw_canonical or key or ""
+        canonical = unicodedata.normalize("NFKC", str(raw_canonical).strip().lower())
+        normalized = unicodedata.normalize(
+            "NFKC", str(raw_normalized).strip().lower()
+        )
+        if not canonical:
+            canonical = normalized
+        norm = normalized or canonical
         bin = grouped.setdefault(
             norm,
             {
                 "canonical": canonical,
+                "normalized": norm,
                 "alternates": [],
                 "senses": [],
                 "context_tags": [],
@@ -200,7 +208,7 @@ def load_dictionary(
         entry: EntryRecord = {
             "canonical": data["canonical"],
             "alternates": list(data["alternates"]),
-            "normalized": norm,
+            "normalized": data.get("normalized", norm),
         }
         if data["senses"]:
             entry["senses"] = list(data["senses"])
