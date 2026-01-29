@@ -500,7 +500,9 @@ def find_semantically_similar_words(
 
     filtered_entries = []
     for e in entries:
-        canon_text = normalize_form(_entry_get(e, "canonical", ""))
+        canon_text = normalize_form(
+            _entry_get(e, "normalized") or _entry_get(e, "canonical", "")
+        )
         if normalized_query in canon_text or any(v in canon_text for v in variants):
             filtered_entries.append(e)
 
@@ -513,7 +515,13 @@ def find_semantically_similar_words(
     index_entries = [
         e
         for e in entries
-        if any(root in normalize_form(_entry_get(e, "canonical", "")) for root in all_roots)
+        if any(
+            root
+            in normalize_form(
+                _entry_get(e, "normalized") or _entry_get(e, "canonical", "")
+            )
+            for root in all_roots
+        )
     ]
     if not index_entries:
         return []
@@ -536,7 +544,9 @@ def find_semantically_similar_words(
     for i, entry in enumerate(
         tqdm(entries, desc="Processing relevant dictionary entries")
     ):
-        cand_norm = normalize_form(_entry_get(entry, "canonical", ""))
+        cand_norm = normalize_form(
+            _entry_get(entry, "normalized") or _entry_get(entry, "canonical", "")
+        )
         if (
             cand_norm == normalized_query
             and _entry_get(entry, "canonical", "").lower() != target_word.lower()
@@ -605,7 +615,7 @@ def find_semantically_similar_words(
         results.append(
             {
                 "word": _entry_get(entry, "canonical", ""),
-                "normalized": _entry_get(entry, "canonical", "").lower(),
+                "normalized": cand_norm,
                 "definition": primary_definition,
                 "enhanced_definition": build_enhanced_definition(entry),
                 "fasttext": round(ft_score, 3),
