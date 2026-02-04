@@ -232,6 +232,8 @@ class QueryModelTool(BaseTool):
         model    = os.getenv(model_env, "[ERROR] could not identify model!")
         role     = role_name or self.name
         temperature = 0.2
+        if base_url and not base_url.rstrip("/").endswith("/v1"):
+            base_url = f"{base_url.rstrip('/')}/v1"
 
         client = OpenAI(
             base_url=base_url,

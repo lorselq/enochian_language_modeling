@@ -80,7 +80,8 @@ def main():
             "Do you want to use a local LLM with LM Studio (1) or a remote LLM through OpenRouter (2)? "
         )
     if local_remote_mode == "1" or local_remote_mode == "2":
-        if refresh_local_env():
+        refresh_local = local_remote_mode == "1"
+        if refresh_local_env(local=refresh_local):
             env_local = find_dotenv(".env_local")
             env_remote = find_dotenv(".env_remote")
             load_dotenv(env_local, override=True)
