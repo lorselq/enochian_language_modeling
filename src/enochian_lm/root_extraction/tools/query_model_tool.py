@@ -217,6 +217,29 @@ class QueryModelTool(BaseTool):
         elif stream_callback:
             stream_callback(role, content)
 
+    @staticmethod
+    def _extract_chunk_text(chunk) -> str:
+        """Extract visible text from streaming chunks across API variants."""
+        try:
+            delta = chunk.choices[0].delta
+        except Exception:
+            return ""
+
+        content = getattr(delta, "content", "") or ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or ""
+                else:
+                    text = getattr(item, "text", "") or ""
+                if text:
+                    parts.append(text)
+            return "".join(parts)
+        return ""
+
     def _llm_call(
         self,
         api_base_env: str,
@@ -294,9 +317,6 @@ class QueryModelTool(BaseTool):
             ],
             temperature=0.2,
             stream=True,
-            reasoning_effort=(
-                "high" if (role == "Glossator" or role == "Adjudicator") else "medium"
-            ),
             seed=93,
         )
 
@@ -315,7 +335,7 @@ class QueryModelTool(BaseTool):
                     # no data at all
                     break
 
-                content = getattr(chunk.choices[0].delta, "content", "") or ""
+                content = self._extract_chunk_text(chunk)
                 if not content:
                     continue
 
@@ -345,7 +365,7 @@ class QueryModelTool(BaseTool):
 
         # 5) Consume the rest of the stream
         for chunk in completion:
-            content = getattr(chunk.choices[0].delta, "content", "") or ""
+            content = self._extract_chunk_text(chunk)
             if not content:
                 continue
             response_text += content
@@ -360,7 +380,25 @@ class QueryModelTool(BaseTool):
 
         # 6) Final fallback if nothing arrived
         if not response_text:
-            response_text = "[ERROR] No content returned."
+            # Some providers may stream only reasoning metadata, while final text
+            # remains available in a non-stream completion response.
+            try:
+                non_stream = client.chat.completions.create(
+                    model=os.getenv(model_env, ""),
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.2,
+                    stream=False,
+                    seed=93,
+                )
+                response_text = (non_stream.choices[0].message.content or "").strip()
+            except Exception as exc:
+                logger.warning("Non-stream fallback failed: %s", exc)
+
+        if not response_text:
+            response_text = "[ERROR] No content returned from remote/local model."
 
         if self._db and job_id:
             try:
@@ -389,6 +427,7 @@ class QueryModelTool(BaseTool):
                     role_name=role_name,
                 )
             except Exception:
+                logger.exception("Remote LLM call failed; attempting local fallback.")
                 # exit if out of OpenRouter calls
                 # print(
                 #     f"⚠️ [{time.ctime()}] Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡"
