@@ -218,6 +218,14 @@ class QueryModelTool(BaseTool):
             stream_callback(role, content)
 
     @staticmethod
+    def _debug_enabled() -> bool:
+        return os.getenv("ROOT_LLM_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _debug(self, msg: str) -> None:
+        if self._debug_enabled():
+            print(f"{YELLOW}[LLM DEBUG]{RESET} {msg}")
+
+    @staticmethod
     def _extract_chunk_text(chunk) -> str:
         """Extract visible text from streaming chunks across API variants."""
         try:
@@ -263,6 +271,7 @@ class QueryModelTool(BaseTool):
             api_key=api_key,
             timeout=httpx.Timeout(120.0, read=120.0, write=10.0, connect=5.0),
         )
+        self._debug(f"role={role!r} model={model!r} base_url={base_url!r}")
 
         # --- LLM JOB logging (optional) ---
         job_id = None
@@ -289,6 +298,7 @@ class QueryModelTool(BaseTool):
                     llm_job_finish(self._db, job_id, response_text=cached["response_text"], status="cached")
                 except Exception:
                     pass  # don’t let logging failures break the call
+                self._debug(f"cache hit for role={role!r}; chars={len(cached.get('response_text',''))}")
                 return cached
 
             # 1) log queued
@@ -309,7 +319,8 @@ class QueryModelTool(BaseTool):
                 model_env, "([Error] Not able to retrieve the model!)"
             )
 
-        completion = client.chat.completions.create(
+        try:
+            completion = client.chat.completions.create(
             model=os.getenv(model_env, ""),
             messages=[
                 {"role": "system", "content": self.system_prompt},
@@ -319,6 +330,9 @@ class QueryModelTool(BaseTool):
             stream=True,
             seed=93,
         )
+        except Exception as exc:
+            self._debug(f"stream create failed for role={role!r}: {type(exc).__name__}: {exc}")
+            raise
 
         print(
             f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next, you might ask? We wait...\n"
@@ -426,8 +440,9 @@ class QueryModelTool(BaseTool):
                     print_chunks=print_chunks,
                     role_name=role_name,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception("Remote LLM call failed; attempting local fallback.")
+                print(f"⚠️ {YELLOW}Remote call failure: {type(exc).__name__}: {exc}{RESET}")
                 # exit if out of OpenRouter calls
                 # print(
                 #     f"⚠️ [{time.ctime()}] Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡"
