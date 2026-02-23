@@ -17,19 +17,25 @@ def make_prompt_hash(*, system_prompt: str, user_prompt: str, role: str, model: 
     }, sort_keys=True, ensure_ascii=False)
     return _sha256(blob)
 
-def llm_job_try_cache(conn: sqlite3.Connection, prompt_hash: str) -> dict | None:
+def llm_job_try_cache(conn: sqlite3.Connection, prompt_hash: str, run_id: str | None = None) -> dict | None:
+    where = "prompt_hash = ?"
+    params: list[object] = [prompt_hash]
+    if run_id is not None:
+        where += " AND run_id = ?"
+        params.append(run_id)
+
     row = conn.execute(
-        """
+        f"""
         SELECT response_text, model, status
           FROM llm_job
-         WHERE prompt_hash = ?
+         WHERE {where}
          ORDER BY
            CASE WHEN finished_at IS NULL THEN 1 ELSE 0 END,
            finished_at DESC,
            job_id DESC
          LIMIT 1
         """,
-        (prompt_hash,)
+        tuple(params)
     ).fetchone()
     if not row:
         return None

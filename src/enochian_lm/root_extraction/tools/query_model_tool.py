@@ -285,7 +285,8 @@ class QueryModelTool(BaseTool):
                 base_url=base_url,
             )
             # 0) try cache first
-            cached = llm_job_try_cache(self._db, phash)
+            use_cache = os.getenv("ROOT_LLM_DISABLE_CACHE", "").strip().lower() not in {"1", "true", "yes", "on"}
+            cached = llm_job_try_cache(self._db, phash, run_id=self._run_id) if use_cache else None
             if cached:
                 # mark as cached (idempotent)
                 try:
@@ -298,6 +299,7 @@ class QueryModelTool(BaseTool):
                     llm_job_finish(self._db, job_id, response_text=cached["response_text"], status="cached")
                 except Exception:
                     pass  # don’t let logging failures break the call
+                print(f"{YELLOW}↺ Using cached LLM response for {role}.{RESET}")
                 self._debug(f"cache hit for role={role!r}; chars={len(cached.get('response_text',''))}")
                 return cached
 
