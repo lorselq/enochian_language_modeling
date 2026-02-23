@@ -32,19 +32,30 @@ def _get_field(item, field, default=""):
 
 
 def check_convergence(texts: list[str]) -> bool:
-    # Need at least two items to compute pairwise similarity
-    if len(texts) < 2:
+    filtered = [
+        (t or "").strip()
+        for t in texts
+        if (t or "").strip() and not (t or "").strip().startswith("[ERROR]")
+    ]
+
+    # Need at least two substantive items to compute pairwise similarity
+    if len(filtered) < 2:
+        return False
+
+    # Avoid early convergence on tiny boilerplate fragments
+    avg_len = sum(len(t) for t in filtered) / len(filtered)
+    if avg_len < 120:
         return False
 
     # 1) Embed all texts
-    embs = embedder.encode(texts, convert_to_tensor=True)
+    embs = embedder.encode(filtered, convert_to_tensor=True)
 
     # 2) Compute pairwise cosine-sim matrix
     sims = util.cos_sim(embs, embs)
 
     # 3) Collect only the lower-triangle off-diagonal scores
     scores: list[float] = []
-    n = len(texts)
+    n = len(filtered)
     for i in range(n):
         for j in range(i):
             scores.append(float(sims[i, j]))
