@@ -62,7 +62,7 @@ def _extract_json_from_response(response: str) -> dict:
     return json.loads(text.strip())
 
 
-def solo_analyze_remainder(
+def solo_semantic_subtraction(
     root: str,
     candidates: list[EntryRecord],
     stats_summary: str,
@@ -221,6 +221,31 @@ def solo_analyze_remainder(
             residual_bits.append("RESIDUAL GUIDANCE (analytics):\n" + pretty)
         residual_section = "\n\n".join(residual_bits)
 
+    subtraction_brief = ""
+    if isinstance(residual_guidance, dict):
+        equations = [
+            str(eq).strip()
+            for eq in (residual_guidance.get("subtraction_equations") or [])
+            if str(eq).strip()
+        ]
+        word_breaks = residual_guidance.get("word_breaks") or []
+        brief_lines: list[str] = []
+        if equations:
+            brief_lines.append("Subtraction equations (HOST - ROOT = RESIDUAL):")
+            brief_lines.extend(f"- {eq}" for eq in equations[:8])
+        if word_breaks:
+            brief_lines.append("Word-break triples:")
+            for wb in word_breaks[:8]:
+                if not isinstance(wb, dict):
+                    continue
+                host = str(wb.get("host_word", "")).strip().upper()
+                sub_root = str(wb.get("root", root)).strip().upper()
+                residual = str(wb.get("residual", "")).strip().upper()
+                if host and residual:
+                    brief_lines.append(f"- host={host} | root={sub_root} | residual={residual}")
+        if brief_lines:
+            subtraction_brief = "\n".join(brief_lines)
+
     # === COMPOSITIONAL ANALYSIS SECTION ===
     # Build explicit semantic subtraction equations for each host word
     compositional_section = ""
@@ -341,6 +366,12 @@ def solo_analyze_remainder(
             "residual_drop_mean": 0.0,
             "n_examples": 0
           }},
+          "SEMANTIC_SUBTRACTION": {{
+            "residual_gloss": "1 short phrase for residual meaning",
+            "subtraction_explanation": "1-2 sentences explaining HOST - ROOT = RESIDUAL semantics",
+            "evidence": ["1-3 bullets with host/root/residual triples"],
+            "confidence": 0.0
+          }},
           "EVIDENCE": [
             {indented_evidence}
           ],
@@ -399,6 +430,14 @@ def solo_analyze_remainder(
             "residual_drop_mean": 0.2,
             "n_examples": 3
           },
+          "SEMANTIC_SUBTRACTION": {
+            "residual_gloss": "core affective force",
+            "subtraction_explanation": "If SUBABLOV - SUB isolates ABLOV-like affective semantics, the residual encodes the emotional core.",
+            "evidence": [
+              "SUBABLOV - SUB = ABLOV-like emotional remainder"
+            ],
+            "confidence": 0.84
+          },
           "EVIDENCE": [
             {
               "word": "SUBABLOV",
@@ -441,6 +480,19 @@ def solo_analyze_remainder(
         {compositional_section}
 
         {about_task}
+
+        SEMANTIC SUBTRACTION HIERARCHY (apply in order)
+        ----------------------------------------------
+        1. Start from hypothetical root {root.upper()}.
+        2. Find host word(s) where it occurs and use host definitions as target semantics.
+        3. Prefer known donor roots from dictionary entries (shorter than host, not identical).
+        4. Then prefer the largest already-defined accepted root from SQLite that yields clean subtraction.
+        5. If {root.upper()} is infix-like, evaluate left/right residual artifacts separately using the same preference order.
+        6. Recurse on unresolved residual artifacts until no grounded subtraction remains.
+
+        Example anchor: NAZPSAD - NAZ = PSAD.
+
+        {subtraction_brief}
 
         TASK
         ----
