@@ -5,6 +5,7 @@ import math
 import json
 import numpy as np
 import logging
+import statistics as st
 from collections.abc import Sequence
 from typing import TypedDict
 from pathlib import Path
@@ -157,15 +158,41 @@ class MorphemeCandidateFinder:
             f"Initialized MorphemeCandidateFinder with {self.total_docs} entries"
         )
         self.stats = {"tokens": 0, "multi_candidates": 0, "filtered": 0, "kept": 0}
+        self.last_candidate_diagnostics: list[dict[str, float | int | str | bool]] = []
 
     def _score_with_bonus(self, composite: float, breakdown: dict | None) -> float:
-        """Return composite score with optional multi-segment bonus."""
+        """Return composite score with guarded multi-segment bonus.
 
-        segments = []
-        if isinstance(breakdown, dict):
-            segments = breakdown.get("segments") or []
-        bonus = self.multi_segment_bonus if len(segments) >= 2 else 0.0
-        return composite + bonus
+        Guardrails against over-segmentation bias:
+        - only consider a bonus when coverage is effectively complete;
+        - normalize by piece count;
+        - down-weight redundant splits via canonical novelty ratio.
+        """
+
+        if not isinstance(breakdown, dict):
+            return composite
+
+        segments = breakdown.get("segments") or []
+        if len(segments) < 2 or self.multi_segment_bonus <= 0:
+            return composite
+
+        coverage_ratio = float(breakdown.get("coverage_ratio") or 0.0)
+        residual_ratio = float(breakdown.get("residual_ratio") or 0.0)
+        if coverage_ratio < 0.999 or residual_ratio > 0.001:
+            return composite
+
+        canonicals = [
+            str(seg.get("canonical", "")).strip().lower()
+            for seg in segments
+            if isinstance(seg, dict)
+        ]
+        canonicals = [c for c in canonicals if c]
+        if not canonicals:
+            return composite
+
+        novelty_ratio = len(set(canonicals)) / len(canonicals)
+        bonus = (self.multi_segment_bonus * novelty_ratio) / len(segments)
+        return composite + float(max(0.0, bonus))
 
     def _load_ngram_index(self):
         """Populate self.ngram_index using new schema:
@@ -456,12 +483,27 @@ class MorphemeCandidateFinder:
         alpha, beta, gamma = self.weights
         composite = alpha * tfidf_total + beta * cos_sim + gamma * conf
 
+        tgt_vec_norm = float(np.linalg.norm(tgt_vec))
+        cand_vec_norm = float(np.linalg.norm(cand_vec))
+        tfidf_component = float(alpha * tfidf_total)
+        cosine_component = float(beta * cos_sim)
+        confidence_component = float(gamma * conf)
+
         return {
             "path": path,
             "tfidf": tfidf_total,
             "cos_sim": cos_sim,
             "confidence": conf,
             "composite": composite,
+            "vector_norms": {
+                "target_pre_pool": tgt_vec_norm,
+                "candidate_post_pool": cand_vec_norm,
+            },
+            "components": {
+                "tfidf_component": tfidf_component,
+                "cosine_component": cosine_component,
+                "confidence_component": confidence_component,
+            },
             "explanation": {
                 "ngram_scores": ngram_scores,
                 "weights": {"tfidf": alpha, "cos_sim": beta, "confidence": gamma},
@@ -576,6 +618,36 @@ class MorphemeCandidateFinder:
         coverage_ratio = float(breakdown.get("coverage_ratio") or 0.0)
         return coverage_ratio >= self.min_overlap_ratio
 
+    @staticmethod
+    def _corr(xs: list[float], ys: list[float]) -> float:
+        if len(xs) < 2 or len(ys) < 2 or len(xs) != len(ys):
+            return 0.0
+        mx = sum(xs) / len(xs)
+        my = sum(ys) / len(ys)
+        num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        den_x = sum((x - mx) ** 2 for x in xs) ** 0.5
+        den_y = sum((y - my) ** 2 for y in ys) ** 0.5
+        if den_x <= 1e-9 or den_y <= 1e-9:
+            return 0.0
+        return float(max(-1.0, min(1.0, num / (den_x * den_y))))
+
+    def summarize_last_run_diagnostics(self) -> dict[str, float | int | list[dict[str, float | int | str | bool]]]:
+        rows = list(self.last_candidate_diagnostics)
+        if not rows:
+            return {"n_candidates": 0, "piece_count_score_corr": 0.0, "unknown_piece_count_score_corr": 0.0, "diagnostics": []}
+
+        scores = [float(r.get("final_score", 0.0)) for r in rows]
+        piece_counts = [float(r.get("piece_count", 0.0)) for r in rows]
+        unknown_piece_counts = [float(r.get("unknown_piece_count", 0.0)) for r in rows]
+        return {
+            "n_candidates": len(rows),
+            "piece_count_score_corr": self._corr(piece_counts, scores),
+            "unknown_piece_count_score_corr": self._corr(unknown_piece_counts, scores),
+            "avg_piece_count": float(st.mean(piece_counts)) if piece_counts else 0.0,
+            "avg_score": float(st.mean(scores)) if scores else 0.0,
+            "diagnostics": rows,
+        }
+
     def find_candidates(
         self,
         target: str,
@@ -671,6 +743,41 @@ class MorphemeCandidateFinder:
             self.min_candidate_cos_sim,
             self.min_overlap_ratio,
         )
+
+        diagnostics: list[dict[str, float | int | str | bool]] = []
+        for rank, cand in enumerate(candidates):
+            breakdown = cand.get("breakdown") or {}
+            segments = breakdown.get("segments") or []
+            piece_count = len(segments)
+            unknown_piece_count = sum(
+                1
+                for seg in segments
+                if str(seg.get("canonical", "")).strip() not in self.dictionary
+            )
+            raw_score = float(cand.get("composite", 0.0))
+            final_score = float(self._score_with_bonus(raw_score, breakdown))
+            comps = cand.get("components") or {}
+            norms = cand.get("vector_norms") or {}
+            diagnostics.append(
+                {
+                    "rank": rank,
+                    "target": target,
+                    "candidate": str(cand.get("normalized", "")),
+                    "piece_count": piece_count,
+                    "unknown_piece_count": unknown_piece_count,
+                    "coverage_ratio": float(breakdown.get("coverage_ratio") or 0.0),
+                    "residual_ratio": float(breakdown.get("residual_ratio") or 0.0),
+                    "target_vec_norm": float(norms.get("target_pre_pool", 0.0) or 0.0),
+                    "candidate_vec_norm": float(norms.get("candidate_post_pool", 0.0) or 0.0),
+                    "tfidf_component": float(comps.get("tfidf_component", 0.0) or 0.0),
+                    "cosine_component": float(comps.get("cosine_component", 0.0) or 0.0),
+                    "confidence_component": float(comps.get("confidence_component", 0.0) or 0.0),
+                    "raw_score": raw_score,
+                    "final_score": final_score,
+                    "multi_segment_bonus_applied": bool(piece_count >= 2),
+                }
+            )
+        self.last_candidate_diagnostics = diagnostics
 
         return candidates
 

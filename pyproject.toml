@@ -50,6 +50,9 @@ build-backend = "poetry.core.masonry.api"
 filterwarnings = [
     "ignore::pytest.PytestAssertRewriteWarning",
 ]
+markers = [
+    "optional_dependency: tests that validate behavior only when optional heavy dependencies are installed",
+]
 
 [tool.poetry.scripts]
 enochian-build-fasttext = "enochian_lm.root_extraction.tools.train_fasttext_model:main"
