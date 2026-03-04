@@ -6,6 +6,222 @@ from collections.abc import Iterable
 from dataclasses import dataclass, asdict
 
 
+def compute_word_break_subtractions(host_word: str, root: str) -> list[dict[str, object]]:
+    """Compute explicit subtraction candidates for ``HOST - ROOT = RESIDUAL``.
+
+    The comparison is case-insensitive, but returned values preserve the caller's
+    original spelling for ``host_word`` and ``root``.
+
+    Returns one record per match in left-to-right order.
+
+    Each record includes:
+    - ``residual``: concatenated residual text after removing this occurrence
+    - ``residuals``: positional residual artifacts for this occurrence
+    - ``remove_all_occurrences``: ambiguity-aware option removing every occurrence
+      of ``root`` in ``host_word`` (useful for repeated-root cases like ANAZNAZ)
+    """
+
+    host_text = str(host_word or "")
+    root_text = str(root or "")
+    host_norm = host_text.lower()
+    root_norm = root_text.lower()
+
+    if not host_norm or not root_norm or len(root_norm) > len(host_norm):
+        return []
+
+    spans: list[tuple[int, int]] = []
+    search_start = 0
+    root_len = len(root_norm)
+    while True:
+        idx = host_norm.find(root_norm, search_start)
+        if idx == -1:
+            break
+        spans.append((idx, idx + root_len))
+        search_start = idx + 1
+
+    if not spans:
+        return []
+
+    def _build_artifacts(removed_spans: list[tuple[int, int]]) -> list[dict[str, object]]:
+        artifacts: list[dict[str, object]] = []
+        cursor = 0
+        for rem_start, rem_end in sorted(removed_spans):
+            if cursor < rem_start:
+                artifacts.append(
+                    {
+                        "artifact": host_text[cursor:rem_start],
+                        "start": cursor,
+                        "end": rem_start,
+                    }
+                )
+            cursor = max(cursor, rem_end)
+        if cursor < len(host_text):
+            artifacts.append(
+                {
+                    "artifact": host_text[cursor:],
+                    "start": cursor,
+                    "end": len(host_text),
+                }
+            )
+        return artifacts
+
+    remove_all_artifacts = _build_artifacts(spans)
+    remove_all_payload = {
+        "residual": "".join(str(a.get("artifact", "")) for a in remove_all_artifacts),
+        "residuals": remove_all_artifacts,
+        "removed_spans": [[s, e] for s, e in spans],
+    }
+
+    matches: list[dict[str, object]] = []
+    total = len(spans)
+    for index, (start, end) in enumerate(spans):
+        residual_artifacts = _build_artifacts([(start, end)])
+        residual = "".join(str(fragment.get("artifact", "")) for fragment in residual_artifacts)
+        matches.append(
+            {
+                "host_word": host_text,
+                "root": root_text,
+                "residual": residual,
+                "residuals": residual_artifacts,
+                "start": start,
+                "end": end,
+                "occurrence_index": index,
+                "total_occurrences": total,
+                "occurrence_spans": [[s, e] for s, e in spans],
+                "remove_all_occurrences": remove_all_payload,
+            }
+        )
+
+    return matches
+
+
+def build_subtraction_evidence(
+    subtraction: dict[str, object],
+    *,
+    donor_source: str = "host_subtraction",
+    recursion_depth: int = 0,
+    termination_reason: str | None = None,
+) -> dict[str, object]:
+    """Normalize a subtraction record into a machine-readable evidence payload.
+
+    This helper centralizes how subtraction traces are represented across the
+    residual pipeline so downstream engines and analytics can consume a stable
+    schema.
+    """
+
+    host_word = str(subtraction.get("host_word", "")).strip().upper()
+    root = str(subtraction.get("root", "")).strip().upper()
+    residual = str(subtraction.get("residual", "")).strip().upper()
+
+    residual_artifacts_raw = subtraction.get("residuals") or []
+    residual_artifacts: list[dict[str, object]] = []
+    for artifact in residual_artifacts_raw:
+        if not isinstance(artifact, dict):
+            continue
+        art_text = str(artifact.get("artifact", "")).strip().upper()
+        if not art_text:
+            continue
+        residual_artifacts.append(
+            {
+                "artifact": art_text,
+                "start": int(artifact.get("start", 0) or 0),
+                "end": int(artifact.get("end", 0) or 0),
+            }
+        )
+
+    payload = {
+        "host_word": host_word,
+        "root": root,
+        "residual": residual,
+        "start": int(subtraction.get("start", 0) or 0),
+        "end": int(subtraction.get("end", 0) or 0),
+        "equation": f"{host_word} - {root} = {residual}",
+        "remaining_artifacts": residual_artifacts,
+        "donor_source": donor_source,
+        "recursion_depth": max(0, int(recursion_depth)),
+        "termination_reason": termination_reason or "residual_extracted",
+    }
+
+    if "occurrence_index" in subtraction:
+        payload["occurrence_index"] = int(subtraction.get("occurrence_index", 0) or 0)
+    if "total_occurrences" in subtraction:
+        payload["total_occurrences"] = int(subtraction.get("total_occurrences", 0) or 0)
+
+    remove_all = subtraction.get("remove_all_occurrences")
+    if isinstance(remove_all, dict):
+        payload["remove_all_occurrences"] = {
+            "residual": str(remove_all.get("residual", "")).strip().upper(),
+            "residuals": [
+                {
+                    "artifact": str(item.get("artifact", "")).strip().upper(),
+                    "start": int(item.get("start", 0) or 0),
+                    "end": int(item.get("end", 0) or 0),
+                }
+                for item in (remove_all.get("residuals") or [])
+                if isinstance(item, dict) and str(item.get("artifact", "")).strip()
+            ],
+            "removed_spans": [
+                [int(span[0]), int(span[1])]
+                for span in (remove_all.get("removed_spans") or [])
+                if isinstance(span, (list, tuple)) and len(span) == 2
+            ],
+        }
+
+    return payload
+
+
+def prioritize_donor_candidates(
+    candidates: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Order donor candidates by hierarchy: dictionary first, then SQLite, then others.
+
+    Within the same source tier, prefer longer donor strings (largest subtractable
+    known root first), then preserve lexical order for stability.
+    """
+
+    source_rank = {"dictionary": 0, "sqlite": 1}
+
+    def _key(item: dict[str, object]) -> tuple[int, int, str]:
+        source = str(item.get("source", "")).strip().lower()
+        donor = str(item.get("donor", "")).strip().upper()
+        return (source_rank.get(source, 2), -len(donor), donor)
+
+    return sorted(candidates or [], key=_key)
+
+
+def build_residual_guidance_payload(
+    *,
+    root: str,
+    word_breaks: list[dict[str, object]] | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Create a normalized residual-guidance payload for downstream engines.
+
+    Ensures the integration contract always includes structured word-break rows
+    and explicit subtraction equations.
+    """
+
+    normalized_root = str(root or "").strip().upper()
+    rows = [row for row in (word_breaks or []) if isinstance(row, dict)]
+
+    equations = [
+        str(row.get("equation", "")).strip()
+        for row in rows
+        if str(row.get("equation", "")).strip()
+    ]
+
+    payload: dict[str, object] = {
+        "root": normalized_root,
+        "word_breaks": rows,
+        "subtraction_equations": equations,
+    }
+
+    if isinstance(extra, dict):
+        payload.update(extra)
+
+    return payload
+
+
 @dataclass
 class ResidualDetail:
     word: str
