@@ -13,14 +13,14 @@ This project does not seek to contest this interpretation. Instead, _Liber Loaga
 **Current phase**
 
 - ✅ Solo-mode root extraction completed and persisted.
-- ✅ Residual/remainder extraction logs remainders, residual semantics, and now LLM model names for audit trails.
+- ✅ Residual/remainder extraction logs remainders via explicit semantic subtraction traces (`HOST - ROOT = RESIDUAL`) and now LLM model names for audit trails.
 - 🚧 Debate-mode passes still running (they take time because what could be one pass ends out being easily upwards of ten); remaining clusters need to be adjudicated and merged back into the shared databases.
 - 🚧 Translation CLI in progress 
 
 **Upcoming work**
 
 - Finish the remaining debate-mode cycles and merge their accepted glosses.
-- Expand the speculative lexicon with cross-run normalization and residual backfills.
+- Expand the speculative lexicon with cross-run normalization and semantic-subtraction backfills.
 - Use the speculative lexicon to pilot a blind translation pass over the Enochian Keys
 - Identify proper strategy to apply prior work to _Liber Loagaeth_.
 
@@ -78,7 +78,7 @@ A simulated AI team operates in two distinct modes:
 - **Embedding Infrastructure:** Functional FastText embedding pipelines producing promising initial semantic analyses.
 - **Dynamic Clustering:** Implementation and testing of multiple clustering methods with automatic parameter tuning, selecting optimal methods based on internal cluster consistency metrics.
 - **Agent Modes:** Both Debate and Solo modes implemented; solo results are fully persisted, and debate runs are in progress.
-- **Analytics + Residuals:** Attribution, collocation, and residual clustering outputs are linked into the crew prompts; residual and remainder tables now keep the originating LLM model for auditability.
+- **Analytics + Semantic Subtraction:** Attribution, collocation, and semantic-subtraction residual outputs are linked into the crew prompts; subtraction evidence and remainder tables keep the originating LLM model for auditability.
 
 ### Canonical dictionary location
 
@@ -309,6 +309,12 @@ src/enochian_lm/root_extraction/scripts/init_insights_db.py`. The script
    on startup and surfaces “Analytics priors” inside each prompt, letting the
    agents leverage attribution deltas, strong collocations, and residual hot
    spots during the next debate/solo cycle.
+
+### Semantic subtraction runbook notes (word-break hierarchy)
+- Treat subtraction evidence as first-class: `HOST - ROOT = RESIDUAL`.
+- Prefer donor roots in this order: dictionary-attested > largest accepted SQLite root > infix artifact branching > recursion on unresolved artifacts.
+- Persist subtraction traces (`word_breaks`, `subtraction_equations`, residual artifacts, recursion metadata) so each decision is auditable.
+- Canonical example: `NAZPSAD - NAZ = PSAD` (SWORD − RECTANGLE = SHARPNESS-like residual interpretation).
 
 You can replace steps 6–7 with a single `poetry run enlm analyze all ...` pass if
 you maintain JSONL exports of composite reconstructions and morph vectors; the

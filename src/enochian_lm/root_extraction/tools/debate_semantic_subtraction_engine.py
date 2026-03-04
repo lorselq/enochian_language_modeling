@@ -186,7 +186,7 @@ def _extract_tasks_from_ruling(ruling_text: str) -> int:
     return len(_BULLET_RE.findall(text))
 
 
-def debate_remainder(
+def debate_semantic_subtraction(
     root: str,
     candidates: list[EntryRecord],
     stats_summary: str,
@@ -195,6 +195,7 @@ def debate_remainder(
     blind_evaluation: bool = True,
     use_remote: bool = True,
     residual_prompt: str | None = None,
+    residual_guidance: dict | None = None,
     query_db: sqlite3.Connection | None = None,
     query_run_id: str | None = None
 ):
@@ -382,6 +383,12 @@ Your tone is incisive, precise, and intellectually honest.""",
             "residual_drop_mean": 0.0,
             "n_examples": "number of examples given"
           }},
+          "SEMANTIC_SUBTRACTION": {{
+            "residual_gloss": "1 short phrase describing the residual meaning",
+            "subtraction_explanation": "explain HOST - ROOT = RESIDUAL semantics in 1-2 sentences",
+            "evidence": ["1-3 bullets referencing concrete host/root/residual triples"],
+            "confidence": 0.0
+          }},
           "EVIDENCE": [
 {indented_evidence}
           ],
@@ -439,6 +446,15 @@ Your tone is incisive, precise, and intellectually honest.""",
             "residual_drop_mean": 0.15,
             "n_examples": 5
           },
+          "SEMANTIC_SUBTRACTION": {
+            "residual_gloss": "sea-agent role",
+            "subtraction_explanation": "If SUBMARINE - SUB leaves MARINE-like semantics, the remainder consistently carries sea-domain meaning.",
+            "evidence": [
+              "SUBMARINE - SUB = MARINE-like sea semantics",
+              "MARINER - -ER leaves MARINE sea-domain base"
+            ],
+            "confidence": 0.86
+          },
           "EVIDENCE": [
             {
               "word": "submarine",
@@ -481,11 +497,49 @@ Your tone is incisive, precise, and intellectually honest.""",
 
     no_outside_speculation = "Use only the items provided in this prompt. Do **not** assume any extra-textual theology, mythology, or etymology."
     about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
-    residual_section = (
-        f"Residual morphology diagnostics (segments vs. residue):\n{residual_prompt}\n"
-        if residual_prompt
-        else ""
-    )
+    residual_section = ""
+    if residual_prompt or residual_guidance:
+        residual_bits: list[str] = []
+        if residual_prompt:
+            residual_bits.append(
+                "Residual morphology diagnostics (segments vs. residue):\n"
+                f"{residual_prompt}"
+            )
+        if residual_guidance:
+            try:
+                pretty = json.dumps(residual_guidance, ensure_ascii=False, indent=2)
+            except TypeError:
+                pretty = str(residual_guidance)
+            residual_bits.append(
+                "Residual guidance payload (HOST - ROOT = RESIDUAL evidence):\n"
+                f"{pretty}"
+            )
+        residual_section = "\n\n".join(residual_bits) + "\n"
+
+    subtraction_brief = ""
+    if isinstance(residual_guidance, dict):
+        equations = [
+            str(eq).strip()
+            for eq in (residual_guidance.get("subtraction_equations") or [])
+            if str(eq).strip()
+        ]
+        word_breaks = residual_guidance.get("word_breaks") or []
+        brief_lines: list[str] = []
+        if equations:
+            brief_lines.append("Subtraction equations (HOST - ROOT = RESIDUAL):")
+            brief_lines.extend(f"- {eq}" for eq in equations[:8])
+        if word_breaks:
+            brief_lines.append("Word-break triples:")
+            for wb in word_breaks[:8]:
+                if not isinstance(wb, dict):
+                    continue
+                host = str(wb.get("host_word", "")).strip().upper()
+                sub_root = str(wb.get("root", root)).strip().upper()
+                residual = str(wb.get("residual", "")).strip().upper()
+                if host and residual:
+                    brief_lines.append(f"- host={host} | root={sub_root} | residual={residual}")
+        if brief_lines:
+            subtraction_brief = "\n".join(brief_lines)
 
     if query_db is not None and query_run_id is not None:
         for tool in tools.values():
@@ -518,6 +572,15 @@ With this in mind, examine the following definitions and citations (contained wi
   {residual_section}
 
   Use these to **propose a coherent explanation of the root** based on morphological structure and shared semantics.
+
+  You MUST explicitly reason via subtraction when evidence exists:
+  - host word
+  - root being subtracted
+  - computed residual
+  - explicit equation (e.g., NAZPSAD - NAZ = PSAD)
+
+  Subtraction hierarchy: prefer dictionary-attested donor roots first, then accepted SQLite roots, then recurse on unresolved residual artifacts.
+{subtraction_brief}
 
 {no_outside_speculation}
 {about_metrics}
@@ -780,6 +843,10 @@ TASKS:
                 - Use only data in INPUT; no external etymologies or languages.
                 - Do not cite or invent Enochian items beyond {candidate_list}.
                 - Be concise; no hedging. If any required field cannot be confidently filled, set "EVALUATION":"rejected".
+
+                Residual subtraction evidence to consider:
+                {residual_section}
+{subtraction_brief}
 
                 What follows is the debate transcript:
                 --------------------------------------

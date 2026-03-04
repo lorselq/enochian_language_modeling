@@ -31,14 +31,17 @@ Output: Candidate definitions with evidence
 - LLM synthesis is optional and placed last, so it never overrides the evidence;
   it only refines a top-ranked candidate into a more readable phrase.
 
+**Word-break example:** `NAZPSAD - NAZ = PSAD`.
+This equation is the canonical subtraction framing used by the semantic-subtraction pipeline and guides downstream residual interpretation.
+
 ## Evidence sources
 
 The translation pipeline pulls from several databases tables and fallbacks:
 
 - **Clusters** (`clusters` table): Direct n-gram clusters with adjudicated
   glosses. These are the strongest signals.
-- **Residual semantics** (`root_residual_semantics`): Residual leftovers from
-  prior runs that suggest weak or partial evidence.
+- **Semantic subtraction residuals** (`root_residual_semantics`): Residual leftovers from
+  prior runs represented as subtraction traces (`HOST - ROOT = RESIDUAL`) that suggest weak or partial evidence.
 - **Morph hypotheses** (`morph_hypotheses`, accepted only): Extra hints accepted
   during analysis, used at low weight.
 - **FastText neighbors** (fallback): When nothing else exists, we surface the
