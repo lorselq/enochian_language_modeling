@@ -471,6 +471,7 @@ class RemainderExtractionCrew:
 
         branch_count = 0
         cycle_skips = 0
+        sibling_states: set[tuple[str, str, str]] = set()
         for cand in ranked:
             if branch_count >= MAX_DONOR_BRANCHES_PER_NODE:
                 break
@@ -479,11 +480,12 @@ class RemainderExtractionCrew:
             if not donor or donor == token_norm:
                 continue
             state = (host_word, token_norm, donor)
-            if state in visited:
+            if state in visited or state in sibling_states:
                 # Cycle protection is branch-local: one explored branch should
                 # not erase other viable branches at this same recursion node.
                 cycle_skips += 1
                 continue
+            sibling_states.add(state)
 
             subtraction_options = compute_word_break_subtractions(token_norm, donor)
             if not subtraction_options:
@@ -1563,7 +1565,7 @@ class RemainderExtractionCrew:
             analytics_summary = analytics_summary or {}
             analytics_summary["cooccurring_root_analyses"] = cooccurring_root_analyses
 
-        if word_break_evidence:
+        if word_break_evidence or donor_traces:
             analytics_summary = analytics_summary or {}
             # Persist full chain (baseline host subtraction + recursive donor traces)
             # so prompt layers can inspect *why* each residual inference is proposed.
