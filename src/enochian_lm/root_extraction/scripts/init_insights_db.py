@@ -875,6 +875,49 @@ LEFT JOIN root_glosses AS glosses
   ON glosses.source_cluster_id = cluster_ids.value;
 """
 
+_CLUSTER_MEMBERS_VIEW = """
+CREATE VIEW cluster_members AS
+WITH dict_by_word AS (
+  SELECT
+    UPPER(TRIM(word)) AS word_key,
+    MIN(normalized) AS normalized
+  FROM dictionary
+  GROUP BY UPPER(TRIM(word))
+),
+dict_by_normalized AS (
+  SELECT
+    LOWER(TRIM(normalized)) AS normalized_key,
+    MIN(normalized) AS normalized
+  FROM dictionary
+  GROUP BY LOWER(TRIM(normalized))
+),
+base AS (
+  SELECT DISTINCT
+    rd.cluster_id,
+    rd.source_word,
+    COALESCE(
+      dw.normalized,
+      dn.normalized,
+      LOWER(TRIM(rd.source_word))
+    ) AS normalized
+  FROM raw_defs rd
+  LEFT JOIN dict_by_word dw
+    ON dw.word_key = UPPER(TRIM(rd.source_word))
+  LEFT JOIN dict_by_normalized dn
+    ON dn.normalized_key = LOWER(TRIM(rd.source_word))
+  WHERE TRIM(COALESCE(rd.source_word, '')) <> ''
+)
+SELECT
+  cluster_id,
+  source_word,
+  normalized,
+  ROW_NUMBER() OVER (
+    PARTITION BY cluster_id
+    ORDER BY normalized, source_word
+  ) AS source_ord
+FROM base;
+"""
+
 # -------------------------
 # Public API
 # -------------------------
@@ -910,6 +953,8 @@ def init_db(path: str | PathLike[str]) -> None:
                 conn.execute("DROP VIEW IF EXISTS root_evidence_examples;")
             if _table_or_view_exists(conn, "root_attachment_profile"):
                 conn.execute("DROP VIEW IF EXISTS root_attachment_profile;")
+            if _table_or_view_exists(conn, "cluster_members"):
+                conn.execute("DROP VIEW IF EXISTS cluster_members;")
             if _table_or_view_exists(conn, "roots_via_subtraction_accepted_roots"):
                 conn.execute(
                     "DROP VIEW IF EXISTS roots_via_subtraction_accepted_roots;"
