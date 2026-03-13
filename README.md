@@ -31,7 +31,9 @@ Status snapshot:
 Immediate priorities (ordered):
 
 1. Finish debate-mode queue cycles and append accepted glosses to the insights DBs.
+   - Here, a "remainder cycle" means replaying only skipped roots (`--remainders`) so deferred/incomplete items are retried without rerunning the full inventory.
 2. Run `poetry run enlm analyze all --db <db>` after each debate batch to keep residual and attribution priors current.
+   - Preferred wrapper before semantic-subtraction tests: `PYTHONPATH=src python src/enochian_lm/root_extraction/scripts/refresh_analytics_before_semantic_tests.py --db <db>`.
 3. Perform remainder backfills (`poetry run enlm remainder backfill-remainders`) on legacy runs lacking the new model metadata.
 4. Regenerate derived exports (JSONL/parquet) for downstream translation tests once debate data stabilizes.
 
