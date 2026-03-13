@@ -124,11 +124,14 @@ def main():
     if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip().lower()
         print(f"🔍 Evaluating single ngram: {GOLD}{ngram.upper()}{RESET}\n")
-        crew.process_ngrams(
-            single_ngram=ngram,
-            stream_callback=stream_callback,
-            style=style,
-        )
+        kwargs = {
+            "single_ngram": ngram,
+            "stream_callback": stream_callback,
+            "style": style,
+        }
+        if process_remainders:
+            kwargs["skipped_reason_code"] = skipped_reason_code
+        crew.process_ngrams(**kwargs)
 
     else:
         max_words = None
@@ -141,9 +144,14 @@ def main():
             except ValueError:
                 print("Invalid number. Please use a digit.")
         print(f"🔍 Evaluating {GOLD}{max_words}{RESET} ngrams...")
-        crew.process_ngrams(
-            max_words=max_words, stream_callback=stream_callback, style=style
-        )
+        kwargs = {
+            "max_words": max_words,
+            "stream_callback": stream_callback,
+            "style": style,
+        }
+        if process_remainders:
+            kwargs["skipped_reason_code"] = skipped_reason_code
+        crew.process_ngrams(**kwargs)
 
     if style == "solo":
         print("\n\n🎉 The researcher has completed their assigned task(s)!")

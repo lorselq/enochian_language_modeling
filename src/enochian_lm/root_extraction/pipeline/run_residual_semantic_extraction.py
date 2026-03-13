@@ -1742,6 +1742,7 @@ class RemainderExtractionCrew:
         single_ngram=None,
         style="debate",
         min_semantic_similarity: float = 0.60,
+        skipped_reason_code: str | None = None,
     ):
         # Accept both supported orchestration modes from the main queue runner.
         # What: validate input style once at orchestration entry.
@@ -1773,13 +1774,23 @@ class RemainderExtractionCrew:
             cycle_msg = f"🔍 Focusing on single root {single_ngram.upper()}...\n\n"
         else:
 
-            skip_roots = self._load_root_level_skips()
-            pending = [
-                (root, df)
-                for root, df in self._ngram_inventory
-                if self._normalize_root(root) in skip_roots
-            ]
-            cycle_msg = "📎 Running remainder extraction on *skipped* roots only.\n\n"
+            pending = self._load_skipped_queue(reason_code=skipped_reason_code)
+            if not pending and skipped_reason_code is None:
+                # Backward-compatible fallback: older DBs may not have complete
+                # queue metadata, but still keep root-level skip records.
+                skip_roots = self._load_root_level_skips()
+                pending = [
+                    (root, df, 0)
+                    for root, df in self._ngram_inventory
+                    if self._normalize_root(root) in skip_roots
+                ]
+            if skipped_reason_code:
+                cycle_msg = (
+                    "📎 Running remainder extraction on skipped roots only "
+                    f"(reason_code={skipped_reason_code}).\n\n"
+                )
+            else:
+                cycle_msg = "📎 Running remainder extraction on *skipped* roots only.\n\n"
             incomplete_roots = {
                 item[0] for item in pending if self._is_root_incomplete(item[0])
             }
@@ -1798,7 +1809,8 @@ class RemainderExtractionCrew:
         time.sleep(0.25)
 
         for count, ngram in enumerate(ngrams):
-            root_token, df_count = ngram
+            root_token = ngram[0]
+            df_count = ngram[1]
             ngram_lower = self._normalize_root(root_token)
             if self._is_root_processed(
                 root_token,
