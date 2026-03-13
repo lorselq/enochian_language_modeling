@@ -45,6 +45,7 @@ from enochian_lm.root_extraction.utils.preanalysis import (
     mark_preanalysis_consumed,
     load_trusted_ngrams,
 )
+from enochian_lm.root_extraction.utils.sql_preview import connect_preview_db
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ RESET = "\033[0m"
 
 
 class RemainderExtractionCrew:
-    def __init__(self, style, use_remote):
+    def __init__(self, style, use_remote, no_db_only_logs: bool = False):
         paths = get_config_paths()
         self.dictionary_path = paths["dictionary"]
         self.model_path = paths["model_output"]
@@ -79,7 +80,18 @@ class RemainderExtractionCrew:
             if entry.get("normalized")
         }
         self.ngram_db = sqlite3.connect(paths["ngram_index"])
-        self.new_definitions_db = sqlite3.connect(paths[style])
+        self.no_db_only_logs = bool(no_db_only_logs)
+        self._sql_preview_recorder = None
+        if self.no_db_only_logs:
+            self.new_definitions_db, self._sql_preview_recorder = connect_preview_db(
+                paths[style],
+                label=f"{style}_remainders",
+            )
+            stream_text(
+                "🧪 --no-db-only-logs enabled: using in-memory DB clone; disk DB will not be modified.\n"
+            )
+        else:
+            self.new_definitions_db = sqlite3.connect(paths[style])
         self._prepare_db(self.new_definitions_db)
         self._init_queue_table()
         self._ngram_inventory: list[tuple[str, int]] = []
@@ -2284,6 +2296,11 @@ class RemainderExtractionCrew:
         if self.ngram_db:
             self.ngram_db.close()
         if self.new_definitions_db:
+            preview_recorder = getattr(self, "_sql_preview_recorder", None)
+            if preview_recorder:
+                self.new_definitions_db.set_trace_callback(None)
+                sql_log_path = preview_recorder.flush()
+                stream_text(f"🧾 SQL preview log saved to {sql_log_path}\n")
             self.new_definitions_db.close()
 
     def save_results(self, new_data):

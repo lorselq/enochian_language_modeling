@@ -32,6 +32,14 @@ def parse_args() -> argparse.Namespace:
             "Optionally provide a specific reason_code to filter the replay."
         ),
     )
+    parser.add_argument(
+        "--no-db-only-logs",
+        action="store_true",
+        help=(
+            "Run against an in-memory clone of the insights DB and log executed "
+            "SQL statements to logs/sql_preview_*.sql."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -117,9 +125,13 @@ def main():
     skipped_reason_code = args.remainders or None
 
     if not process_remainders:
-        crew = RootExtractionCrew(style, remote)
+        crew = RootExtractionCrew(style, remote, no_db_only_logs=args.no_db_only_logs)
     else:
-        crew = RemainderExtractionCrew(style, remote)
+        crew = RemainderExtractionCrew(
+            style,
+            remote,
+            no_db_only_logs=args.no_db_only_logs,
+        )
 
     if mode == "1":
         ngram = input("Which ngram do you want to evaluate? ").strip().lower()
