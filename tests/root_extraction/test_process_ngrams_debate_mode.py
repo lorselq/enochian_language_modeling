@@ -174,3 +174,35 @@ def test_process_ngrams_allows_debate_mode_and_reaches_evaluate_dispatch(monkeyp
     crew.process_ngrams(single_ngram="NAZ", style="debate", max_words=1)
 
     assert seen_styles == ["debate"]
+
+
+def test_process_ngrams_uses_reason_filtered_skipped_queue(monkeypatch):
+    """Ensure remainder mode honors --remainders reason_code filtering."""
+
+    crew = RemainderExtractionCrew.__new__(RemainderExtractionCrew)
+    crew._normalize_root = lambda token: str(token or "").strip().lower()
+    crew._ngram_inventory = []
+    crew.new_definitions_db = _DummyDB()
+    crew.ngram_db = _DummyDB()
+    crew._is_root_incomplete = lambda *_a, **_k: False
+    crew._get_field_value = lambda *_a, **_k: ""
+
+    called: dict[str, object] = {}
+
+    def _fake_load_skipped_queue(*, reason_code=None):
+        called["reason_code"] = reason_code
+        return []
+
+    crew._load_skipped_queue = _fake_load_skipped_queue
+
+    def _fail_fallback():
+        raise AssertionError("fallback skip loader should not run when reason filter is provided")
+
+    crew._load_root_level_skips = _fail_fallback
+
+    monkeypatch.setattr(pipeline, "stream_text", lambda *_a, **_k: None)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda *_a, **_k: None)
+
+    crew.process_ngrams(style="debate", skipped_reason_code="no_parent_context")
+
+    assert called.get("reason_code") == "no_parent_context"

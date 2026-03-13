@@ -29,3 +29,17 @@ Use this checklist before calling `poetry run enlm analyze all` so the outputs a
 Run `poetry run enlm preanalyze --db <db>` before translation sessions to seed trusted n-grams; this populates `preanalysis_seeds` and keeps prompts consistent.
 
 If any check is zero, re-run the missing upstream step instead of relying on `analyze all` defaults. This prevents the empty-attribution and zero-cluster artifacts seen when the database lacks composites or morph vectors.
+
+## 6) Debate-batch refresh shortcut (recommended before semantic-subtraction tests)
+Use the automation wrapper to enforce the refresh order and post-checks:
+
+```bash
+PYTHONPATH=src python src/enochian_lm/root_extraction/scripts/refresh_analytics_before_semantic_tests.py \
+  --db src/enochian_lm/root_extraction/interpretation/debate_derived_definitions.sqlite3
+```
+
+The script will:
+- verify accepted/composite/morph prerequisites,
+- backfill composites if empty,
+- run `enlm morph factorize` and `enlm analyze all --reuse-db-parses`,
+- assert non-zero attribution/collocation/residual rows and export artifacts.
