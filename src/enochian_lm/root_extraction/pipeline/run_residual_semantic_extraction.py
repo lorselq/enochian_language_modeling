@@ -519,6 +519,13 @@ class RemainderExtractionCrew:
                 "total_occurrences": chosen.get("total_occurrences", 0),
                 "remove_all_occurrences": chosen.get("remove_all_occurrences"),
             }
+            donor_glosses_for_candidate = list(cand.get("glosses", []) or [])
+            if donor_glosses_for_candidate:
+                primary_gloss = donor_glosses_for_candidate[0]
+                chosen_payload["donor_gloss"] = primary_gloss
+                donor_definition = self._extract_definition_from_gloss(primary_gloss)
+                if donor_definition:
+                    chosen_payload["donor_definition"] = donor_definition
             trace = build_subtraction_evidence(
                 chosen_payload,
                 donor_source=str(cand.get("source", "other")),
@@ -528,7 +535,7 @@ class RemainderExtractionCrew:
             traces.append(trace)
             branch_count += 1
 
-            for gloss in cand.get("glosses", []) or []:
+            for gloss in donor_glosses_for_candidate:
                 donor_glosses.setdefault(donor, []).append(gloss)
 
             # Recurse each branch independently to preserve ambiguity options.
@@ -675,6 +682,23 @@ class RemainderExtractionCrew:
             return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
         except TypeError:
             return text
+
+    def _extract_definition_from_gloss(self, payload: str | dict | None) -> str:
+        """Best-effort extraction of DEFINITION text from gloss JSON."""
+
+        if isinstance(payload, dict):
+            raw = payload
+        elif isinstance(payload, str):
+            try:
+                raw = json.loads(payload)
+            except json.JSONDecodeError:
+                return ""
+        else:
+            return ""
+
+        if not isinstance(raw, dict):
+            return ""
+        return str(raw.get("DEFINITION") or raw.get("definition") or "").strip()
 
     def _load_accepted_glosses(self, token: str) -> list[str]:
         """Fetch accepted glossator JSON for a token, minimizing whitespace."""
@@ -1662,9 +1686,39 @@ class RemainderExtractionCrew:
             stats_lines.extend(analytics_lines)
 
         if minimized_glosses:
+            prioritized_breaks = [
+                wb
+                for wb in (analytics_summary.get("word_breaks") or [])
+                if isinstance(wb, dict)
+            ]
+            prioritized_breaks.sort(
+                key=lambda wb: (
+                    0 if str(wb.get("donor_source", "")).lower().startswith("dictionary") else 1,
+                    -len(str(wb.get("root", ""))),
+                    -len(str(wb.get("residual", ""))),
+                )
+            )
+
+            compact_gloss_lines: list[str] = []
+            seen_roots: set[str] = set()
+            for wb in prioritized_breaks:
+                donor_root = str(wb.get("root", "")).strip().upper()
+                donor_def = str(wb.get("donor_definition", "")).strip()
+                donor_gloss = wb.get("donor_gloss")
+                if not donor_def:
+                    donor_def = self._extract_definition_from_gloss(donor_gloss)
+                if not donor_root or donor_root in seen_roots:
+                    continue
+                if donor_def:
+                    seen_roots.add(donor_root)
+                    compact_gloss_lines.append(f"- {donor_root} (⭐ key donor): {donor_def}")
+
             stats_lines.append("")
-            stats_lines.append("Previously accepted glosses (JSON):")
-            stats_lines.extend(minimized_glosses)
+            stats_lines.append("Prioritized donor dictionary anchors:")
+            if compact_gloss_lines:
+                stats_lines.extend(compact_gloss_lines[:8])
+            else:
+                stats_lines.append("- (none extracted)")
 
         compact_summary = self._build_stats_summary(
             ngram,  # or ngram if iterating strings

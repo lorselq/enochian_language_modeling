@@ -142,6 +142,12 @@ def build_subtraction_evidence(
         "termination_reason": termination_reason or "residual_extracted",
     }
 
+    # Optional semantic anchors for prompt construction.
+    for optional_key in ("host_definition", "donor_gloss", "donor_definition"):
+        value = subtraction.get(optional_key)
+        if value not in (None, ""):
+            payload[optional_key] = value
+
     if "occurrence_index" in subtraction:
         payload["occurrence_index"] = int(subtraction.get("occurrence_index", 0) or 0)
     if "total_occurrences" in subtraction:
