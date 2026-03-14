@@ -555,12 +555,32 @@ Your tone is incisive, precise, and intellectually honest.""",
             )
 
         if isinstance(residual_guidance, dict):
+            host_defs = {
+                str(_get_field(c, "word", "")).strip().upper(): (
+                    str(_get_field(c, "enhanced_definition", "")).strip()
+                    or str(_get_field(c, "definition", "")).strip()
+                )
+                for c in candidates
+                if str(_get_field(c, "word", "")).strip()
+            }
+            cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
+            cooccurring_defs: dict[str, str] = {}
+            for item in cooccurring:
+                parsed = _safe_json_loads(item)
+                if not parsed:
+                    continue
+                root_name = str(parsed.get("ROOT") or parsed.get("root") or "").strip().upper()
+                definition = str(parsed.get("DEFINITION") or parsed.get("definition") or "").strip()
+                if root_name and definition and root_name not in cooccurring_defs:
+                    cooccurring_defs[root_name] = definition
+
             word_breaks = [
                 wb for wb in (residual_guidance.get("word_breaks") or []) if isinstance(wb, dict)
             ]
             prioritized = sorted(
                 word_breaks,
                 key=lambda wb: (
+                    0 if str(wb.get("donor_source", "")).lower().startswith("host_subtraction") else 1,
                     0 if str(wb.get("donor_source", "")).lower().startswith("dictionary") else 1,
                     -len(str(wb.get("residual", ""))),
                 ),
@@ -578,7 +598,7 @@ Your tone is incisive, precise, and intellectually honest.""",
                 donor = str(wb.get("root", root)).strip().upper()
                 residual = str(wb.get("residual", "")).strip().upper()
                 equation = str(wb.get("equation", "")).strip() or f"{host} - {donor} = {residual}"
-                host_def = str(wb.get("host_definition", "")).strip() or str(wb.get("definition", "")).strip()
+                host_def = host_defs.get(host, "")
                 if host:
                     remainder_lines.append(f"- host_word={host}")
                 if equation:
@@ -586,11 +606,15 @@ Your tone is incisive, precise, and intellectually honest.""",
                 if host_def:
                     remainder_lines.append(f"  host_definition={host_def}")
 
+                if residual and residual in cooccurring_defs:
+                    remainder_lines.append(
+                        f"  ⭐ key_remainder_dictionary={residual}: {cooccurring_defs[residual]}"
+                    )
+
                 donor_gloss = _safe_json_loads(wb.get("donor_gloss") or wb.get("donor_glossator_def"))
                 if donor_gloss:
                     remainder_lines.extend(_render_compact_gloss_fields(donor_gloss, residual or donor))
 
-            cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
             extra_lines: list[str] = []
             for item in cooccurring:
                 parsed = _safe_json_loads(item)
