@@ -5,6 +5,7 @@ from __future__ import annotations
 #
 import json
 import logging
+import os
 import re
 import time
 import textwrap
@@ -212,6 +213,53 @@ def _safe_json_loads(value):
         return None
 
 
+
+
+def _env_flag_enabled(name: str) -> bool:
+    value = os.getenv(name, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _format_subtraction_guidance_compact(
+    root: str,
+    residual_guidance: dict | None,
+    *,
+    max_equations: int = 5,
+) -> str:
+    if not isinstance(residual_guidance, dict):
+        return ""
+
+    rows = residual_guidance.get("word_breaks") or []
+    seen: set[tuple[str, str, str]] = set()
+    equations: list[str] = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        host = str(row.get("host_word", "")).strip().upper()
+        donor_root = str(row.get("root", root)).strip().upper() or root.upper()
+        residual = str(row.get("residual", "")).strip().upper()
+        if not host or not residual:
+            continue
+
+        triple = (host, donor_root, residual)
+        if triple in seen:
+            continue
+        seen.add(triple)
+
+        suffix = " (remove-all option)" if row.get("remove_all") else ""
+        equations.append(f"- {host} - {donor_root} = {residual}{suffix}")
+        if len(equations) >= max_equations:
+            break
+
+    if not equations:
+        return ""
+
+    return "\n".join([
+        "Compact semantic-subtraction guidance (HOST - ROOT = RESIDUAL):",
+        *equations,
+    ])
+
 def _render_compact_gloss_fields(gloss: dict, fallback_root: str) -> list[str]:
     root_name = str(gloss.get("ROOT") or gloss.get("root") or fallback_root).strip().upper()
     definition = str(gloss.get("DEFINITION") or gloss.get("definition") or "").strip()
@@ -244,6 +292,7 @@ def debate_semantic_subtraction(
     use_remote: bool = True,
     residual_prompt: str | None = None,
     residual_guidance: dict | None = None,
+    verbose_guidance: bool | None = None,
     query_db: sqlite3.Connection | None = None,
     query_run_id: str | None = None
 ):
@@ -544,7 +593,19 @@ Your tone is incisive, precise, and intellectually honest.""",
     ).strip()
 
     no_outside_speculation = "Use only the items provided in this prompt. Do **not** assume any extra-textual theology, mythology, or etymology."
-    about_metrics = "The metrics are as follows:\n- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\nUse the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
+    about_metrics = (
+        "The metrics are as follows:\n"
+        "- FastText Score—measures surface-level similarity based on character n-grams; ranges 0.0 to 1.0, with higher being more morphologically similar.\n"
+        "- Semantic Similarity: Compares word definitions using sentence embeddings; ranges 0.0 to 1.0, with the higher the number the more conceptually aligned.\n"
+        "- Tier: a very strong connection begins/ends with the root and has a high combined score and should be taken into special consideration; from there, possible connection > somewhat possible connection > weak or no connection.\n\n"
+        "Use the above metrics to weigh how directly a word supports the root hypothesis. Strong surface matches without definition alignment may be coincidental; strong semantic links without morphology might indicate metaphor or drift. Prioritize overlap when possible."
+    )
+    verbose_guidance = (
+        _env_flag_enabled("ENOCHIAN_VERBOSE_GUIDANCE")
+        if verbose_guidance is None
+        else bool(verbose_guidance)
+    )
+    compact_guidance = _format_subtraction_guidance_compact(root, residual_guidance)
     residual_section = ""
     if residual_prompt or residual_guidance:
         residual_bits: list[str] = []
@@ -555,122 +616,31 @@ Your tone is incisive, precise, and intellectually honest.""",
             )
 
         if isinstance(residual_guidance, dict):
-            host_defs = {
-                str(_get_field(c, "word", "")).strip().upper(): (
-                    str(_get_field(c, "enhanced_definition", "")).strip()
-                    or str(_get_field(c, "definition", "")).strip()
-                )
-                for c in candidates
-                if str(_get_field(c, "word", "")).strip()
-            }
-            cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
-            cooccurring_defs: dict[str, str] = {}
-            for item in cooccurring:
-                parsed = _safe_json_loads(item)
-                if not parsed:
-                    continue
-                root_name = str(parsed.get("ROOT") or parsed.get("root") or "").strip().upper()
-                definition = str(parsed.get("DEFINITION") or parsed.get("definition") or "").strip()
-                if root_name and definition and root_name not in cooccurring_defs:
-                    cooccurring_defs[root_name] = definition
-
-            word_breaks = [
-                wb for wb in (residual_guidance.get("word_breaks") or []) if isinstance(wb, dict)
-            ]
-            prioritized = sorted(
-                word_breaks,
-                key=lambda wb: (
-                    0 if str(wb.get("donor_source", "")).lower().startswith("host_subtraction") else 1,
-                    0 if str(wb.get("donor_source", "")).lower().startswith("dictionary") else 1,
-                    -len(str(wb.get("residual", ""))),
-                ),
-            )
-            star_lines = [
-                "SEMANTIC SUBTRACTION PRIORITY NOTE:",
-                "- ⭐ MOST IMPORTANT: host-word meaning (especially dictionary-origin hosts).",
-                "- ⭐ SECOND MOST IMPORTANT: dictionary definition of the donor-removed remainder (if available).",
-                "- Everything else below is optional bonus nuance.",
-            ]
-
-            remainder_lines: list[str] = []
-            for wb in prioritized[:8]:
-                host = str(wb.get("host_word", "")).strip().upper()
-                donor = str(wb.get("root", root)).strip().upper()
-                residual = str(wb.get("residual", "")).strip().upper()
-                equation = str(wb.get("equation", "")).strip() or f"{host} - {donor} = {residual}"
-                host_def = host_defs.get(host, "")
-                if host:
-                    remainder_lines.append(f"- host_word={host}")
-                if equation:
-                    remainder_lines.append(f"  subtraction={equation}")
-                if host_def:
-                    remainder_lines.append(f"  host_definition={host_def}")
-
-                if residual and residual in cooccurring_defs:
-                    remainder_lines.append(
-                        f"  ⭐ key_remainder_dictionary={residual}: {cooccurring_defs[residual]}"
-                    )
-
-                donor_gloss = _safe_json_loads(wb.get("donor_gloss") or wb.get("donor_glossator_def"))
-                if donor_gloss:
-                    remainder_lines.extend(_render_compact_gloss_fields(donor_gloss, residual or donor))
-
-            extra_lines: list[str] = []
-            for item in cooccurring:
-                parsed = _safe_json_loads(item)
-                if parsed:
-                    extra_lines.extend(_render_compact_gloss_fields(parsed, root))
-
-            if remainder_lines or extra_lines:
+            if compact_guidance:
+                residual_bits.append(compact_guidance)
+            if verbose_guidance:
+                try:
+                    pretty = json.dumps(residual_guidance, ensure_ascii=False, indent=2)
+                except TypeError:
+                    pretty = str(residual_guidance)
                 residual_bits.append(
-                    "\n".join(star_lines)
-                    + "\n\nSUBTRACTION REMAINDER CONTEXT (dictionary-first, larger ngrams first):\n"
-                    + "\n".join(remainder_lines or ["- (no structured word-break rows)"])
-                    + (
-                        "\n\nBONUS ROOT DATA (use only when no dictionary definition is available for a remainder):\n"
-                        + "\n".join(extra_lines[:30])
-                        if extra_lines
-                        else ""
-                    )
-                    + "\n"
+                    "Residual guidance payload (full JSON; debug):\n"
+                    f"{pretty}"
                 )
-
         elif residual_guidance:
-            try:
-                pretty = json.dumps(residual_guidance, ensure_ascii=False, indent=2)
-            except TypeError:
-                pretty = str(residual_guidance)
-            residual_bits.append(
-                "Residual guidance payload (HOST - ROOT = RESIDUAL evidence):\n"
-                f"{pretty}"
-            )
+            if verbose_guidance:
+                try:
+                    pretty = json.dumps(residual_guidance, ensure_ascii=False, indent=2)
+                except TypeError:
+                    pretty = str(residual_guidance)
+                residual_bits.append(
+                    "Residual guidance payload (full JSON; debug):\n"
+                    f"{pretty}"
+                )
 
         residual_section = "\n\n".join(residual_bits) + "\n"
 
     subtraction_brief = ""
-    if isinstance(residual_guidance, dict):
-        equations = [
-            str(eq).strip()
-            for eq in (residual_guidance.get("subtraction_equations") or [])
-            if str(eq).strip()
-        ]
-        word_breaks = residual_guidance.get("word_breaks") or []
-        brief_lines: list[str] = []
-        if equations:
-            brief_lines.append("Subtraction equations (HOST - ROOT = RESIDUAL):")
-            brief_lines.extend(f"- {eq}" for eq in equations[:8])
-        if word_breaks:
-            brief_lines.append("Word-break triples:")
-            for wb in word_breaks[:8]:
-                if not isinstance(wb, dict):
-                    continue
-                host = str(wb.get("host_word", "")).strip().upper()
-                sub_root = str(wb.get("root", root)).strip().upper()
-                residual = str(wb.get("residual", "")).strip().upper()
-                if host and residual:
-                    brief_lines.append(f"- host={host} | root={sub_root} | residual={residual}")
-        if brief_lines:
-            subtraction_brief = "\n".join(brief_lines)
 
     if query_db is not None and query_run_id is not None:
         for tool in tools.values():
@@ -715,7 +685,7 @@ With this in mind, examine the following definitions and citations (contained wi
   - host word
   - root being subtracted
   - computed residual
-  - explicit equation (e.g., NAZPSAD - NAZ = PSAD)
+  - explicit equation (e.g., NAZPSAD - NAZ = PSAD; ANAZNAZ - NAZ = A (remove-all option))
 
   Subtraction hierarchy: prefer dictionary-attested donor roots first, then accepted SQLite roots, then recurse on unresolved residual artifacts.
 {subtraction_brief}
