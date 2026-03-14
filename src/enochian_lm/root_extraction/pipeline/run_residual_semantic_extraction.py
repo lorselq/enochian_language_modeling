@@ -1166,6 +1166,57 @@ class RemainderExtractionCrew:
             )
             """
         )
+
+        # Older databases may have this table without the composite uniqueness
+        # constraint declared above, which makes the ON CONFLICT upsert below
+        # fail at runtime. Ensure the index exists and backfill by de-duplicating
+        # legacy rows if needed.
+        try:
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_roots_via_subtraction_identity
+                ON roots_via_subtraction (
+                    host_word,
+                    target_residual,
+                    known_roots,
+                    known_root_cluster_ids
+                )
+                """
+            )
+        except sqlite3.IntegrityError:
+            cursor.execute(
+                """
+                DELETE FROM roots_via_subtraction
+                WHERE rowid IN (
+                    SELECT rowid
+                    FROM (
+                        SELECT
+                            rowid,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY
+                                    host_word,
+                                    target_residual,
+                                    known_roots,
+                                    known_root_cluster_ids
+                                ORDER BY updated_at DESC, rowid DESC
+                            ) AS row_num
+                        FROM roots_via_subtraction
+                    ) ranked
+                    WHERE ranked.row_num > 1
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_roots_via_subtraction_identity
+                ON roots_via_subtraction (
+                    host_word,
+                    target_residual,
+                    known_roots,
+                    known_root_cluster_ids
+                )
+                """
+            )
         self.new_definitions_db.commit()
 
     def _persist_roots_via_subtraction(
