@@ -700,6 +700,41 @@ class RemainderExtractionCrew:
             return ""
         return str(raw.get("DEFINITION") or raw.get("definition") or "").strip()
 
+    def _extract_compact_gloss_fields(self, payload: str | dict | None) -> dict[str, object]:
+        """Return prompt-safe compact fields for non-dictionary gloss summaries."""
+
+        if isinstance(payload, dict):
+            raw = payload
+        elif isinstance(payload, str):
+            try:
+                raw = json.loads(payload)
+            except json.JSONDecodeError:
+                return {}
+        else:
+            return {}
+
+        if not isinstance(raw, dict):
+            return {}
+
+        def _pick(*keys: str, default=None):
+            for key in keys:
+                if key in raw:
+                    return raw.get(key)
+            return default
+
+        root = str(_pick("ROOT", "root", default="") or "").strip().upper()
+        if not root:
+            return {}
+
+        return {
+            "root": root,
+            "decoding_guide": _pick("DECODING_GUIDE", "decoding_guide", default=""),
+            "semantic_core": _pick("SEMANTIC_CORE", "semantic_core", default=[]),
+            "negative_contrast": _pick("NEGATIVE_CONTRAST", "negative_contrast", default=[]),
+            "examples_json": _pick("examples_json", "EXAMPLES_JSON", "EXAMPLE", default=[]),
+            "pos_bias": _pick("POS_BIAS", "pos_bias", default={}),
+        }
+
     def _load_accepted_glosses(self, token: str) -> list[str]:
         """Fetch accepted glossator JSON for a token, minimizing whitespace."""
 
@@ -1686,12 +1721,64 @@ class RemainderExtractionCrew:
             stats_lines.extend(analytics_lines)
 
         if minimized_glosses:
-            prioritized_breaks = [
+            word_breaks = [
                 wb
                 for wb in (analytics_summary.get("word_breaks") or [])
                 if isinstance(wb, dict)
             ]
-            prioritized_breaks.sort(
+
+            # Ensure host-subtraction donors are surfaced first so direct equations
+            # like NAZPSAD - PSAD = NAZ are explicitly represented as key donors.
+            direct_donor_rows: list[dict[str, object]] = []
+            seen_direct_keys: set[tuple[str, str]] = set()
+            for wb in word_breaks:
+                if str(wb.get("donor_source", "")).lower() != "host_subtraction":
+                    continue
+                donor_root = str(wb.get("residual", "")).strip().upper()
+                host_word = str(wb.get("host_word", "")).strip().upper()
+                if not donor_root:
+                    continue
+                key = (host_word, donor_root)
+                if key in seen_direct_keys:
+                    continue
+                seen_direct_keys.add(key)
+                direct_donor_rows.append(
+                    {
+                        "donor_root": donor_root,
+                        "host_word": host_word,
+                        "equation": str(wb.get("equation", "")).strip(),
+                    }
+                )
+
+            direct_donor_rows.sort(
+                key=lambda row: (
+                    -len(str(row.get("donor_root", ""))),
+                    str(row.get("host_word", "")),
+                    str(row.get("donor_root", "")),
+                )
+            )
+
+            cooccurring_defs: dict[str, str] = {}
+            cooccurring_compact: dict[str, dict[str, object]] = {}
+            for item in (analytics_summary.get("cooccurring_root_analyses") or []):
+                if not isinstance(item, dict):
+                    continue
+                root_name = str(item.get("ROOT") or item.get("root") or "").strip().upper()
+                if not root_name:
+                    continue
+                definition = str(item.get("DEFINITION") or item.get("definition") or "").strip()
+                if definition and root_name not in cooccurring_defs:
+                    cooccurring_defs[root_name] = definition
+                compact = self._extract_compact_gloss_fields(item)
+                if compact and root_name not in cooccurring_compact:
+                    cooccurring_compact[root_name] = compact
+
+            donor_rows = [
+                wb
+                for wb in word_breaks
+                if str(wb.get("donor_source", "")).lower() != "host_subtraction"
+            ]
+            donor_rows.sort(
                 key=lambda wb: (
                     0 if str(wb.get("donor_source", "")).lower().startswith("dictionary") else 1,
                     -len(str(wb.get("root", ""))),
@@ -1701,22 +1788,72 @@ class RemainderExtractionCrew:
 
             compact_gloss_lines: list[str] = []
             seen_roots: set[str] = set()
-            for wb in prioritized_breaks:
+
+            for direct in direct_donor_rows:
+                donor_root = str(direct.get("donor_root", "")).strip().upper()
+                if not donor_root or donor_root in seen_roots:
+                    continue
+                host_word = str(direct.get("host_word", "")).strip().upper()
+                equation = str(direct.get("equation", "")).strip()
+                donor_def = cooccurring_defs.get(donor_root, "")
+                dict_entry = self._get_dictionary_entry(donor_root.lower())
+                if dict_entry:
+                    donor_def = donor_def or self._dictionary_definition(dict_entry)
+                if donor_def:
+                    seen_roots.add(donor_root)
+                    if host_word and equation:
+                        compact_gloss_lines.append(
+                            f"- {donor_root} (⭐ key donor; direct subtraction from {host_word} via {equation}): {donor_def}"
+                        )
+                    else:
+                        compact_gloss_lines.append(f"- {donor_root} (⭐ key donor): {donor_def}")
+
+                compact = cooccurring_compact.get(donor_root)
+                if compact:
+                    compact_gloss_lines.extend(
+                        [
+                            f"- {donor_root} (key donor; hypothetical via prior analysis):",
+                            f"  root={compact.get('root', donor_root)}",
+                            f"  decoding_guide={compact.get('decoding_guide', '')}",
+                            f"  semantic_core={compact.get('semantic_core', [])}",
+                            f"  negative_contrast={compact.get('negative_contrast', [])}",
+                            f"  examples_json={compact.get('examples_json', [])}",
+                            f"  pos_bias={compact.get('pos_bias', {})}",
+                        ]
+                    )
+
+            for wb in donor_rows:
                 donor_root = str(wb.get("root", "")).strip().upper()
+                if not donor_root or donor_root in seen_roots:
+                    continue
+
                 donor_def = str(wb.get("donor_definition", "")).strip()
                 donor_gloss = wb.get("donor_gloss")
                 if not donor_def:
                     donor_def = self._extract_definition_from_gloss(donor_gloss)
-                if not donor_root or donor_root in seen_roots:
-                    continue
+                donor_def = donor_def or cooccurring_defs.get(donor_root, "")
                 if donor_def:
                     seen_roots.add(donor_root)
                     compact_gloss_lines.append(f"- {donor_root} (⭐ key donor): {donor_def}")
 
+                compact = self._extract_compact_gloss_fields(donor_gloss) or cooccurring_compact.get(donor_root)
+                if compact:
+                    compact_gloss_lines.extend(
+                        [
+                            f"- {donor_root} (bonus; hypothetical via prior analysis):",
+                            f"  root={compact.get('root', donor_root)}",
+                            f"  decoding_guide={compact.get('decoding_guide', '')}",
+                            f"  semantic_core={compact.get('semantic_core', [])}",
+                            f"  negative_contrast={compact.get('negative_contrast', [])}",
+                            f"  examples_json={compact.get('examples_json', [])}",
+                            f"  pos_bias={compact.get('pos_bias', {})}",
+                        ]
+                    )
+
             stats_lines.append("")
             stats_lines.append("Prioritized donor dictionary anchors:")
             if compact_gloss_lines:
-                stats_lines.extend(compact_gloss_lines[:8])
+                stats_lines.extend(compact_gloss_lines[:24])
             else:
                 stats_lines.append("- (none extracted)")
 
