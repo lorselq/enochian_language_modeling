@@ -672,8 +672,13 @@ class RemainderExtractionCrew:
                 continue
 
             for subtraction in compute_word_break_subtractions(host_word, res_norm):
-                remainder = self._normalize_root(subtraction.get("residual", ""))
-                if not remainder:
+                residual_artifacts = [
+                    self._normalize_root(fragment.get("artifact", ""))
+                    for fragment in (subtraction.get("residuals", []) or [])
+                    if isinstance(fragment, dict)
+                ]
+                residual_artifacts = [fragment for fragment in residual_artifacts if fragment]
+                if not residual_artifacts:
                     continue
 
                 # Trace host-minus-residual baseline for auditability.
@@ -681,7 +686,7 @@ class RemainderExtractionCrew:
                     {
                         "host_word": host_word.upper(),
                         "root": res_norm.upper(),
-                        "residual": remainder.upper(),
+                        "residual": self._normalize_root(subtraction.get("residual", "")).upper(),
                         "start": subtraction.get("start", 0),
                         "end": subtraction.get("end", 0),
                         "residuals": subtraction.get("residuals", []),
@@ -695,14 +700,19 @@ class RemainderExtractionCrew:
                 )
                 traces.append(base_trace)
 
-                self._resolve_donor_hierarchy(
-                    host_word=host_word,
-                    token=remainder,
-                    depth=1,
-                    visited=set(),
-                    donor_glosses=donor_glosses,
-                    traces=traces,
-                )
+                # IMPORTANT: recurse by residual artifacts (position-separated pieces),
+                # not the concatenated residual string. This prevents non-adjacent
+                # leftovers (e.g., O + Z around a removed middle root) from being
+                # recombined into a synthetic donor token (e.g., OZ).
+                for artifact in residual_artifacts:
+                    self._resolve_donor_hierarchy(
+                        host_word=host_word,
+                        token=artifact,
+                        depth=1,
+                        visited=set(),
+                        donor_glosses=donor_glosses,
+                        traces=traces,
+                    )
 
         # Deduplicate gloss JSON strings per donor root
         for k, v in list(donor_glosses.items()):
@@ -1835,21 +1845,33 @@ class RemainderExtractionCrew:
             for wb in word_breaks:
                 if str(wb.get("donor_source", "")).lower() != "host_subtraction":
                     continue
-                donor_root = str(wb.get("residual", "")).strip().upper()
                 host_word = str(wb.get("host_word", "")).strip().upper()
-                if not donor_root:
-                    continue
-                key = (host_word, donor_root)
-                if key in seen_direct_keys:
-                    continue
-                seen_direct_keys.add(key)
-                direct_donor_rows.append(
-                    {
-                        "donor_root": donor_root,
-                        "host_word": host_word,
-                        "equation": str(wb.get("equation", "")).strip(),
-                    }
-                )
+                base_equation = str(wb.get("equation", "")).strip()
+                artifacts = [
+                    str(fragment.get("artifact", "")).strip().upper()
+                    for fragment in (wb.get("remaining_artifacts") or [])
+                    if isinstance(fragment, dict)
+                ]
+                artifacts = [artifact for artifact in artifacts if artifact]
+                if not artifacts:
+                    donor_root = str(wb.get("residual", "")).strip().upper()
+                    artifacts = [donor_root] if donor_root else []
+
+                for artifact in artifacts:
+                    key = (host_word, artifact)
+                    if key in seen_direct_keys:
+                        continue
+                    seen_direct_keys.add(key)
+                    equation = base_equation
+                    if len(artifacts) > 1 and equation:
+                        equation = f"{equation} [artifact: {artifact}]"
+                    direct_donor_rows.append(
+                        {
+                            "donor_root": artifact,
+                            "host_word": host_word,
+                            "equation": equation,
+                        }
+                    )
 
             direct_donor_rows.sort(
                 key=lambda row: (
