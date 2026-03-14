@@ -282,11 +282,20 @@ def test_stats_summary_prioritizes_direct_host_remainder_dictionary_anchor(monke
         lambda entry: str(entry.get("enhanced_definition", "")).strip() if entry else ""
     )
 
-    crew._load_accepted_glosses = lambda _token: [
-        '{"ROOT":"NAZ","EVALUATION":"accepted","DEFINITION":"Linear-edged geometric form","DECODING_GUIDE":"^NAZ-","SEMANTIC_CORE":["linear-edged geometry"],"NEGATIVE_CONTRAST":["non-edged"],"EXAMPLE":["blade form"],"POS_BIAS":{"nounness":0.8}}',
-        "{\"ROOT\":\"NA\",\"EVALUATION\":\"accepted\",\"DEFINITION\":\"(the Enochian word for the letter \'H\')\"}",
-        '{"ROOT":"AZ","EVALUATION":"accepted","DEFINITION":"they"}',
-    ]
+    def _load_accepted_glosses(token: str):
+        key = str(token or "").strip().lower()
+        if key == "psad":
+            return [
+                "{\"ROOT\":\"NA\",\"EVALUATION\":\"accepted\",\"DEFINITION\":\"(the Enochian word for the letter 'H')\"}",
+                '{"ROOT":"AZ","EVALUATION":"accepted","DEFINITION":"they"}',
+            ]
+        if key == "naz":
+            return [
+                '{"ROOT":"NAZ","EVALUATION":"accepted","DEFINITION":"Linear-edged geometric form","DECODING_GUIDE":"^NAZ-","SEMANTIC_CORE":["linear-edged geometry"],"NEGATIVE_CONTRAST":["non-edged"],"EXAMPLE":["blade form"],"POS_BIAS":{"nounness":0.8}}'
+            ]
+        return []
+
+    crew._load_accepted_glosses = _load_accepted_glosses
 
     monkeypatch.setattr(
         pipeline,
@@ -340,3 +349,6 @@ def test_stats_summary_prioritizes_direct_host_remainder_dictionary_anchor(monke
     assert "semantic_core=['linear-edged geometry']" in stats_summary
     assert "- NA (⭐ key donor): (the Enochian word for the letter 'H')" in stats_summary
     assert "- AZ (⭐ key donor): they" in stats_summary
+    assert "\n- NA (bonus; hypothetical via prior analysis):" not in stats_summary
+    assert "\n- A (bonus; hypothetical via prior analysis):" not in stats_summary
+    assert "\n- Z (bonus; hypothetical via prior analysis):" not in stats_summary
