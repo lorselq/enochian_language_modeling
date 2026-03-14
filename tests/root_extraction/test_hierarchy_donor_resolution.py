@@ -190,3 +190,52 @@ def test_resolve_donor_hierarchy_emits_cycle_detected_terminal_trace():
     )
 
     assert any(t.get("termination_reason") == "cycle_detected" for t in traces)
+
+
+def test_resolve_donor_hierarchy_prefers_longest_donor_for_same_coverage():
+    crew = RemainderExtractionCrew.__new__(RemainderExtractionCrew)
+    crew._normalize_root = lambda token: str(token or "").strip().lower()
+
+    dictionary_defs = {
+        "n": "letter n",
+        "a": "letter a",
+        "z": "letter z",
+        "na": "sound na",
+        "az": "they",
+        "naz": "rectangular prism",
+    }
+
+    def _get_dictionary_entry(token: str):
+        key = str(token or "").strip().lower()
+        if key in dictionary_defs:
+            return {"enhanced_definition": dictionary_defs[key]}
+        return None
+
+    crew._get_dictionary_entry = _get_dictionary_entry
+    crew._dictionary_definition = (
+        lambda entry: str(entry.get("enhanced_definition", "")).strip() if entry else ""
+    )
+    crew._load_accepted_glosses = lambda _token: []
+
+    traces: list[dict[str, object]] = []
+    donor_glosses: dict[str, list[str]] = {}
+    crew._resolve_donor_hierarchy(
+        host_word="NAZPSAD",
+        token="nazpsad",
+        depth=1,
+        visited=set(),
+        donor_glosses=donor_glosses,
+        traces=traces,
+    )
+
+    equations = [str(t.get("equation", "")) for t in traces]
+    assert "NAZPSAD - NAZ = PSAD" in equations
+
+    top_level_equations = [
+        str(t.get("equation", ""))
+        for t in traces
+        if int(t.get("recursion_depth", 0)) == 1
+    ]
+    assert not any("NAZPSAD - N =" in eq for eq in top_level_equations)
+    assert not any("NAZPSAD - A =" in eq for eq in top_level_equations)
+    assert not any("NAZPSAD - Z =" in eq for eq in top_level_equations)
