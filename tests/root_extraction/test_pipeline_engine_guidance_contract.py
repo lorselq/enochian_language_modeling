@@ -250,3 +250,93 @@ def test_pipeline_sends_full_residual_guidance_contract_to_engine(
     observed_hosts = {str(row.get("host_word", "")) for row in word_breaks}
     assert all(host in observed_hosts for host in northstar_hosts)
     assert all(host in observed_hosts for host in infix_hosts)
+
+
+def test_stats_summary_prioritizes_direct_host_remainder_dictionary_anchor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: direct host subtraction remainder (e.g., NAZ) must be surfaced first."""
+
+    crew = RemainderExtractionCrew.__new__(RemainderExtractionCrew)
+    crew.use_remote = False
+    crew.new_definitions_db = object()
+    crew.run_id = "run-test"
+    crew._breakdown_diag_cache = {}
+
+    crew._get_candidate_breakdown = lambda _norm: None
+    crew._normalize_root = lambda token: str(token or "").strip().lower()
+    crew._find_host_words_for_residual = lambda _residual: [{"canonical": "NAZPSAD"}]
+
+    dictionary_defs = {
+        "naz": "(something shaped like a rectangular prism)",
+        "na": "(the Enochian word for the letter 'H')",
+        "az": "they",
+    }
+
+    def _get_dictionary_entry(token: str):
+        key = str(token or "").strip().lower()
+        if key in dictionary_defs:
+            return {"enhanced_definition": dictionary_defs[key]}
+        return None
+
+    crew._get_dictionary_entry = _get_dictionary_entry
+    crew._dictionary_definition = (
+        lambda entry: str(entry.get("enhanced_definition", "")).strip() if entry else ""
+    )
+
+    crew._load_accepted_glosses = lambda _token: [
+        '{"ROOT":"NAZ","EVALUATION":"accepted","DEFINITION":"Linear-edged geometric form","DECODING_GUIDE":"^NAZ-","SEMANTIC_CORE":["linear-edged geometry"],"NEGATIVE_CONTRAST":["non-edged"],"EXAMPLE":["blade form"],"POS_BIAS":{"nounness":0.8}}',
+        "{\"ROOT\":\"NA\",\"EVALUATION\":\"accepted\",\"DEFINITION\":\"(the Enochian word for the letter \'H\')\"}",
+        '{"ROOT":"AZ","EVALUATION":"accepted","DEFINITION":"they"}',
+    ]
+
+    monkeypatch.setattr(
+        pipeline,
+        "gather_morph_evidence",
+        lambda *_args, **_kwargs: {"summary_lines": ["stub analytics"]},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "fetch_preanalysis_summary",
+        lambda *_args, **_kwargs: None,
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_engine(**kwargs):
+        captured.update(kwargs)
+        return {"Glossator": "ok", "Model": "test-model", "raw_output": {"Model": "test-model"}}
+
+    monkeypatch.setattr(pipeline, "debate_semantic_subtraction", _fake_engine)
+
+    cluster = [
+        {
+            "word": "NAZPSAD",
+            "normalized": "nazpsad",
+            "definition": "sword",
+            "enhanced_definition": "sword",
+            "source": "semantic",
+            "tier": "T1",
+            "priority": 1,
+        }
+    ]
+
+    crew.evaluate_ngram(
+        ngram="PSAD",
+        cluster=cluster,
+        cohesion_score=0.5,
+        semantic_hits=1,
+        semantic_coverage=1.0,
+        sem_count=1,
+        idx_count=1,
+        overlap_count=1,
+        stats_summary="unused",
+        style="debate",
+    )
+
+    stats_summary = str(captured.get("stats_summary", ""))
+    assert "Prioritized donor dictionary anchors:" in stats_summary
+    assert "- NAZ (⭐ key donor; direct subtraction from NAZPSAD via NAZPSAD - PSAD = NAZ):" in stats_summary
+    assert "- NAZ (key donor; hypothetical via prior analysis):" in stats_summary
+    assert "decoding_guide=^NAZ-" in stats_summary
+    assert "semantic_core=['linear-edged geometry']" in stats_summary
+    assert "- NA (⭐ key donor): (the Enochian word for the letter 'H')" in stats_summary
+    assert "- AZ (⭐ key donor): they" in stats_summary
