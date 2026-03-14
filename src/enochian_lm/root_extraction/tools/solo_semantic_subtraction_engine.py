@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import textwrap
 from enochian_lm.common.sqlite_bootstrap import sqlite3
@@ -62,6 +63,52 @@ def _extract_json_from_response(response: str) -> dict:
     return json.loads(text.strip())
 
 
+def _env_flag_enabled(name: str) -> bool:
+    value = os.getenv(name, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _format_subtraction_guidance_compact(
+    root: str,
+    residual_guidance: dict | None,
+    *,
+    max_equations: int = 5,
+) -> str:
+    if not isinstance(residual_guidance, dict):
+        return ""
+
+    rows = residual_guidance.get("word_breaks") or []
+    seen: set[tuple[str, str, str]] = set()
+    equations: list[str] = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        host = str(row.get("host_word", "")).strip().upper()
+        donor_root = str(row.get("root", root)).strip().upper() or root.upper()
+        residual = str(row.get("residual", "")).strip().upper()
+        if not host or not residual:
+            continue
+
+        triple = (host, donor_root, residual)
+        if triple in seen:
+            continue
+        seen.add(triple)
+
+        suffix = " (remove-all option)" if row.get("remove_all") else ""
+        equations.append(f"- {host} - {donor_root} = {residual}{suffix}")
+        if len(equations) >= max_equations:
+            break
+
+    if not equations:
+        return ""
+
+    return "\n".join([
+        "Compact semantic-subtraction guidance (HOST - ROOT = RESIDUAL):",
+        *equations,
+    ])
+
+
 def solo_semantic_subtraction(
     root: str,
     candidates: list[EntryRecord],
@@ -71,6 +118,7 @@ def solo_semantic_subtraction(
     use_remote: bool = True,
     residual_prompt: str | None = None,
     residual_guidance: dict | None = None,
+    verbose_guidance: bool | None = None,
     query_db: sqlite3.Connection | None = None,
     query_run_id: str | None = None,
     has_host: bool = False
@@ -208,43 +256,29 @@ def solo_semantic_subtraction(
         """
     ).strip()
 
+    verbose_guidance = (
+        _env_flag_enabled("ENOCHIAN_VERBOSE_GUIDANCE")
+        if verbose_guidance is None
+        else bool(verbose_guidance)
+    )
+
+    compact_guidance = _format_subtraction_guidance_compact(root, residual_guidance)
     residual_section = ""
     if residual_prompt or residual_guidance:
         residual_bits: list[str] = []
         if residual_prompt:
             residual_bits.append(f"FOCUS NOTE (residual): {residual_prompt}")
         if residual_guidance:
-            try:
-                pretty = json.dumps(residual_guidance, ensure_ascii=False, indent=2)
-            except TypeError:
-                pretty = str(residual_guidance)
-            residual_bits.append("RESIDUAL GUIDANCE (analytics):\n" + pretty)
+            if compact_guidance:
+                residual_bits.append(compact_guidance)
+            if verbose_guidance:
+                try:
+                    pretty = json.dumps(residual_guidance, ensure_ascii=False, indent=2)
+                except TypeError:
+                    pretty = str(residual_guidance)
+                residual_bits.append("RESIDUAL GUIDANCE (full JSON; debug):\n" + pretty)
         residual_section = "\n\n".join(residual_bits)
-
     subtraction_brief = ""
-    if isinstance(residual_guidance, dict):
-        equations = [
-            str(eq).strip()
-            for eq in (residual_guidance.get("subtraction_equations") or [])
-            if str(eq).strip()
-        ]
-        word_breaks = residual_guidance.get("word_breaks") or []
-        brief_lines: list[str] = []
-        if equations:
-            brief_lines.append("Subtraction equations (HOST - ROOT = RESIDUAL):")
-            brief_lines.extend(f"- {eq}" for eq in equations[:8])
-        if word_breaks:
-            brief_lines.append("Word-break triples:")
-            for wb in word_breaks[:8]:
-                if not isinstance(wb, dict):
-                    continue
-                host = str(wb.get("host_word", "")).strip().upper()
-                sub_root = str(wb.get("root", root)).strip().upper()
-                residual = str(wb.get("residual", "")).strip().upper()
-                if host and residual:
-                    brief_lines.append(f"- host={host} | root={sub_root} | residual={residual}")
-        if brief_lines:
-            subtraction_brief = "\n".join(brief_lines)
 
     # === COMPOSITIONAL ANALYSIS SECTION ===
     # Build explicit semantic subtraction equations for each host word
@@ -490,7 +524,7 @@ def solo_semantic_subtraction(
         5. If {root.upper()} is infix-like, evaluate left/right residual artifacts separately using the same preference order.
         6. Recurse on unresolved residual artifacts until no grounded subtraction remains.
 
-        Example anchor: NAZPSAD - NAZ = PSAD.
+        Example anchors: NAZPSAD - NAZ = PSAD; ANAZNAZ - NAZ = A (remove-all option).
 
         {subtraction_brief}
 
