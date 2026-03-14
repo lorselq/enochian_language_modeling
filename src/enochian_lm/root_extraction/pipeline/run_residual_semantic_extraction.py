@@ -1136,6 +1136,142 @@ class RemainderExtractionCrew:
         )
         self.new_definitions_db.commit()
 
+    def _ensure_roots_via_subtraction_table(self) -> None:
+        """Ensure ``roots_via_subtraction`` exists before writing host traces.
+
+        What: lazily creates the legacy host-subtraction table used by reporting
+        views in the insights DB.
+        Why: some runs bootstrap from partial schemas where this table may be
+        absent, causing writes to silently never happen.
+        Big picture: keeps subtraction-derived root leads queryable for accepted
+        runs (e.g., NAZPSAD - NAZ = PSAD style traces).
+        """
+
+        cursor = self.new_definitions_db.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS roots_via_subtraction (
+              host_word                TEXT NOT NULL,
+              host_definition          TEXT,
+              host_source              TEXT,
+              host_cluster_id          INTEGER,
+              target_residual          TEXT NOT NULL,
+              known_roots              TEXT,
+              known_root_cluster_ids   TEXT,
+              residual_definition      TEXT,
+              confidence               REAL,
+              manual_notes             TEXT,
+              updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+              UNIQUE(host_word, target_residual, known_roots, known_root_cluster_ids)
+            )
+            """
+        )
+        self.new_definitions_db.commit()
+
+    def _persist_roots_via_subtraction(
+        self,
+        *,
+        ngram: str,
+        cluster_index: int,
+        analytics_summary: dict[str, object] | None,
+    ) -> None:
+        """Persist direct host-subtraction hints into ``roots_via_subtraction``.
+
+        What: extracts host-level subtraction rows from analytics payloads and
+        stores them in the dedicated table.
+        Why: this table powers analyst workflows, but had no write path wired in.
+        Big picture: accepted roots like PSAD now leave an auditable subtraction
+        footprint instead of disappearing after prompt-time execution.
+        """
+
+        if not isinstance(analytics_summary, dict):
+            return
+
+        self._ensure_roots_via_subtraction_table()
+
+        ngram_norm = self._normalize_root(ngram).upper()
+        if not ngram_norm:
+            return
+
+        def _canonical_text(value: object) -> str | None:
+            text = str(value or "").strip().upper()
+            return text or None
+
+        rows: list[tuple[object, ...]] = []
+        for row in analytics_summary.get("word_breaks") or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("donor_source", "")).strip().lower() != "host_subtraction":
+                continue
+
+            host_word = _canonical_text(row.get("host_word"))
+            target_residual = _canonical_text(row.get("residual"))
+            if not host_word or not target_residual:
+                continue
+
+            host_definition = row.get("host_definition")
+            host_source = _canonical_text(row.get("host_source"))
+            residual_definition = row.get("residual_definition")
+            confidence_raw = row.get("confidence")
+            confidence = None
+            try:
+                confidence = float(confidence_raw) if confidence_raw is not None else None
+            except (TypeError, ValueError):
+                confidence = None
+
+            notes = [
+                f"equation={canonicalize_subtraction_text(row.get('equation'))}",
+                f"run_id={self.run_id}",
+            ]
+            if row.get("termination_reason"):
+                notes.append(f"termination_reason={row.get('termination_reason')}")
+
+            rows.append(
+                (
+                    host_word,
+                    str(host_definition or "").strip() or None,
+                    host_source,
+                    None,
+                    target_residual,
+                    json.dumps([ngram_norm], ensure_ascii=False),
+                    json.dumps([int(cluster_index)], ensure_ascii=False),
+                    str(residual_definition or "").strip() or None,
+                    confidence,
+                    " | ".join(notes),
+                )
+            )
+
+        if not rows:
+            return
+
+        cursor = self.new_definitions_db.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO roots_via_subtraction (
+                host_word,
+                host_definition,
+                host_source,
+                host_cluster_id,
+                target_residual,
+                known_roots,
+                known_root_cluster_ids,
+                residual_definition,
+                confidence,
+                manual_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(host_word, target_residual, known_roots, known_root_cluster_ids)
+            DO UPDATE SET
+                host_definition = COALESCE(excluded.host_definition, roots_via_subtraction.host_definition),
+                host_source = COALESCE(excluded.host_source, roots_via_subtraction.host_source),
+                residual_definition = COALESCE(excluded.residual_definition, roots_via_subtraction.residual_definition),
+                confidence = COALESCE(excluded.confidence, roots_via_subtraction.confidence),
+                manual_notes = excluded.manual_notes,
+                updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            """,
+            rows,
+        )
+        self.new_definitions_db.commit()
+
     def _load_queue_order(self) -> list[tuple[str, int, int]]:
         cursor = self.new_definitions_db.cursor()
         rows = cursor.execute(
@@ -2498,6 +2634,11 @@ class RemainderExtractionCrew:
                     # Persist semantic-subtraction evidence for this root/cluster.
                     # This keeps prompt-time guidance queryable in the insights DB.
                     self._persist_semantic_subtraction_traces(
+                        ngram=root_token,
+                        cluster_index=cluster_id,
+                        analytics_summary=evaluated.get("analytics_summary"),
+                    )
+                    self._persist_roots_via_subtraction(
                         ngram=root_token,
                         cluster_index=cluster_id,
                         analytics_summary=evaluated.get("analytics_summary"),

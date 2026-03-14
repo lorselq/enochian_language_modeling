@@ -242,3 +242,26 @@ def test_process_ngrams_persists_semantic_subtraction_traces(monkeypatch):
         if r[8] == "equation" and (r[4] or "").strip().upper() == "NAZPSAD - NAZ = PSAD"
     ]
     assert len(matching_equation_rows) == 1
+
+    subtraction_rows = db.conn.execute(
+        """
+        SELECT
+            host_word,
+            target_residual,
+            known_roots,
+            known_root_cluster_ids,
+            manual_notes
+        FROM roots_via_subtraction
+        ORDER BY rowid
+        """
+    ).fetchall()
+
+    assert subtraction_rows, "expected persisted roots_via_subtraction rows"
+    assert any(
+        row[0] == "NAZPSAD"
+        and row[1] == "PSAD"
+        and row[2] == '["NAZ"]'
+        and row[3] == "[0]"
+        and "equation=NAZPSAD - NAZ = PSAD" in (row[4] or "")
+        for row in subtraction_rows
+    )
