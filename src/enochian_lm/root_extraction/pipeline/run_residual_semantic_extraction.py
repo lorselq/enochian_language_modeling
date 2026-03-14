@@ -735,6 +735,35 @@ class RemainderExtractionCrew:
             "pos_bias": _pick("POS_BIAS", "pos_bias", default={}),
         }
 
+    @staticmethod
+    def _has_meaningful_compact_gloss_fields(compact: dict[str, object] | None) -> bool:
+        """Return True when compact gloss fields carry non-empty semantic payload."""
+
+        if not isinstance(compact, dict):
+            return False
+
+        decoding = str(compact.get("decoding_guide") or "").strip()
+        if decoding:
+            return True
+
+        semantic_core = compact.get("semantic_core")
+        if isinstance(semantic_core, list) and any(str(v or "").strip() for v in semantic_core):
+            return True
+
+        negative = compact.get("negative_contrast")
+        if isinstance(negative, list) and any(str(v or "").strip() for v in negative):
+            return True
+
+        examples = compact.get("examples_json")
+        if isinstance(examples, list) and any(str(v or "").strip() for v in examples):
+            return True
+
+        pos_bias = compact.get("pos_bias")
+        if isinstance(pos_bias, dict) and bool(pos_bias):
+            return True
+
+        return False
+
     def _load_accepted_glosses(self, token: str) -> list[str]:
         """Fetch accepted glossator JSON for a token, minimizing whitespace."""
 
@@ -1760,18 +1789,34 @@ class RemainderExtractionCrew:
 
             cooccurring_defs: dict[str, str] = {}
             cooccurring_compact: dict[str, dict[str, object]] = {}
-            for item in (analytics_summary.get("cooccurring_root_analyses") or []):
+
+            def _register_gloss_item(item: dict[str, object]) -> None:
                 if not isinstance(item, dict):
-                    continue
+                    return
                 root_name = str(item.get("ROOT") or item.get("root") or "").strip().upper()
                 if not root_name:
-                    continue
+                    return
                 definition = str(item.get("DEFINITION") or item.get("definition") or "").strip()
                 if definition and root_name not in cooccurring_defs:
                     cooccurring_defs[root_name] = definition
                 compact = self._extract_compact_gloss_fields(item)
                 if compact and root_name not in cooccurring_compact:
                     cooccurring_compact[root_name] = compact
+
+            for item in (analytics_summary.get("cooccurring_root_analyses") or []):
+                _register_gloss_item(item)
+
+            # Ensure direct donor remainders (e.g., NAZ from NAZPSAD - PSAD = NAZ)
+            # import accepted gloss rows from SQLite so hypothetical fields are available.
+            for direct in direct_donor_rows:
+                donor_root = str(direct.get("donor_root", "")).strip().lower()
+                if not donor_root:
+                    continue
+                for gloss in self._load_accepted_glosses(donor_root):
+                    try:
+                        _register_gloss_item(json.loads(gloss))
+                    except json.JSONDecodeError:
+                        continue
 
             donor_rows = [
                 wb
@@ -1809,7 +1854,7 @@ class RemainderExtractionCrew:
                         compact_gloss_lines.append(f"- {donor_root} (⭐ key donor): {donor_def}")
 
                 compact = cooccurring_compact.get(donor_root)
-                if compact:
+                if self._has_meaningful_compact_gloss_fields(compact):
                     compact_gloss_lines.extend(
                         [
                             f"- {donor_root} (key donor; hypothetical via prior analysis):",
@@ -1837,7 +1882,7 @@ class RemainderExtractionCrew:
                     compact_gloss_lines.append(f"- {donor_root} (⭐ key donor): {donor_def}")
 
                 compact = self._extract_compact_gloss_fields(donor_gloss) or cooccurring_compact.get(donor_root)
-                if compact:
+                if self._has_meaningful_compact_gloss_fields(compact):
                     compact_gloss_lines.extend(
                         [
                             f"- {donor_root} (bonus; hypothetical via prior analysis):",
