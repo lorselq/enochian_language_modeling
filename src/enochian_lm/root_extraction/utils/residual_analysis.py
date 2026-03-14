@@ -195,6 +195,67 @@ def prioritize_donor_candidates(
     return sorted(candidates or [], key=_key)
 
 
+
+
+def canonicalize_subtraction_text(value: object) -> str:
+    """Normalize subtraction-related text for stable dedupe keys/equations."""
+
+    return " ".join(str(value or "").strip().upper().split())
+
+
+def canonicalize_subtraction_tuple(row: dict[str, object]) -> tuple[str, str, str]:
+    """Return canonical ``(host_word, root, residual)`` tuple for subtraction rows."""
+
+    return (
+        canonicalize_subtraction_text(row.get("host_word")),
+        canonicalize_subtraction_text(row.get("root")),
+        canonicalize_subtraction_text(row.get("residual")),
+    )
+
+
+def canonicalize_subtraction_equation(row: dict[str, object]) -> str:
+    """Build canonical ``HOST - ROOT = RESIDUAL`` equation string for a row."""
+
+    host_word, row_root, residual = canonicalize_subtraction_tuple(row)
+    return f"{host_word} - {row_root} = {residual}".strip()
+
+
+def dedupe_residual_word_breaks(
+    word_breaks: list[dict[str, object]] | None,
+) -> list[dict[str, object]]:
+    """Deduplicate rows by ``(host_word, root, residual)`` using source precedence."""
+
+    def _source_rank(value: object) -> int:
+        source = canonicalize_subtraction_text(value).lower()
+        if source == "host_subtraction":
+            return 0
+        if source == "dictionary":
+            return 1
+        if source == "sqlite":
+            return 2
+        return 3
+
+    deduped_rows_by_key: dict[tuple[str, str, str], dict[str, object]] = {}
+    for row in word_breaks or []:
+        if not isinstance(row, dict):
+            continue
+        row_copy = dict(row)
+        host_word, row_root, residual = canonicalize_subtraction_tuple(row_copy)
+        if not host_word or not row_root:
+            continue
+        row_copy["host_word"] = host_word
+        row_copy["root"] = row_root
+        row_copy["residual"] = residual
+        row_copy["equation"] = canonicalize_subtraction_equation(row_copy)
+
+        key = (host_word, row_root, residual)
+        preferred = deduped_rows_by_key.get(key)
+        if preferred is None or _source_rank(row_copy.get("donor_source")) < _source_rank(
+            preferred.get("donor_source")
+        ):
+            deduped_rows_by_key[key] = row_copy
+
+    return list(deduped_rows_by_key.values())
 def build_residual_guidance_payload(
     *,
     root: str,
@@ -207,18 +268,18 @@ def build_residual_guidance_payload(
     and explicit subtraction equations.
     """
 
-    normalized_root = str(root or "").strip().upper()
-    rows = [row for row in (word_breaks or []) if isinstance(row, dict)]
+    normalized_root = canonicalize_subtraction_text(root)
+    deduped_rows = dedupe_residual_word_breaks(word_breaks)
 
     equations = [
-        str(row.get("equation", "")).strip()
-        for row in rows
-        if str(row.get("equation", "")).strip()
+        canonicalize_subtraction_equation(row)
+        for row in deduped_rows
+        if any(canonicalize_subtraction_tuple(row))
     ]
 
     payload: dict[str, object] = {
         "root": normalized_root,
-        "word_breaks": rows,
+        "word_breaks": deduped_rows,
         "subtraction_equations": equations,
     }
 

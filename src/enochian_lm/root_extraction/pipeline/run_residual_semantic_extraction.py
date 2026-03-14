@@ -35,7 +35,9 @@ from enochian_lm.root_extraction.utils.embeddings import (
 from enochian_lm.root_extraction.utils.residual_analysis import (
     build_residual_guidance_payload,
     build_subtraction_evidence,
+    canonicalize_subtraction_text,
     compute_word_break_subtractions,
+    dedupe_residual_word_breaks,
     exclude_root_segments,
     prioritize_donor_candidates,
 )
@@ -1075,10 +1077,13 @@ class RemainderExtractionCrew:
                     )
                 )
 
+        seen_equations: set[str] = set()
         for equation in analytics_summary.get("subtraction_equations") or []:
             eq = str(equation or "").strip()
-            if not eq:
+            eq_canonical = canonicalize_subtraction_text(eq)
+            if not eq_canonical or eq_canonical in seen_equations:
                 continue
+            seen_equations.add(eq_canonical)
             rows.append(
                 (
                     self.run_id,
@@ -1087,12 +1092,12 @@ class RemainderExtractionCrew:
                     None,
                     None,
                     None,
-                    eq,
+                    eq_canonical,
                     None,
                     None,
                     None,
                     "equation",
-                    json.dumps({"equation": eq}, ensure_ascii=False),
+                    json.dumps({"equation": eq_canonical}, ensure_ascii=False),
                 )
             )
 
@@ -1738,10 +1743,11 @@ class RemainderExtractionCrew:
             merged_word_breaks = list(word_break_evidence)
             if donor_traces:
                 merged_word_breaks.extend(donor_traces)
+            deduped_word_breaks = dedupe_residual_word_breaks(merged_word_breaks)
             analytics_summary.update(
                 build_residual_guidance_payload(
                     root=ngram_lower,
-                    word_breaks=merged_word_breaks,
+                    word_breaks=deduped_word_breaks,
                 )
             )
             analytics_summary["hierarchy_traces"] = donor_traces

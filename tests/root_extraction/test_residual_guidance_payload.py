@@ -51,3 +51,37 @@ def test_prioritize_donor_candidates_prefers_dictionary_then_sqlite_with_largest
     assert ranked[1]["source"] == "dictionary"
     assert ranked[2]["source"] == "dictionary"
     assert ranked[-1] == {"donor": "NAZ", "source": "sqlite"}
+
+
+def test_residual_guidance_payload_dedupes_by_triple_with_precedence():
+    payload = build_residual_guidance_payload(
+        root="psad",
+        word_breaks=[
+            {
+                "host_word": " nazpsad ",
+                "root": "naz",
+                "residual": " psad ",
+                "equation": "nazpsad - naz = psad",
+                "donor_source": "sqlite",
+            },
+            {
+                "host_word": "NAZPSAD",
+                "root": "NAZ",
+                "residual": "PSAD",
+                "equation": "NAZPSAD - NAZ = PSAD",
+                "donor_source": "dictionary",
+            },
+            {
+                "host_word": "NAZPSAD",
+                "root": "NAZ",
+                "residual": "PSAD",
+                "equation": "NAZPSAD - NAZ = PSAD",
+                "donor_source": "host_subtraction",
+            },
+        ],
+    )
+
+    assert payload["root"] == "PSAD"
+    assert payload["subtraction_equations"] == ["NAZPSAD - NAZ = PSAD"]
+    assert len(payload["word_breaks"]) == 1
+    assert payload["word_breaks"][0]["donor_source"] == "host_subtraction"
