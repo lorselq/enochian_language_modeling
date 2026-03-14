@@ -70,3 +70,19 @@ def test_build_subtraction_evidence_standardizes_trace_payload():
     assert payload["donor_source"] == "dictionary"
     assert payload["recursion_depth"] == 1
     assert payload["termination_reason"] == "residual_extracted"
+
+
+def test_word_break_subtraction_respects_contiguous_ordered_span_matching():
+    # ZNI appears only as Z...NI (non-contiguous), so it must not be subtractable.
+    results = compute_word_break_subtractions("NAZNMPSADNI", "ZNI")
+
+    assert results == []
+
+
+def test_word_break_subtraction_never_overconsumes_letter_occurrences():
+    results = compute_word_break_subtractions("NAZNMPSADNI", "N")
+
+    # There are exactly three N's in NAZNMPSADNI (positions 0, 3, 9).
+    assert len(results) == 3
+    assert [row["start"] for row in results] == [0, 3, 9]
+    assert results[0]["occurrence_spans"] == [[0, 1], [3, 4], [9, 10]]

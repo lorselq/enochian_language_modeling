@@ -481,23 +481,11 @@ class RemainderExtractionCrew:
             )
             return
 
-        branch_count = 0
-        cycle_skips = 0
-        sibling_states: set[tuple[str, str, str]] = set()
-        for cand in ranked:
-            if branch_count >= MAX_DONOR_BRANCHES_PER_NODE:
-                break
-
+        viable_candidates: list[dict[str, object]] = []
+        for rank_index, cand in enumerate(ranked):
             donor = self._normalize_root(cand.get("donor", ""))
             if not donor or donor == token_norm:
                 continue
-            state = (host_word, token_norm, donor)
-            if state in visited or state in sibling_states:
-                # Cycle protection is branch-local: one explored branch should
-                # not erase other viable branches at this same recursion node.
-                cycle_skips += 1
-                continue
-            sibling_states.add(state)
 
             subtraction_options = compute_word_break_subtractions(token_norm, donor)
             if not subtraction_options:
@@ -508,6 +496,84 @@ class RemainderExtractionCrew:
             # interpretations (e.g., remove_all_occurrences) in the payload.
             subtraction_options.sort(key=lambda row: len(str(row.get("residual", ""))))
             chosen = subtraction_options[0]
+            normalized_residual = self._normalize_root(chosen.get("residual", ""))
+            residuals = tuple(
+                (
+                    self._normalize_root(fragment.get("artifact", "")),
+                    int(fragment.get("start", 0)),
+                    int(fragment.get("end", 0)),
+                )
+                for fragment in (chosen.get("residuals", []) or [])
+                if isinstance(fragment, dict)
+            )
+            coverage_key = (
+                int(chosen.get("start", 0)),
+                int(chosen.get("end", 0)),
+                normalized_residual,
+                residuals,
+            )
+
+            viable_candidates.append(
+                {
+                    "rank_index": rank_index,
+                    "cand": cand,
+                    "donor": donor,
+                    "chosen": chosen,
+                    "coverage_key": coverage_key,
+                }
+            )
+
+        if not viable_candidates:
+            self._append_terminal_hierarchy_trace(
+                host_word=host_word,
+                token=token_norm,
+                depth=depth,
+                traces=traces,
+                termination_reason="no_viable_donor",
+            )
+            return
+
+        # Group by subtraction coverage so equivalent removals keep one donor.
+        grouped_candidates: dict[tuple[object, ...], dict[str, object]] = {}
+        for candidate in viable_candidates:
+            key = candidate["coverage_key"]
+            incumbent = grouped_candidates.get(key)
+            if not incumbent:
+                grouped_candidates[key] = candidate
+                continue
+            if len(str(candidate["donor"])) > len(str(incumbent["donor"])):
+                grouped_candidates[key] = candidate
+
+        deduped_candidates = sorted(
+            grouped_candidates.values(),
+            key=lambda row: int(row.get("rank_index", 0)),
+        )
+
+        # Hard guard: if any viable donor has len>=2, suppress len==1 donors.
+        has_multi_token_donor = any(len(str(row.get("donor", ""))) >= 2 for row in deduped_candidates)
+        if has_multi_token_donor:
+            deduped_candidates = [
+                row for row in deduped_candidates if len(str(row.get("donor", ""))) >= 2
+            ]
+
+        branch_count = 0
+        cycle_skips = 0
+        sibling_states: set[tuple[str, str, str]] = set()
+        for row in deduped_candidates:
+            if branch_count >= MAX_DONOR_BRANCHES_PER_NODE:
+                break
+
+            cand = row.get("cand", {})
+            donor = self._normalize_root(row.get("donor", ""))
+            chosen = row.get("chosen", {})
+            state = (host_word, token_norm, donor)
+            if state in visited or state in sibling_states:
+                # Cycle protection is branch-local: one explored branch should
+                # not erase other viable branches at this same recursion node.
+                cycle_skips += 1
+                continue
+            sibling_states.add(state)
+
             chosen_payload = {
                 "host_word": token_norm.upper(),
                 "root": donor.upper(),
