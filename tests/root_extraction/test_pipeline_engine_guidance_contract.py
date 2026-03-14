@@ -163,7 +163,13 @@ def test_pipeline_sends_full_residual_guidance_contract_to_engine(
     crew._get_candidate_breakdown = lambda _norm: None
     crew._normalize_root = lambda token: str(token or "").strip().lower()
     crew._find_host_words_for_residual = lambda _residual: [{"canonical": w} for w in hosts]
-    crew._load_accepted_glosses = lambda _token: []
+    def _load_accepted_glosses(token: str):
+        key = str(token or "").strip().lower()
+        if key == "lcordzi":
+            return ['{"ROOT":"LCORDZI","EVALUATION":"accepted","DEFINITION":"stub"}']
+        return []
+
+    crew._load_accepted_glosses = _load_accepted_glosses
 
     donor_traces = [
         {
@@ -352,3 +358,92 @@ def test_stats_summary_prioritizes_direct_host_remainder_dictionary_anchor(monke
     assert "\n- NA (bonus; hypothetical via prior analysis):" not in stats_summary
     assert "\n- A (bonus; hypothetical via prior analysis):" not in stats_summary
     assert "\n- Z (bonus; hypothetical via prior analysis):" not in stats_summary
+
+
+def test_stats_summary_keeps_nonadjacent_host_remainder_artifacts_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: non-adjacent remainder artifacts should not be merged into one key donor."""
+
+    crew = RemainderExtractionCrew.__new__(RemainderExtractionCrew)
+    crew.use_remote = False
+    crew.new_definitions_db = object()
+    crew.run_id = "run-test"
+    crew._breakdown_diag_cache = {}
+
+    crew._get_candidate_breakdown = lambda _norm: None
+    crew._normalize_root = lambda token: str(token or "").strip().lower()
+    crew._find_host_words_for_residual = lambda _residual: [{"canonical": "OLCORDZIZ"}]
+
+    dictionary_defs = {
+        "o": "five",
+        "z": "they",
+        "oz": "active force or agency",
+    }
+
+    def _get_dictionary_entry(token: str):
+        key = str(token or "").strip().lower()
+        if key in dictionary_defs:
+            return {"enhanced_definition": dictionary_defs[key]}
+        return None
+
+    crew._get_dictionary_entry = _get_dictionary_entry
+    crew._dictionary_definition = (
+        lambda entry: str(entry.get("enhanced_definition", "")).strip() if entry else ""
+    )
+    def _load_accepted_glosses(token: str):
+        key = str(token or "").strip().lower()
+        if key == "lcordzi":
+            return ['{"ROOT":"LCORDZI","EVALUATION":"accepted","DEFINITION":"stub"}']
+        return []
+
+    crew._load_accepted_glosses = _load_accepted_glosses
+
+    monkeypatch.setattr(
+        pipeline,
+        "gather_morph_evidence",
+        lambda *_args, **_kwargs: {"summary_lines": ["stub analytics"]},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "fetch_preanalysis_summary",
+        lambda *_args, **_kwargs: None,
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_engine(**kwargs):
+        captured.update(kwargs)
+        return {"Glossator": "ok", "Model": "test-model", "raw_output": {"Model": "test-model"}}
+
+    monkeypatch.setattr(pipeline, "debate_semantic_subtraction", _fake_engine)
+
+    cluster = [
+        {
+            "word": "OLCORDZIZ",
+            "normalized": "olcordziz",
+            "definition": "made mankind",
+            "enhanced_definition": "made mankind",
+            "source": "semantic",
+            "tier": "T1",
+            "priority": 1,
+        }
+    ]
+
+    crew.evaluate_ngram(
+        ngram="LCORDZI",
+        cluster=cluster,
+        cohesion_score=0.0,
+        semantic_hits=0,
+        semantic_coverage=1.0,
+        sem_count=1,
+        idx_count=1,
+        overlap_count=0,
+        stats_summary="unused",
+        style="debate",
+    )
+
+    stats_summary = str(captured.get("stats_summary", ""))
+    assert "- O (⭐ key donor; direct subtraction from OLCORDZIZ via OLCORDZIZ - LCORDZI = OZ [artifact: O]): five" in stats_summary
+    assert "- Z (⭐ key donor; direct subtraction from OLCORDZIZ via OLCORDZIZ - LCORDZI = OZ [artifact: Z]): they" in stats_summary
+    assert "- OZ (⭐ key donor; direct subtraction from OLCORDZIZ via OLCORDZIZ - LCORDZI = OZ):" not in stats_summary
