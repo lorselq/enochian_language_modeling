@@ -197,6 +197,43 @@ def _extract_tasks_from_ruling(ruling_text: str) -> int:
     return len(_BULLET_RE.findall(text))
 
 
+def _safe_json_loads(value):
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        loaded = json.loads(text)
+        return loaded if isinstance(loaded, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _render_compact_gloss_fields(gloss: dict, fallback_root: str) -> list[str]:
+    root_name = str(gloss.get("ROOT") or gloss.get("root") or fallback_root).strip().upper()
+    definition = str(gloss.get("DEFINITION") or gloss.get("definition") or "").strip()
+    if definition:
+        return [f"- {root_name}: dictionary definition -> {definition}"]
+
+    decoding = gloss.get("DECODING_GUIDE") or gloss.get("decoding_guide")
+    semantic_core = gloss.get("SEMANTIC_CORE") or gloss.get("semantic_core")
+    negative_contrast = gloss.get("NEGATIVE_CONTRAST") or gloss.get("negative_contrast")
+    examples = gloss.get("EXAMPLES_JSON") or gloss.get("examples_json") or gloss.get("EXAMPLE")
+    pos_bias = gloss.get("POS_BIAS") or gloss.get("pos_bias")
+
+    return [
+        f"- {root_name}: root={root_name}",
+        f"  decoding_guide={decoding if decoding is not None else ''}",
+        f"  semantic_core={semantic_core if semantic_core is not None else []}",
+        f"  negative_contrast={negative_contrast if negative_contrast is not None else []}",
+        f"  examples_json={examples if examples is not None else []}",
+        f"  pos_bias={pos_bias if pos_bias is not None else {}}",
+    ]
+
+
 def debate_semantic_subtraction(
     root: str,
     candidates: list[EntryRecord],
@@ -516,7 +553,65 @@ Your tone is incisive, precise, and intellectually honest.""",
                 "Residual morphology diagnostics (segments vs. residue):\n"
                 f"{residual_prompt}"
             )
-        if residual_guidance:
+
+        if isinstance(residual_guidance, dict):
+            word_breaks = [
+                wb for wb in (residual_guidance.get("word_breaks") or []) if isinstance(wb, dict)
+            ]
+            prioritized = sorted(
+                word_breaks,
+                key=lambda wb: (
+                    0 if str(wb.get("donor_source", "")).lower().startswith("dictionary") else 1,
+                    -len(str(wb.get("residual", ""))),
+                ),
+            )
+            star_lines = [
+                "SEMANTIC SUBTRACTION PRIORITY NOTE:",
+                "- ⭐ MOST IMPORTANT: host-word meaning (especially dictionary-origin hosts).",
+                "- ⭐ SECOND MOST IMPORTANT: dictionary definition of the donor-removed remainder (if available).",
+                "- Everything else below is optional bonus nuance.",
+            ]
+
+            remainder_lines: list[str] = []
+            for wb in prioritized[:8]:
+                host = str(wb.get("host_word", "")).strip().upper()
+                donor = str(wb.get("root", root)).strip().upper()
+                residual = str(wb.get("residual", "")).strip().upper()
+                equation = str(wb.get("equation", "")).strip() or f"{host} - {donor} = {residual}"
+                host_def = str(wb.get("host_definition", "")).strip() or str(wb.get("definition", "")).strip()
+                if host:
+                    remainder_lines.append(f"- host_word={host}")
+                if equation:
+                    remainder_lines.append(f"  subtraction={equation}")
+                if host_def:
+                    remainder_lines.append(f"  host_definition={host_def}")
+
+                donor_gloss = _safe_json_loads(wb.get("donor_gloss") or wb.get("donor_glossator_def"))
+                if donor_gloss:
+                    remainder_lines.extend(_render_compact_gloss_fields(donor_gloss, residual or donor))
+
+            cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
+            extra_lines: list[str] = []
+            for item in cooccurring:
+                parsed = _safe_json_loads(item)
+                if parsed:
+                    extra_lines.extend(_render_compact_gloss_fields(parsed, root))
+
+            if remainder_lines or extra_lines:
+                residual_bits.append(
+                    "\n".join(star_lines)
+                    + "\n\nSUBTRACTION REMAINDER CONTEXT (dictionary-first, larger ngrams first):\n"
+                    + "\n".join(remainder_lines or ["- (no structured word-break rows)"])
+                    + (
+                        "\n\nBONUS ROOT DATA (use only when no dictionary definition is available for a remainder):\n"
+                        + "\n".join(extra_lines[:30])
+                        if extra_lines
+                        else ""
+                    )
+                    + "\n"
+                )
+
+        elif residual_guidance:
             try:
                 pretty = json.dumps(residual_guidance, ensure_ascii=False, indent=2)
             except TypeError:
@@ -525,6 +620,7 @@ Your tone is incisive, precise, and intellectually honest.""",
                 "Residual guidance payload (HOST - ROOT = RESIDUAL evidence):\n"
                 f"{pretty}"
             )
+
         residual_section = "\n\n".join(residual_bits) + "\n"
 
     subtraction_brief = ""
@@ -583,6 +679,13 @@ With this in mind, examine the following definitions and citations (contained wi
   {residual_section}
 
   Use these to **propose a coherent explanation of the root** based on morphological structure and shared semantics.
+
+  SEMANTIC-SUBTRACTION PRIORITY (mandatory):
+  - ⭐ True stars: host-word meaning and dictionary-origin remainder meanings.
+  - ⭐ If dictionary definitions cannot be produced for the total remainder, back off to the largest available remainder ngrams, then shorter ones.
+  - Prefer bigrams+ when available; use unigrams only when unavoidable.
+  - For non-dictionary remainder entries, only use: root, decoding_guide, semantic_core, negative_contrast, examples_json, pos_bias.
+  - Do NOT include citations/source-word lists for remainder parts in your reasoning output.
 
   You MUST explicitly reason via subtraction when evidence exists:
   - host word
