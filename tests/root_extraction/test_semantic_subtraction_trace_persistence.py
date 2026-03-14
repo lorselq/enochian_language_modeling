@@ -173,6 +173,15 @@ def test_process_ngrams_persists_semantic_subtraction_traces(monkeypatch):
             "analytics_summary": {
                 "word_breaks": [
                     {
+                        "host_word": "nazpsad",
+                        "root": "naz",
+                        "residual": "psad",
+                        "equation": "  nazpsad - naz = psad  ",
+                        "donor_source": "sqlite",
+                        "recursion_depth": 0,
+                        "termination_reason": "root_subtracted_from_host",
+                    },
+                    {
                         "host_word": "NAZPSAD",
                         "root": "NAZ",
                         "residual": "PSAD",
@@ -195,6 +204,7 @@ def test_process_ngrams_persists_semantic_subtraction_traces(monkeypatch):
                 ],
                 "subtraction_equations": [
                     "NAZPSAD - NAZ = PSAD",
+                    "  nazpsad - naz = psad ",
                     "ALNAZ - A = LNAZ",
                 ],
             },
@@ -225,3 +235,10 @@ def test_process_ngrams_persists_semantic_subtraction_traces(monkeypatch):
     assert any(r[1] == "NAZPSAD" and r[2] == "NAZ" and r[3] == "PSAD" for r in rows)
     assert any(r[4] == "NAZPSAD - NAZ = PSAD" for r in rows)
     assert any(r[5] == "dictionary" and int(r[6]) == 1 and r[7] == "residual_extracted" for r in rows)
+
+    matching_equation_rows = [
+        r
+        for r in rows
+        if r[8] == "equation" and (r[4] or "").strip().upper() == "NAZPSAD - NAZ = PSAD"
+    ]
+    assert len(matching_equation_rows) == 1
