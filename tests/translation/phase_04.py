@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from translation.llm_synthesis import (
     SynthesisResult,
     _build_prompt,
+    _parse_best_estimations_response,
     _parse_response,
     _resolved_confidence,
     synthesize_definition,
@@ -104,6 +105,27 @@ def test_parse_response_handles_non_json(sample_context: dict[str, object]):
 
     assert parsed["definition"].startswith("raw text"[:10])
     assert parsed["confidence"] == _resolved_confidence(None, sample_context, fallback_only=True)
+
+
+def test_parse_response_handles_fenced_json(sample_context: dict[str, object]):
+    payload = """```json
+{"definition":"stone pillar","confidence":0.7,"reasoning":"grounded in the supplied morphs","best_estimations":["stone pillar","pillar base","cut stone"]}
+```"""
+    parsed = _parse_response(payload, fallback="fallback", context=sample_context)
+
+    assert parsed["definition"] == "stone pillar"
+    assert parsed["confidence"] == 0.7
+    assert parsed["best_estimations"] == ["stone pillar", "pillar base", "cut stone"]
+
+
+def test_parse_best_estimations_response_handles_wrapped_json():
+    payload = """Here is the requested JSON:
+{"best_estimations":["stone pillar","praise rite","linked support"]}
+Thanks!"""
+
+    parsed = _parse_best_estimations_response(payload)
+
+    assert parsed == ["stone pillar", "praise rite", "linked support"]
 
 
 # ---------------------------------------------------------------------------
