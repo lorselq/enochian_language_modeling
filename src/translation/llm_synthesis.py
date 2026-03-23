@@ -505,9 +505,8 @@ def _parse_response(
         parsed["confidence"] = _resolved_confidence(None, context, fallback_only=True)
         return parsed
 
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError:
+    data = _load_json_payload(payload)
+    if data is None:
         parsed["definition"] = _trim(payload)
         parsed["reasoning"] = "Non-JSON response; using raw text as definition."
         parsed["confidence"] = _resolved_confidence(None, context, fallback_only=True)
@@ -621,15 +620,45 @@ def _build_best_estimations_prompt(
 def _parse_best_estimations_response(payload: str) -> list[str]:
     if not payload:
         return []
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError:
+    data = _load_json_payload(payload)
+    if data is None:
         return []
     best_estimations = data.get("best_estimations")
     if not isinstance(best_estimations, list):
         return []
     cleaned = [item.strip() for item in best_estimations if isinstance(item, str) and item.strip()]
     return cleaned[:6]
+
+
+def _load_json_payload(payload: str) -> dict[str, object] | None:
+    """Parse JSON from direct, fenced, or prose-wrapped LLM responses."""
+
+    text = payload.strip()
+    if not text:
+        return None
+
+    candidates = [text]
+    if text.startswith("```"):
+        fence_lines = text.splitlines()
+        if len(fence_lines) >= 3:
+            candidates.append("\n".join(fence_lines[1:-1]).strip())
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidates.append(text[start : end + 1].strip())
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    return None
 
 
 def _resolved_confidence(
