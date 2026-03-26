@@ -38,6 +38,8 @@ from .llm_synthesis import (
     synthesize_consensus,
     synthesize_definition,
     DEFAULT_LLM_CONTEXT,
+    LLMRequestProgress,
+    TranslationProgressReporter,
 )
 from .repository import (
     ClusterRecord,
@@ -429,6 +431,7 @@ class SingleWordTranslationService:
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
         use_beam_search: bool = False,
+        progress_reporter: TranslationProgressReporter | None = None,
     ) -> dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
 
@@ -459,6 +462,11 @@ class SingleWordTranslationService:
             )
             if not evidence or not getattr(evidence, "word", None):
                 llm_enabled = self.llm_enabled if llm is None else bool(llm)
+                llm_progress = self._build_llm_progress_plan(
+                    candidate_count=0,
+                    include_consensus=False,
+                    include_validation_repairs=llm_enabled,
+                )
                 return {
                     "word": normalized,
                     "variants_queried": active_variants or [],
@@ -474,6 +482,7 @@ class SingleWordTranslationService:
                         else None
                     ),
                     "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+                    "llm_request_plan": self._serialize_llm_progress_plan(llm_progress),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "candidates": [],
                     "evidence": {},
@@ -904,21 +913,36 @@ class SingleWordTranslationService:
             fallback_morphs: list[dict[str, object]] = []
 
             llm_enabled = self.llm_enabled if llm is None else bool(llm)
-            enriched = self._enrich_candidates(
-                selected,
-                evidence=evidence,
-                strategy=strategy,
-                llm_enabled=llm_enabled,
-                llm_context=llm_context,
+            llm_progress = self._build_llm_progress_plan(
+                candidate_count=len(selected),
+                include_consensus=llm_enabled and len(selected) > 1,
+                include_validation_repairs=llm_enabled,
             )
-            consensus_payload: dict[str, object] | None = None
-            if llm_enabled and len(enriched) > 1:
-                consensus_payload = self._build_consensus_synthesis(
-                    enriched,
+            if llm_enabled and llm_progress is not None and progress_reporter is not None:
+                progress_reporter.prepare(llm_progress)
+            try:
+                enriched = self._enrich_candidates(
+                    selected,
+                    evidence=evidence,
                     strategy=strategy,
-                    llm_use_remote=self.llm_use_remote,
+                    llm_enabled=llm_enabled,
                     llm_context=llm_context,
+                    llm_progress=llm_progress,
+                    progress_reporter=progress_reporter,
                 )
+                consensus_payload: dict[str, object] | None = None
+                if llm_enabled and len(enriched) > 1:
+                    consensus_payload = self._build_consensus_synthesis(
+                        enriched,
+                        strategy=strategy,
+                        llm_use_remote=self.llm_use_remote,
+                        llm_context=llm_context,
+                        llm_progress=llm_progress,
+                        progress_reporter=progress_reporter,
+                    )
+            finally:
+                if llm_enabled and progress_reporter is not None:
+                    progress_reporter.done()
 
             return {
                 "word": normalized,
@@ -936,6 +960,7 @@ class SingleWordTranslationService:
                 ),
                 "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "llm_request_plan": self._serialize_llm_progress_plan(llm_progress),
                 "candidates": enriched,
                 "consensus_synthesis": consensus_payload,
                 "evidence": self._summarize_evidence(evidence),
@@ -977,6 +1002,8 @@ class SingleWordTranslationService:
         strategy: str,
         llm_enabled: bool,
         llm_context: str | None,
+        llm_progress: LLMRequestProgress | None = None,
+        progress_reporter: TranslationProgressReporter | None = None,
     ) -> list[dict[str, object]]:
         enriched: list[dict[str, object]] = []
         for idx, candidate in enumerate(candidates):
@@ -1017,6 +1044,11 @@ class SingleWordTranslationService:
                     "variants": evidence.variants_queried,
                     "use_remote": self.llm_use_remote,
                     "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+                    "llm_progress": llm_progress,
+                    "progress_reporter": progress_reporter,
+                    "candidate_rank": idx + 1,
+                    "progress_stage": "candidate",
+                    "progress_label": f"refining rank {idx + 1} best estimations...",
                 }
                 synthesis = self.llm_adapter(
                     morphs,
@@ -1056,6 +1088,8 @@ class SingleWordTranslationService:
         strategy: str,
         llm_use_remote: bool,
         llm_context: str | None,
+        llm_progress: LLMRequestProgress | None = None,
+        progress_reporter: TranslationProgressReporter | None = None,
     ) -> dict[str, object]:
         coverage_values: list[float] = []
         residual_values: list[float] = []
@@ -1079,9 +1113,44 @@ class SingleWordTranslationService:
             else 1.0,
             "use_remote": llm_use_remote,
             "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+            "llm_progress": llm_progress,
+            "progress_reporter": progress_reporter,
+            "progress_stage": "consensus",
+            "progress_label": "refining consensus best estimations...",
         }
         synthesis = synthesize_consensus(candidates, context)
         return synthesis.as_dict()
+
+    def _build_llm_progress_plan(
+        self,
+        *,
+        candidate_count: int,
+        include_consensus: bool,
+        include_validation_repairs: bool,
+    ) -> LLMRequestProgress | None:
+        primary_requests = candidate_count + (1 if include_consensus else 0)
+        if primary_requests <= 0:
+            return None
+        repair_budget = primary_requests if include_validation_repairs else 0
+        return LLMRequestProgress(
+            total_primary_requests=primary_requests,
+            validation_repair_budget=repair_budget,
+        )
+
+    @staticmethod
+    def _serialize_llm_progress_plan(
+        progress: LLMRequestProgress | None,
+    ) -> dict[str, int] | None:
+        if progress is None:
+            return None
+        return {
+            "planned_primary_requests": progress.total_primary_requests,
+            "possible_validation_repairs": progress.validation_repair_budget,
+            "possible_total_requests": (
+                progress.total_primary_requests + progress.validation_repair_budget
+            ),
+        }
+
 
     def _with_min_n(
         self,
