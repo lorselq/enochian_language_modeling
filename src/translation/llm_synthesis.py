@@ -12,6 +12,7 @@ callers resilient to LLM variability.
 """
 
 from dataclasses import dataclass, field
+from typing import Literal, Protocol
 import json
 import logging
 
@@ -24,6 +25,43 @@ DEFAULT_LLM_CONTEXT = (
     "mainstream Christian worldview John Dee would have known. Avoid modern "
     "terms, theology, or concepts."
 )
+
+
+class TranslationProgressReporter(Protocol):
+    def prepare(self, progress: "LLMRequestProgress") -> None: ...
+
+    def start_primary(self, *, phase: str, current: int, total: int) -> None: ...
+
+    def start_validation(
+        self,
+        *,
+        phase: str,
+        current: int,
+        total: int,
+        kind: Literal["retry", "repair"],
+    ) -> None: ...
+
+    def done(self) -> None: ...
+
+
+@dataclass(slots=True)
+class LLMRequestProgress:
+    """Track per-translation LLM request progress for compact status output."""
+
+    total_primary_requests: int
+    current_primary_request: int = 0
+    validation_repair_budget: int = 0
+
+    def begin_primary(self, label: str) -> str:
+        self.current_primary_request += 1
+        return f"LLM request {self.current_primary_request}/{self.total_primary_requests}: {label}"
+
+    def validation_retry(self, label: str, *, kind: Literal["retry", "repair"] = "retry") -> str:
+        prefix = "validation repair" if kind == "repair" else "validation retry"
+        current = min(self.current_primary_request, self.total_primary_requests)
+        return f"LLM {prefix} after {current}/{self.total_primary_requests}: {label}"
+
+
 
 @dataclass(slots=True)
 class SynthesisResult:
@@ -130,11 +168,22 @@ def synthesize_definition(
         name="Definition Synthesizer",
         description="Compose a concise morph-level synthesis",
         use_remote=use_remote,
+        progress_style="silent" if _get_progress_reporter(context) else "compact",
     )
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+            response = tool._run(
+                prompt=prompt,
+                print_chunks=False,
+                stream_callback=None,
+                progress_message=_primary_progress_message(
+                    context,
+                    attempt=attempt,
+                    phase="candidate",
+                    label=f"synthesizing rank {context.get('candidate_rank', '?')}...",
+                ),
+            )
             parsed = _parse_response(
                 response.get("response_text", ""), fallback=concatenated, context=context
             )
@@ -209,11 +258,22 @@ def synthesize_consensus(
         name="Consensus Synthesizer",
         description="Compose a consensus definition across candidates",
         use_remote=use_remote,
+        progress_style="silent" if _get_progress_reporter(context) else "compact",
     )
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+            response = tool._run(
+                prompt=prompt,
+                print_chunks=False,
+                stream_callback=None,
+                progress_message=_primary_progress_message(
+                    context,
+                    attempt=attempt,
+                    phase="consensus",
+                    label="building consensus...",
+                ),
+            )
             parsed = _parse_response(
                 response.get("response_text", ""), fallback="", context=context
             )
@@ -264,6 +324,78 @@ def synthesize_consensus(
     )
     LOGGER.error(message)
     raise ValueError(message)
+
+
+def _get_progress_reporter(
+    context: dict[str, object],
+) -> TranslationProgressReporter | None:
+    reporter = context.get("progress_reporter")
+    return reporter if reporter is not None else None
+
+
+def _get_progress_tracker(context: dict[str, object]) -> LLMRequestProgress | None:
+    tracker = context.get("llm_progress")
+    return tracker if isinstance(tracker, LLMRequestProgress) else None
+
+
+def _primary_progress_message(
+    context: dict[str, object],
+    *,
+    attempt: int,
+    phase: str,
+    label: str,
+) -> str:
+    progress = _get_progress_tracker(context)
+    reporter = _get_progress_reporter(context)
+    if progress is None:
+        if reporter is not None:
+            reporter.start_validation(phase=phase, current=0, total=0, kind="retry")
+            return ""
+        return label if attempt == 0 else f"LLM validation retry {attempt}/2: {label}"
+    if attempt == 0:
+        message = progress.begin_primary(label)
+        if reporter is not None:
+            reporter.start_primary(
+                phase=phase,
+                current=progress.current_primary_request,
+                total=progress.total_primary_requests,
+            )
+            return ""
+        return message
+    if reporter is not None:
+        reporter.start_validation(
+            phase=phase,
+            current=progress.current_primary_request,
+            total=progress.total_primary_requests,
+            kind="retry",
+        )
+        return ""
+    return progress.validation_retry(label)
+
+
+def _repair_progress_message(
+    context: dict[str, object],
+    *,
+    attempt: int,
+    phase: str,
+    label: str,
+) -> str:
+    progress = _get_progress_tracker(context)
+    reporter = _get_progress_reporter(context)
+    if progress is None:
+        if reporter is not None:
+            reporter.start_validation(phase=phase, current=0, total=0, kind="repair")
+            return ""
+        return f"LLM validation repair {attempt + 1}/2: {label}"
+    if reporter is not None:
+        reporter.start_validation(
+            phase=phase,
+            current=progress.current_primary_request,
+            total=progress.total_primary_requests,
+            kind="repair",
+        )
+        return ""
+    return progress.validation_retry(label, kind="repair")
 
 
 def _build_prompt(
@@ -557,8 +689,21 @@ def _request_best_estimations(
     raw_response: str,
 ) -> list[str]:
     prompt = _build_best_estimations_prompt(context, synthesized, raw_response)
-    for _ in range(2):
-        response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+    target_label = str(context.get("progress_label") or "refining best estimations...")
+    for attempt in range(2):
+        response = tool._run(
+            prompt=prompt,
+            print_chunks=False,
+            stream_callback=None,
+            progress_message=(
+                _repair_progress_message(
+                    context,
+                    attempt=attempt,
+                    phase=str(context.get("progress_stage") or "candidate"),
+                    label=target_label,
+                )
+            ),
+        )
         parsed = _parse_best_estimations_response(response.get("response_text", ""))
         if parsed:
             return parsed

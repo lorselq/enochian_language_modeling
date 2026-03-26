@@ -19,7 +19,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from enochian_lm.common.config import get_config_paths
 
-from .llm_synthesis import DEFAULT_LLM_CONTEXT
+from .llm_synthesis import DEFAULT_LLM_CONTEXT, LLMRequestProgress
 from .service import InterpretationService, SingleWordTranslationService
 
 INTERPRET_COMMAND = "interpret-text"
@@ -29,6 +29,64 @@ COMMAND_ALIASES = {
     INTERPRET_COMMAND: INTERPRET_COMMAND,
     TRANSLATE_WORD_COMMAND: TRANSLATE_WORD_COMMAND,
 }
+
+
+class TranslationCLIProgressRenderer:
+    """Render translation LLM status updates as plain CLI lines."""
+
+    def __init__(self, stream = None) -> None:
+        self.stream = stream or sys.stderr
+        self._is_tty = bool(getattr(self.stream, "isatty", lambda: False)())
+        self._active = False
+
+    def prepare(self, progress: LLMRequestProgress) -> None:
+        suffix = ""
+        if progress.total_primary_requests > 0:
+            suffix = f" ({progress.total_primary_requests} planned request"
+            suffix += "s" if progress.total_primary_requests != 1 else ""
+            suffix += ")"
+        self._write(f"Preparing LLM synthesis...{suffix}")
+
+    def start_primary(self, *, phase: str, current: int, total: int) -> None:
+        self._write(f"{self._phase_label(phase)} ({current}/{total})")
+
+    def start_validation(
+        self,
+        *,
+        phase: str,
+        current: int,
+        total: int,
+        kind: str,
+    ) -> None:
+        label = self._phase_label(phase)
+        if total > 0 and current > 0:
+            self._write(f"{label} ({current}/{total}, validation {kind})")
+        else:
+            self._write(f"{label} (validation {kind})")
+
+    def done(self) -> None:
+        self._write("Done.", final=True)
+
+    @staticmethod
+    def _phase_label(phase: str) -> str:
+        if phase == "consensus":
+            return "Building consensus..."
+        return "Synthesizing top candidates..."
+
+    def _write(self, message: str, *, final: bool = False) -> None:
+        if self._is_tty:
+            self.stream.write(f"\r\033[2K{message}")
+            if final:
+                self.stream.write("\n")
+                self._active = False
+            else:
+                self._active = True
+            self.stream.flush()
+            return
+
+        self.stream.write(message + "\n")
+        self.stream.flush()
+
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -356,6 +414,8 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
         else 5
     )
 
+    progress_renderer = TranslationCLIProgressRenderer() if llm_enabled else None
+
     try:
         with SingleWordTranslationService.from_config(
             variants=variants,
@@ -375,6 +435,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
                     allow_whole_word=bool(args.allow_whole_word),
+                    progress_reporter=progress_renderer,
                 )
                 outputs.append(
                     _build_output_payload(result, variant=variant, verbose=args.verbose)
