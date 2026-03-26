@@ -11,7 +11,7 @@ from yaspin import yaspin, Spinner
 from yaspin.spinners import Spinners
 from tenacity import retry, stop_after_attempt, wait_exponential, RetryCallState
 from collections.abc import Callable
-from typing import ClassVar
+from typing import ClassVar, Literal
 from openai import OpenAI
 from crewai.tools import BaseTool
 from pydantic import PrivateAttr
@@ -44,6 +44,7 @@ class QueryModelTool(BaseTool):
         "You are a research linguist specializing in rare, obscure, dead constructed-languages."
     )
     gloss_model: str = ""
+    progress_style: Literal["verbose", "compact", "silent"] = "verbose"
     # private attribute (not a field)
     _use_remote: bool = PrivateAttr(default=True)
     _db: sqlite3.Connection | None = PrivateAttr(default=None)
@@ -56,6 +57,7 @@ class QueryModelTool(BaseTool):
         name: str | None = None,
         description: str | None = None,
         use_remote: bool = True,
+        progress_style: Literal["verbose", "compact", "silent"] = "verbose",
     ):
         super().__init__(
             name=name or self.default_name,
@@ -64,15 +66,27 @@ class QueryModelTool(BaseTool):
         # now Pydantic knows system_prompt exists and is a string
         self.system_prompt = system_prompt
         self._use_remote = use_remote
+        self.progress_style = progress_style
+
+    @staticmethod
+    def _progress_style_from_retry_state(retry_state: RetryCallState) -> str:
+        tool = retry_state.args[0] if retry_state.args else None
+        if isinstance(tool, QueryModelTool):
+            return tool.progress_style
+        return "verbose"
 
     @staticmethod
     def _log_attempt(retry_state: RetryCallState):
+        if QueryModelTool._progress_style_from_retry_state(retry_state) != "verbose":
+            return
         n = retry_state.attempt_number
         plural = "" if n == 1 else " again"
         print(f"{GREEN}Attempting to connect to a remote LLM{plural}...{RESET}\n")
 
     @staticmethod
     def _log_retry_state(retry_state: RetryCallState):
+        if QueryModelTool._progress_style_from_retry_state(retry_state) == "silent":
+            return
         n = retry_state.attempt_number
         print(f"{PINK}Connection attempt failed! ({n + 1}/5 attempts made){RESET}\n")
 
@@ -183,6 +197,7 @@ class QueryModelTool(BaseTool):
         stream_callback: Callable[[str, str], None] | None = None,
         print_chunks: bool = False,
         role_name: str | None = None,
+        progress_message: str | None = None,
     ) -> dict[str, str]:
         return self._llm_call(
             api_base_env="REMOTE_OPENAI_API_BASE",
@@ -192,6 +207,7 @@ class QueryModelTool(BaseTool):
             stream_callback=stream_callback,
             print_chunks=print_chunks,
             role_name=role_name,
+            progress_message=progress_message,
         )
     
     def attach_logging(
@@ -225,6 +241,22 @@ class QueryModelTool(BaseTool):
         if self._debug_enabled():
             print(f"{YELLOW}[LLM DEBUG]{RESET} {msg}")
 
+    def _print_progress(self, message: str, *, style: str | None = None) -> None:
+        mode = style or self.progress_style
+        if mode == "silent" or not message:
+            return
+        print(message)
+
+    def _print_connection_retry(self, exc: Exception) -> None:
+        if self.progress_style == "silent":
+            return
+        print(f"⚠️ {YELLOW}Remote call failure: {type(exc).__name__}: {exc}{RESET}")
+
+    def _print_fallback_notice(self) -> None:
+        if self.progress_style == "silent":
+            return
+        print(f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}")
+
     @staticmethod
     def _extract_chunk_text(chunk) -> str:
         """Extract visible text from streaming chunks across API variants."""
@@ -257,6 +289,7 @@ class QueryModelTool(BaseTool):
         stream_callback: Callable[[str, str], None] | None = None,
         print_chunks: bool = False,
         role_name: str | None = None,
+        progress_message: str | None = None,
     ) -> dict[str, str]:
         base_url = os.getenv(api_base_env, "[ERROR] could not get base URL!")
         api_key  = os.getenv(api_key_env, "[ERROR] could not get API key!")
@@ -299,7 +332,10 @@ class QueryModelTool(BaseTool):
                     llm_job_finish(self._db, job_id, response_text=cached["response_text"], status="cached")
                 except Exception:
                     pass  # don’t let logging failures break the call
-                print(f"{YELLOW}↺ Using cached LLM response for {role}.{RESET}")
+                if self.progress_style == "verbose":
+                    print(f"{YELLOW}↺ Using cached LLM response for {role}.{RESET}")
+                elif self.progress_style == "compact" and progress_message:
+                    self._print_progress(f"{progress_message} (cached)", style="compact")
                 self._debug(f"cache hit for role={role!r}; chars={len(cached.get('response_text',''))}")
                 return cached
 
@@ -313,6 +349,9 @@ class QueryModelTool(BaseTool):
                 )
             except Exception:
                 job_id = None  # proceed without logging
+
+        if self.progress_style == "compact" and progress_message:
+            self._print_progress(progress_message, style="compact")
 
         response_text = ""
         role = role_name or self.name
@@ -336,14 +375,52 @@ class QueryModelTool(BaseTool):
             self._debug(f"stream create failed for role={role!r}: {type(exc).__name__}: {exc}")
             raise
 
-        print(
-            f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next, you might ask? We wait...\n"
-        )
+        if self.progress_style == "verbose":
+            print(
+                f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next, you might ask? We wait...\n"
+            )
 
         response_text = ""
 
-        # 4) Spinner until the first real chunk arrives
-        with self._get_random_spinner() as sp:
+        # 4) Wait for the first real chunk. Verbose mode shows the playful spinner;
+        # compact/silent modes stay quiet apart from an optional single progress line.
+        if self.progress_style == "verbose":
+            with self._get_random_spinner() as sp:
+                while True:
+                    try:
+                        chunk = next(completion)
+                    except StopIteration:
+                        # no data at all
+                        break
+
+                    content = self._extract_chunk_text(chunk)
+                    if not content:
+                        continue
+
+                    # first real token → clear spinner and print header
+                    sp.hide()
+                    sys.stdout.write("\r\033[2K")  # Erase line
+                    sys.stdout.write(RESET)  # Reset styling
+                    sys.stdout.flush()
+                    print(
+                        f"{GREEN}Waiting complete! 😊 Let's see what they have to say!{RESET}\n"
+                    )
+                    if role_name:
+                        role_label = f">>>{role_name}"
+                        if role_name != "TLDR":
+                            role_label += " speaking"
+                        print(f"{WHITE}{role_label}:{RESET}")
+
+                    # emit that first bit
+                    response_text += content
+                    self._emit(
+                        print_chunks,
+                        stream_callback,
+                        role_name or self.name,
+                        f"{GRAY}{content}{RESET}",
+                    )
+                    break
+        else:
             while True:
                 try:
                     chunk = next(completion)
@@ -355,21 +432,6 @@ class QueryModelTool(BaseTool):
                 if not content:
                     continue
 
-                # first real token → clear spinner and print header
-                sp.hide()
-                sys.stdout.write("\r\033[2K")  # Erase line
-                sys.stdout.write(RESET)  # Reset styling
-                sys.stdout.flush()
-                print(
-                    f"{GREEN}Waiting complete! 😊 Let's see what they have to say!{RESET}\n"
-                )
-                if role_name:
-                    role_label = f">>>{role_name}"
-                    if role_name != "TLDR":
-                        role_label += " speaking"
-                    print(f"{WHITE}{role_label}:{RESET}")
-
-                # emit that first bit
                 response_text += content
                 self._emit(
                     print_chunks,
@@ -433,6 +495,7 @@ class QueryModelTool(BaseTool):
         stream_callback: Callable[[str, str], None] | None = None,
         print_chunks: bool = False,
         role_name: str | None = None,
+        progress_message: str | None = None,
     ) -> dict[str, str]:
         if self._use_remote:
             try:
@@ -441,19 +504,18 @@ class QueryModelTool(BaseTool):
                     stream_callback=stream_callback,
                     print_chunks=print_chunks,
                     role_name=role_name,
+                    progress_message=progress_message,
                 )
             except Exception as exc:
                 logger.exception("Remote LLM call failed; attempting local fallback.")
-                print(f"⚠️ {YELLOW}Remote call failure: {type(exc).__name__}: {exc}{RESET}")
+                self._print_connection_retry(exc)
                 # exit if out of OpenRouter calls
                 # print(
                 #     f"⚠️ [{time.ctime()}] Clearly we're out of LLM calls for the day. Stopping for now. Goodbye for now. 🫡"
                 # )
                 # sys.exit()
                 # fallback to local
-                print(
-                    f"⚠️ {YELLOW}Falling back to utilizing a local LLM instead...\n{RESET}"
-                )
+                self._print_fallback_notice()
                 return self._llm_call(
                     api_base_env="LOCAL_OPENAI_API_BASE",
                     api_key_env="LOCAL_OPENAI_API_KEY",
@@ -462,6 +524,7 @@ class QueryModelTool(BaseTool):
                     stream_callback=stream_callback,
                     print_chunks=print_chunks,
                     role_name=role_name,
+                    progress_message=progress_message,
                 )
         else:
             return self._llm_call(
@@ -472,6 +535,7 @@ class QueryModelTool(BaseTool):
                 stream_callback=stream_callback,
                 print_chunks=print_chunks,
                 role_name=role_name,
+                progress_message=progress_message,
             )
 
     async def _arun(
@@ -480,6 +544,7 @@ class QueryModelTool(BaseTool):
         stream_callback: Callable[[str, str], None] | None = None,
         print_chunks: bool = False,
         role_name: str | None = None,
+        progress_message: str | None = None,
     ) -> dict[str, str]:
         """
         Async entrypoint. Delegate straight to the sync _run.
@@ -489,4 +554,5 @@ class QueryModelTool(BaseTool):
             stream_callback=stream_callback,
             print_chunks=print_chunks,
             role_name=role_name,
+            progress_message=progress_message,
         )
