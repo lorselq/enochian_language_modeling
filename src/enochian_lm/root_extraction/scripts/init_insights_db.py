@@ -337,6 +337,16 @@ CREATE TABLE IF NOT EXISTS roots_via_subtraction (
   residual_definition      TEXT,
   confidence               REAL,
   manual_notes             TEXT,
+  model                    TEXT,
+  proposal                 TEXT,
+  critique                 TEXT,
+  defense                  TEXT,
+  adjudicator_rounds       TEXT,
+  skeptic_rounds           TEXT,
+  linguist_rounds          TEXT,
+  glossator_prompt         TEXT,
+  glossator_def            TEXT,
+  verdict                  TEXT,
   updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -439,6 +449,10 @@ CREATE INDEX IF NOT EXISTS idx_residual_details_cluster ON residual_details(clus
 CREATE INDEX IF NOT EXISTS idx_citations_def        ON citations(def_id);
 CREATE INDEX IF NOT EXISTS idx_skips_run_ngram      ON skips(run_id, ngram);
 CREATE INDEX IF NOT EXISTS idx_llm_job_run          ON llm_job(run_id);
+CREATE INDEX IF NOT EXISTS idx_rvs_target_residual  ON roots_via_subtraction(target_residual);
+CREATE INDEX IF NOT EXISTS idx_rvs_host_word        ON roots_via_subtraction(host_word);
+CREATE INDEX IF NOT EXISTS idx_rvs_host_cluster_id  ON roots_via_subtraction(host_cluster_id);
+CREATE INDEX IF NOT EXISTS idx_rvs_verdict          ON roots_via_subtraction(verdict);
 
 -- Convenience view of rows that have a non-empty definition (regardless of verdict)
 CREATE VIEW IF NOT EXISTS accepted_clusters AS
@@ -846,19 +860,255 @@ LEFT JOIN evidence_counts AS evidence
 """
 
 _ROOTS_VIA_SUBTRACTION_VIEW = """
-CREATE VIEW IF NOT EXISTS roots_via_subtraction_accepted_roots AS
+DROP VIEW IF EXISTS roots_via_subtraction_accepted_roots;
+DROP VIEW IF EXISTS roots_via_subtraction_processed;
+DROP VIEW IF EXISTS roots_via_subtraction_glosses;
+DROP VIEW IF EXISTS roots_via_subtraction_evidence_examples;
+
+CREATE VIEW roots_via_subtraction_processed AS
 SELECT
-  r.host_word,
-  r.host_definition,
-  r.host_source,
-  r.host_cluster_id,
+  host_word,
+  host_definition,
+  host_source,
+  host_cluster_id,
+  target_residual,
+  known_roots,
+  known_root_cluster_ids,
+  residual_definition,
+  confidence,
+  manual_notes,
+  model,
+  proposal,
+  critique,
+  defense,
+  adjudicator_rounds,
+  skeptic_rounds,
+  linguist_rounds,
+  glossator_prompt,
+  glossator_def,
+  verdict AS stored_verdict,
+  LOWER(TRIM(COALESCE(
+    json_extract(glossator_def, '$.EVALUATION'),
+    json_extract(glossator_def, '$.evaluation'),
+    json_extract(glossator_def, '$.VERDICT'),
+    json_extract(glossator_def, '$.verdict'),
+    verdict,
+    ''
+  ))) AS verdict,
+  updated_at
+FROM roots_via_subtraction
+WHERE TRIM(COALESCE(glossator_def, '')) <> ''
+  AND json_valid(glossator_def) = 1;
+
+CREATE VIEW roots_via_subtraction_glosses AS
+SELECT
+  LOWER(TRIM(COALESCE(
+    json_extract(glossator_def, '$.ROOT'),
+    json_extract(glossator_def, '$.root'),
+    target_residual
+  ))) AS root,
+  target_residual,
+  host_word,
+  host_definition,
+  host_source,
+  host_cluster_id,
+  LOWER(TRIM(COALESCE(
+    json_extract(glossator_def, '$.EVALUATION'),
+    json_extract(glossator_def, '$.evaluation'),
+    json_extract(glossator_def, '$.VERDICT'),
+    json_extract(glossator_def, '$.verdict'),
+    verdict,
+    ''
+  ))) AS evaluation,
+  COALESCE(
+    json_extract(glossator_def, '$.DEFINITION'),
+    json_extract(glossator_def, '$.definition'),
+    residual_definition
+  ) AS definition,
+  COALESCE(
+    json_extract(glossator_def, '$.REASON'),
+    json_extract(glossator_def, '$.reason')
+  ) AS reason,
+  COALESCE(
+    json_extract(glossator_def, '$.DECODING_GUIDE'),
+    json_extract(glossator_def, '$.decoding_guide')
+  ) AS decoding_guide,
+  COALESCE(
+    json_extract(glossator_def, '$.SEMANTIC_CORE'),
+    json_extract(glossator_def, '$.semantic_core')
+  ) AS semantic_core,
+  COALESCE(
+    json_extract(glossator_def, '$.NEGATIVE_CONTRAST'),
+    json_extract(glossator_def, '$.negative_contrast')
+  ) AS negative_contrast,
+  COALESCE(
+    json_extract(glossator_def, '$.EXAMPLE'),
+    json_extract(glossator_def, '$.example')
+  ) AS examples_json,
+  COALESCE(
+    json_extract(glossator_def, '$.CONTRIBUTION'),
+    json_extract(glossator_def, '$.contribution')
+  ) AS contribution_json,
+  COALESCE(
+    json_extract(glossator_def, '$.POS_BIAS.nounness'),
+    json_extract(glossator_def, '$.pos_bias.nounness'),
+    json_extract(glossator_def, '$.POS_BIAS.NOUNNESS'),
+    json_extract(glossator_def, '$.pos_bias.NOUNNESS')
+  ) AS pos_bias_nounness,
+  COALESCE(
+    json_extract(glossator_def, '$.POS_BIAS.modifier'),
+    json_extract(glossator_def, '$.pos_bias.modifier'),
+    json_extract(glossator_def, '$.POS_BIAS.MODIFIER'),
+    json_extract(glossator_def, '$.pos_bias.MODIFIER')
+  ) AS pos_bias_modifier,
+  COALESCE(
+    json_extract(glossator_def, '$.POS_BIAS.verbness'),
+    json_extract(glossator_def, '$.pos_bias.verbness'),
+    json_extract(glossator_def, '$.POS_BIAS.VERBNESS'),
+    json_extract(glossator_def, '$.pos_bias.VERBNESS')
+  ) AS pos_bias_verbness,
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.prefix.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.PREFIX.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.PREFIX_LIKELIHOOD')
+  ) AS attachment_prefix_likelihood,
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.suffix.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.SUFFIX.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.SUFFIX_LIKELIHOOD')
+  ) AS attachment_suffix_likelihood,
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.free.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.FREE.prob'),
+    json_extract(glossator_def, '$.ATTACHMENT.FREE_LIKELIHOOD')
+  ) AS attachment_free_likelihood,
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.productivity'),
+    json_extract(glossator_def, '$.ATTACHMENT.PRODUCTIVITY')
+  ) AS attachment_productivity,
+  COALESCE(
+    json_extract(glossator_def, '$.ATTACHMENT.exceptions'),
+    json_extract(glossator_def, '$.ATTACHMENT.EXCEPTIONS')
+  ) AS attachment_exceptions,
+  COALESCE(
+    json_extract(glossator_def, '$.CONFIDENCE.score'),
+    json_extract(glossator_def, '$.CONFIDENCE.SCORE'),
+    confidence
+  ) AS confidence_score,
+  COALESCE(
+    json_extract(glossator_def, '$.CONFIDENCE.drivers'),
+    json_extract(glossator_def, '$.CONFIDENCE.DRIVERS')
+  ) AS confidence_drivers,
+  COALESCE(
+    json_extract(glossator_def, '$.CONFIDENCE.risks'),
+    json_extract(glossator_def, '$.CONFIDENCE.RISKS')
+  ) AS confidence_risks,
+  glossator_def AS raw_glossator_json,
+  updated_at
+FROM roots_via_subtraction
+WHERE TRIM(COALESCE(glossator_def, '')) <> ''
+  AND json_valid(glossator_def) = 1
+  AND LOWER(TRIM(COALESCE(
+    json_extract(glossator_def, '$.EVALUATION'),
+    json_extract(glossator_def, '$.evaluation'),
+    json_extract(glossator_def, '$.VERDICT'),
+    json_extract(glossator_def, '$.verdict'),
+    verdict,
+    ''
+  ))) = 'accepted';
+
+CREATE VIEW roots_via_subtraction_evidence_examples AS
+SELECT
+  LOWER(TRIM(COALESCE(
+    json_extract(r.glossator_def, '$.ROOT'),
+    json_extract(r.glossator_def, '$.root'),
+    r.target_residual
+  ))) AS root,
   r.target_residual,
-  r.known_roots,
-  r.known_root_cluster_ids,
-  r.residual_definition,
-  r.confidence,
-  r.manual_notes,
-  r.updated_at,
+  r.host_word,
+  r.host_cluster_id,
+  json_extract(evidence.value, '$.word') AS evidence_word,
+  json_extract(evidence.value, '$.sense') AS evidence_definition,
+  json_extract(evidence.value, '$.loc') AS evidence_loc,
+  json_extract(evidence.value, '$.note.role') AS role,
+  json_extract(evidence.value, '$.note.effect') AS effect,
+  json_extract(evidence.value, '$.note.sense_alignment') AS sense_alignment,
+  json_extract(evidence.value, '$.note.confidence') AS confidence,
+  json_extract(evidence.value, '$.note.note') AS note,
+  evidence.value AS raw_evidence_json,
+  r.updated_at
+FROM roots_via_subtraction r
+JOIN json_each(r.glossator_def, '$.EVIDENCE') AS evidence
+WHERE TRIM(COALESCE(r.glossator_def, '')) <> ''
+  AND json_valid(r.glossator_def) = 1
+  AND LOWER(TRIM(COALESCE(
+    json_extract(r.glossator_def, '$.EVALUATION'),
+    json_extract(r.glossator_def, '$.evaluation'),
+    json_extract(r.glossator_def, '$.VERDICT'),
+    json_extract(r.glossator_def, '$.verdict'),
+    r.verdict,
+    ''
+  ))) = 'accepted';
+
+CREATE VIEW roots_via_subtraction_accepted_roots AS
+WITH subtraction_rows AS (
+  SELECT
+    r.*,
+    LOWER(TRIM(COALESCE(
+      json_extract(r.glossator_def, '$.EVALUATION'),
+      json_extract(r.glossator_def, '$.evaluation'),
+      json_extract(r.glossator_def, '$.VERDICT'),
+      json_extract(r.glossator_def, '$.verdict'),
+      r.verdict,
+      ''
+    ))) AS subtraction_verdict,
+    COALESCE(
+      json_extract(r.glossator_def, '$.DEFINITION'),
+      json_extract(r.glossator_def, '$.definition'),
+      r.residual_definition
+    ) AS subtraction_definition,
+    COALESCE(
+      json_extract(r.glossator_def, '$.REASON'),
+      json_extract(r.glossator_def, '$.reason')
+    ) AS subtraction_reason,
+    COALESCE(
+      json_extract(r.glossator_def, '$.SEMANTIC_CORE'),
+      json_extract(r.glossator_def, '$.semantic_core')
+    ) AS subtraction_semantic_core,
+    COALESCE(
+      json_extract(r.glossator_def, '$.CONFIDENCE.score'),
+      json_extract(r.glossator_def, '$.CONFIDENCE.SCORE'),
+      r.confidence
+    ) AS subtraction_confidence
+  FROM roots_via_subtraction r
+)
+SELECT
+  s.host_word,
+  s.host_definition,
+  s.host_source,
+  s.host_cluster_id,
+  s.target_residual,
+  s.known_roots,
+  s.known_root_cluster_ids,
+  s.residual_definition,
+  s.confidence,
+  s.manual_notes,
+  s.model,
+  s.proposal,
+  s.critique,
+  s.defense,
+  s.adjudicator_rounds,
+  s.skeptic_rounds,
+  s.linguist_rounds,
+  s.glossator_prompt,
+  s.glossator_def,
+  s.verdict AS stored_verdict,
+  s.subtraction_verdict,
+  s.subtraction_definition,
+  s.subtraction_reason,
+  s.subtraction_semantic_core,
+  s.subtraction_confidence,
+  s.updated_at,
   cluster_ids.value AS known_root_cluster_id,
   roots_json.value AS known_root,
   glosses.definition AS known_root_definition,
@@ -867,12 +1117,13 @@ SELECT
   glosses.decoding_guide AS known_root_decoding_guide,
   glosses.confidence_score AS known_root_confidence,
   glosses.source_cluster_id AS source_cluster_id
-FROM roots_via_subtraction AS r
-JOIN json_each(r.known_root_cluster_ids) AS cluster_ids
-JOIN json_each(r.known_roots) AS roots_json
+FROM subtraction_rows s
+JOIN json_each(s.known_root_cluster_ids) AS cluster_ids
+JOIN json_each(s.known_roots) AS roots_json
   ON roots_json.key = cluster_ids.key
 LEFT JOIN root_glosses AS glosses
-  ON glosses.source_cluster_id = cluster_ids.value;
+  ON glosses.source_cluster_id = cluster_ids.value
+WHERE s.subtraction_verdict = 'accepted';
 """
 
 _CLUSTER_MEMBERS_VIEW = """
@@ -928,6 +1179,126 @@ def _infer_variant_from_path(path: str | PathLike[str]) -> str:
     return "solo" if "solo" in path_l else "debate"
 
 
+def _migrate_roots_via_subtraction_schema(conn: sqlite3.Connection) -> None:
+    if not _table_or_view_exists(conn, "roots_via_subtraction"):
+        return
+
+    cols = _columns(conn, "roots_via_subtraction")
+    required_columns = {
+        "model",
+        "proposal",
+        "critique",
+        "defense",
+        "adjudicator_rounds",
+        "skeptic_rounds",
+        "linguist_rounds",
+        "glossator_prompt",
+        "glossator_def",
+        "verdict",
+    }
+    if required_columns.issubset(set(cols.keys())):
+        return
+
+    conn.executescript(
+        """
+        PRAGMA foreign_keys = OFF;
+        BEGIN;
+
+        DROP VIEW IF EXISTS roots_via_subtraction_accepted_roots;
+        DROP VIEW IF EXISTS roots_via_subtraction_processed;
+        DROP VIEW IF EXISTS roots_via_subtraction_glosses;
+        DROP VIEW IF EXISTS roots_via_subtraction_evidence_examples;
+
+        ALTER TABLE roots_via_subtraction RENAME TO roots_via_subtraction__old;
+
+        CREATE TABLE roots_via_subtraction (
+          host_word                TEXT NOT NULL,
+          host_definition          TEXT,
+          host_source              TEXT,
+          host_cluster_id          INTEGER REFERENCES clusters(cluster_id) ON DELETE SET NULL,
+          target_residual          TEXT NOT NULL,
+          known_roots              TEXT,
+          known_root_cluster_ids   TEXT,
+          residual_definition      TEXT,
+          confidence               REAL,
+          manual_notes             TEXT,
+          model                    TEXT,
+          proposal                 TEXT,
+          critique                 TEXT,
+          defense                  TEXT,
+          adjudicator_rounds       TEXT,
+          skeptic_rounds           TEXT,
+          linguist_rounds          TEXT,
+          glossator_prompt         TEXT,
+          glossator_def            TEXT,
+          verdict                  TEXT,
+          updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        );
+
+        INSERT INTO roots_via_subtraction (
+          host_word,
+          host_definition,
+          host_source,
+          host_cluster_id,
+          target_residual,
+          known_roots,
+          known_root_cluster_ids,
+          residual_definition,
+          confidence,
+          manual_notes,
+          model,
+          proposal,
+          critique,
+          defense,
+          adjudicator_rounds,
+          skeptic_rounds,
+          linguist_rounds,
+          glossator_prompt,
+          glossator_def,
+          verdict,
+          updated_at
+        )
+        SELECT
+          host_word,
+          host_definition,
+          host_source,
+          host_cluster_id,
+          target_residual,
+          known_roots,
+          known_root_cluster_ids,
+          residual_definition,
+          confidence,
+          manual_notes,
+          NULL AS model,
+          NULL AS proposal,
+          NULL AS critique,
+          NULL AS defense,
+          NULL AS adjudicator_rounds,
+          NULL AS skeptic_rounds,
+          NULL AS linguist_rounds,
+          NULL AS glossator_prompt,
+          NULL AS glossator_def,
+          NULL AS verdict,
+          updated_at
+        FROM roots_via_subtraction__old;
+
+        DROP TABLE roots_via_subtraction__old;
+
+        CREATE INDEX IF NOT EXISTS idx_rvs_target_residual
+          ON roots_via_subtraction(target_residual);
+        CREATE INDEX IF NOT EXISTS idx_rvs_host_word
+          ON roots_via_subtraction(host_word);
+        CREATE INDEX IF NOT EXISTS idx_rvs_host_cluster_id
+          ON roots_via_subtraction(host_cluster_id);
+        CREATE INDEX IF NOT EXISTS idx_rvs_verdict
+          ON roots_via_subtraction(verdict);
+
+        COMMIT;
+        PRAGMA foreign_keys = ON;
+        """
+    )
+
+
 def init_db(path: str | PathLike[str]) -> None:
     """Initialize (or migrate) a database at `path`."""
     variant = _infer_variant_from_path(path)
@@ -943,6 +1314,7 @@ def init_db(path: str | PathLike[str]) -> None:
                 CLUSTERS_SOLO if variant == "solo" else CLUSTERS_DEBATE,
             )
             conn.executescript(schema)
+            _migrate_roots_via_subtraction_schema(conn)
 
             # Rebuild the processed VIEW to ensure the latest filter logic
             if _table_or_view_exists(conn, "clusters_processed"):
@@ -958,6 +1330,14 @@ def init_db(path: str | PathLike[str]) -> None:
             if _table_or_view_exists(conn, "roots_via_subtraction_accepted_roots"):
                 conn.execute(
                     "DROP VIEW IF EXISTS roots_via_subtraction_accepted_roots;"
+                )
+            if _table_or_view_exists(conn, "roots_via_subtraction_processed"):
+                conn.execute("DROP VIEW IF EXISTS roots_via_subtraction_processed;")
+            if _table_or_view_exists(conn, "roots_via_subtraction_glosses"):
+                conn.execute("DROP VIEW IF EXISTS roots_via_subtraction_glosses;")
+            if _table_or_view_exists(conn, "roots_via_subtraction_evidence_examples"):
+                conn.execute(
+                    "DROP VIEW IF EXISTS roots_via_subtraction_evidence_examples;"
                 )
 
             # Ensure newly introduced columns exist for older databases
