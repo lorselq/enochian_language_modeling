@@ -72,7 +72,6 @@ from enochian_lm.root_extraction.pipeline.run_residual_semantic_extraction impor
 from enochian_lm.root_extraction.utils.residual_analysis import (  # noqa: E402
     build_residual_guidance_payload,
     build_subtraction_evidence,
-    compute_word_break_subtractions,
 )
 
 
@@ -111,28 +110,29 @@ def _build_cluster(root: str, hosts: list[str]) -> list[dict[str, object]]:
     return entries
 
 
-def _expected_host_subtractions(hosts: list[str], root: str) -> list[dict[str, object]]:
-    """Mirror the host-level subtraction rows produced by evaluate_ngram."""
+def _build_host_subtraction(
+    host_word: str,
+    donor_root: str,
+    residual: str,
+    *,
+    termination_reason: str = "resolved",
+    host_definition: str = "",
+    host_source: str = "",
+) -> dict[str, object]:
+    """Build one corrected HOST - DONOR = TARGET/INTERMEDIATE trace row."""
 
-    rows: list[dict[str, object]] = []
-    for host in hosts:
-        for subtraction in compute_word_break_subtractions(host, root.lower()):
-            residual = str(subtraction.get("residual", "")).strip().lower()
-            if not residual or residual == root.lower():
-                continue
-            payload = dict(subtraction)
-            payload.setdefault("host_word", host)
-            payload.setdefault("root", root.lower())
-            payload["residual"] = residual
-            rows.append(
-                build_subtraction_evidence(
-                    payload,
-                    donor_source="host_subtraction",
-                    recursion_depth=0,
-                    termination_reason="root_subtracted_from_host",
-                )
-            )
-    return rows
+    return build_subtraction_evidence(
+        {
+            "host_word": host_word,
+            "root": donor_root,
+            "residual": residual,
+            "host_definition": host_definition,
+            "host_source": host_source,
+        },
+        donor_source="host_subtraction",
+        recursion_depth=0,
+        termination_reason=termination_reason,
+    )
 
 
 @pytest.mark.parametrize("style", ["solo", "debate"])
@@ -171,22 +171,87 @@ def test_pipeline_sends_full_residual_guidance_contract_to_engine(
 
     crew._load_accepted_glosses = _load_accepted_glosses
 
+    host_metadata = {
+        host.lower(): {"host_definition": f"host-{idx}", "host_source": "semantic"}
+        for idx, host in enumerate(hosts)
+    }
+
+    host_rows = {
+        "nazpsad": _build_host_subtraction("NAZPSAD", "PSAD", "NAZ", **host_metadata["nazpsad"]),
+        "nazmical": _build_host_subtraction("NAZMICAL", "MICAL", "NAZ", **host_metadata["nazmical"]),
+        "nazod": _build_host_subtraction("NAZOD", "OD", "NAZ", **host_metadata["nazod"]),
+        "nazabrax": _build_host_subtraction("NAZABRAX", "ABRAX", "NAZ", **host_metadata["nazabrax"]),
+        "naztor": _build_host_subtraction("NAZTOR", "TOR", "NAZ", **host_metadata["naztor"]),
+        "alnazps": _build_host_subtraction(
+            "ALNAZPS",
+            "AL",
+            "NAZPS",
+            termination_reason="residual_extracted",
+            **host_metadata["alnazps"],
+        ),
+        "tornazim": _build_host_subtraction(
+            "TORNAZIM",
+            "IM",
+            "TORNAZ",
+            termination_reason="residual_extracted",
+            **host_metadata["tornazim"],
+        ),
+        "anaznaz": _build_host_subtraction(
+            "ANAZNAZ",
+            "A",
+            "NAZNAZ",
+            termination_reason="residual_extracted",
+            **host_metadata["anaznaz"],
+        ),
+        "qenazp": _build_host_subtraction(
+            "QENAZP",
+            "QE",
+            "NAZP",
+            termination_reason="residual_extracted",
+            **host_metadata["qenazp"],
+        ),
+        "palnazor": _build_host_subtraction(
+            "PALNAZOR",
+            "PAL",
+            "NAZOR",
+            termination_reason="residual_extracted",
+            **host_metadata["palnazor"],
+        ),
+    }
+
+    def _fake_resolve_donor_hierarchy(
+        *,
+        host_word: str,
+        token: str,
+        target_residual: str,
+        depth: int,
+        visited: set[tuple[str, str, str, str, str]],
+        donor_glosses: dict[str, list[str]],
+        traces: list[dict[str, object]],
+    ) -> None:
+        del token, target_residual, depth, visited, donor_glosses
+        row = host_rows.get(str(host_word or "").strip().lower())
+        if row:
+            traces.append(dict(row))
+
+    crew._resolve_donor_hierarchy = _fake_resolve_donor_hierarchy
+
     donor_traces = [
         {
-            "host_word": "NAZPSAD",
-            "root": "PSAD",
-            "residual": "",
-            "equation": "NAZPSAD - PSAD = ",
+            "host_word": "ALNAZPS",
+            "root": "AL",
+            "residual": "NAZPS",
+            "equation": "ALNAZPS - AL = NAZPS",
             "remaining_artifacts": [],
             "donor_source": "dictionary",
             "recursion_depth": 1,
-            "termination_reason": "resolved",
+            "termination_reason": "residual_extracted",
         },
         {
-            "host_word": "ANAZNAZ",
-            "root": "A",
-            "residual": "",
-            "equation": "ANAZNAZ - A = ",
+            "host_word": "NAZPS",
+            "root": "PS",
+            "residual": "NAZ",
+            "equation": "NAZPS - PS = NAZ",
             "remaining_artifacts": [],
             "donor_source": "sqlite",
             "recursion_depth": 2,
@@ -231,7 +296,7 @@ def test_pipeline_sends_full_residual_guidance_contract_to_engine(
         style=style,
     )
 
-    expected_word_breaks = _expected_host_subtractions(hosts=hosts, root=root)
+    expected_word_breaks = list(host_rows.values())
     merged_word_breaks = expected_word_breaks + donor_traces
     expected_guidance = {"summary_lines": ["stub analytics"]}
     expected_guidance.update(
@@ -349,15 +414,14 @@ def test_stats_summary_prioritizes_direct_host_remainder_dictionary_anchor(monke
 
     stats_summary = str(captured.get("stats_summary", ""))
     assert "Prioritized donor dictionary anchors:" in stats_summary
-    assert "- NAZ (⭐ key donor; direct subtraction from NAZPSAD via NAZPSAD - PSAD = NAZ):" in stats_summary
-    assert "- NAZ (key donor; hypothetical via prior analysis):" in stats_summary
-    assert "decoding_guide=^NAZ-" in stats_summary
-    assert "semantic_core=['linear-edged geometry']" in stats_summary
-    assert "- NA (⭐ key donor): (the Enochian word for the letter 'H')" in stats_summary
-    assert "- AZ (⭐ key donor): they" in stats_summary
-    assert "\n- NA (bonus; hypothetical via prior analysis):" not in stats_summary
-    assert "\n- A (bonus; hypothetical via prior analysis):" not in stats_summary
-    assert "\n- Z (bonus; hypothetical via prior analysis):" not in stats_summary
+    assert "- NAZ (⭐ key donor; direct subtraction from NAZPSAD via NAZPSAD - NAZ = PSAD):" in stats_summary
+    assert "- AZ (⭐ key donor; direct subtraction from NAZPSAD via NAZPSAD - AZ = NPSAD): they" in stats_summary
+    assert (
+        "- NA (⭐ key donor; direct subtraction from NAZPSAD via NAZPSAD - NA = ZPSAD): "
+        "(the Enochian word for the letter 'H')"
+    ) in stats_summary
+    assert "\n- A (⭐ key donor;" not in stats_summary
+    assert "\n- Z (⭐ key donor;" not in stats_summary
 
 
 def test_stats_summary_keeps_nonadjacent_host_remainder_artifacts_separate(
@@ -444,6 +508,6 @@ def test_stats_summary_keeps_nonadjacent_host_remainder_artifacts_separate(
     )
 
     stats_summary = str(captured.get("stats_summary", ""))
-    assert "- O (⭐ key donor; direct subtraction from OLCORDZIZ via OLCORDZIZ - LCORDZI = OZ [artifact: O]): five" in stats_summary
-    assert "- Z (⭐ key donor; direct subtraction from OLCORDZIZ via OLCORDZIZ - LCORDZI = OZ [artifact: Z]): they" in stats_summary
-    assert "- OZ (⭐ key donor; direct subtraction from OLCORDZIZ via OLCORDZIZ - LCORDZI = OZ):" not in stats_summary
+    assert "- O (⭐ key donor; direct subtraction from OLCORDZIZ via OLCORDZIZ - O = LCORDZIZ): five" in stats_summary
+    assert "- Z (⭐ key donor; direct subtraction from OLCORDZIZ via OLCORDZIZ - Z = OLCORDZI): they" in stats_summary
+    assert "- OZ (⭐ key donor; direct subtraction from OLCORDZIZ" not in stats_summary

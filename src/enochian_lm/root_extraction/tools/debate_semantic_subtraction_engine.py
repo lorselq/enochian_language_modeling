@@ -247,7 +247,10 @@ def _format_subtraction_guidance_compact(
             continue
         seen.add(triple)
 
-        suffix = " (remove-all option)" if row.get("remove_all") else ""
+        is_remove_all = bool(row.get("remove_all")) or str(
+            row.get("selected_variant", "")
+        ).strip().lower() == "remove_all_occurrences"
+        suffix = " (remove-all option)" if is_remove_all else ""
         equations.append(f"- {host} - {donor_root} = {residual}{suffix}")
         if len(equations) >= max_equations:
             break

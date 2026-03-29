@@ -38,6 +38,7 @@ from enochian_lm.root_extraction.utils.residual_analysis import (
     canonicalize_subtraction_text,
     compute_word_break_subtractions,
     dedupe_residual_word_breaks,
+    expand_subtraction_variants,
     exclude_root_segments,
     prioritize_donor_candidates,
 )
@@ -337,6 +338,20 @@ class RemainderExtractionCrew:
 
         return hosts
 
+    def _is_dictionary_attested_full_word(self, token: str) -> bool:
+        """Return True when the token is already a known standalone dictionary word.
+
+        What: identify skipped ngrams whose meaning is already available from the
+        canonical dictionary.
+        Why: remainder extraction exists to recover missing pieces, not to
+        re-analyze words we already know directly.
+        Big picture: keeps semantic subtraction focused on genuine residuals from
+        the skipped queue while preserving explicit skip reasons for auditability.
+        """
+
+        entry = self._get_dictionary_entry(token)
+        return bool(entry and self._dictionary_definition(entry))
+
     def _segment_remainder_into_bigrams(self, remainder: str) -> list[list[str]]:
         """
         Enumerate all segmentations of `remainder` into contiguous pieces,
@@ -403,38 +418,53 @@ class RemainderExtractionCrew:
         *,
         host_word: str,
         token: str,
+        target_residual: str,
         depth: int,
-        visited: set[tuple[str, str, str]],
+        visited: set[tuple[str, str, str, str, str]],
         donor_glosses: dict[str, list[str]],
         traces: list[dict[str, object]],
     ) -> None:
         """Resolve donor roots recursively using the hierarchy-first policy.
 
         What: evaluate the top-ranked donor branches at this node, emit a trace
-        per branch, then recurse into each branch's unresolved artifacts.
+        per branch, then recurse only when the subtraction moves the current
+        token closer to the target residual we are trying to isolate.
 
         Why: ambiguous words can support multiple valid subtraction paths; we keep
         a bounded set so downstream prompts can compare alternatives.
 
         Big picture: this is the execution core behind dictionary-first,
-        sqlite-second, infix-branch, recursive decomposition behavior.
+        sqlite-second, repeated-root boil-off, and recursive residual isolation.
         """
 
         token_norm = self._normalize_root(token)
+        target_norm = self._normalize_root(target_residual)
+        current_host = self._normalize_root(host_word) or token_norm
         if not token_norm:
             # Termination: nothing left to resolve at this branch.
             self._append_terminal_hierarchy_trace(
-                host_word=host_word,
+                host_word=current_host,
                 token=token_norm,
                 depth=depth,
                 traces=traces,
                 termination_reason="empty_token",
             )
             return
+        if not target_norm:
+            self._append_terminal_hierarchy_trace(
+                host_word=current_host,
+                token=token_norm,
+                depth=depth,
+                traces=traces,
+                termination_reason="empty_target",
+            )
+            return
+        if token_norm == target_norm:
+            return
         if depth > MAX_DONOR_RECURSION_DEPTH:
             # Termination: hard depth cap prevents runaway recursion.
             self._append_terminal_hierarchy_trace(
-                host_word=host_word,
+                host_word=current_host,
                 token=token_norm,
                 depth=depth,
                 traces=traces,
@@ -475,7 +505,7 @@ class RemainderExtractionCrew:
         ranked = prioritize_donor_candidates(candidate_rows)
         if not ranked:
             self._append_terminal_hierarchy_trace(
-                host_word=host_word,
+                host_word=current_host,
                 token=token_norm,
                 depth=depth,
                 traces=traces,
@@ -490,44 +520,42 @@ class RemainderExtractionCrew:
                 continue
 
             subtraction_options = compute_word_break_subtractions(token_norm, donor)
-            if not subtraction_options:
-                continue
+            for subtraction in subtraction_options:
+                for variant in expand_subtraction_variants(subtraction):
+                    normalized_residual = self._normalize_root(variant.get("residual", ""))
+                    if not normalized_residual or target_norm not in normalized_residual:
+                        continue
 
-            # Deterministic primary option: choose smallest residual first so
-            # recursion prioritizes maximal subtraction while retaining alternate
-            # interpretations (e.g., remove_all_occurrences) in the payload.
-            subtraction_options.sort(key=lambda row: len(str(row.get("residual", ""))))
-            chosen = subtraction_options[0]
-            normalized_residual = self._normalize_root(chosen.get("residual", ""))
-            residuals = tuple(
-                (
-                    self._normalize_root(fragment.get("artifact", "")),
-                    int(fragment.get("start", 0)),
-                    int(fragment.get("end", 0)),
-                )
-                for fragment in (chosen.get("residuals", []) or [])
-                if isinstance(fragment, dict)
-            )
-            coverage_key = (
-                int(chosen.get("start", 0)),
-                int(chosen.get("end", 0)),
-                normalized_residual,
-                residuals,
-            )
+                    residuals = tuple(
+                        (
+                            self._normalize_root(fragment.get("artifact", "")),
+                            int(fragment.get("start", 0)),
+                            int(fragment.get("end", 0)),
+                        )
+                        for fragment in (variant.get("residuals", []) or [])
+                        if isinstance(fragment, dict)
+                    )
+                    coverage_key = (
+                        normalized_residual,
+                        residuals,
+                        str(variant.get("selected_variant", "")),
+                    )
 
-            viable_candidates.append(
-                {
-                    "rank_index": rank_index,
-                    "cand": cand,
-                    "donor": donor,
-                    "chosen": chosen,
-                    "coverage_key": coverage_key,
-                }
-            )
+                    viable_candidates.append(
+                        {
+                            "rank_index": rank_index,
+                            "cand": cand,
+                            "donor": donor,
+                            "chosen": variant,
+                            "coverage_key": coverage_key,
+                            "exact_match": normalized_residual == target_norm,
+                            "residual_length": len(normalized_residual),
+                        }
+                    )
 
         if not viable_candidates:
             self._append_terminal_hierarchy_trace(
-                host_word=host_word,
+                host_word=current_host,
                 token=token_norm,
                 depth=depth,
                 traces=traces,
@@ -543,12 +571,20 @@ class RemainderExtractionCrew:
             if not incumbent:
                 grouped_candidates[key] = candidate
                 continue
+            if bool(candidate.get("exact_match")) and not bool(incumbent.get("exact_match")):
+                grouped_candidates[key] = candidate
+                continue
             if len(str(candidate["donor"])) > len(str(incumbent["donor"])):
                 grouped_candidates[key] = candidate
 
         deduped_candidates = sorted(
             grouped_candidates.values(),
-            key=lambda row: int(row.get("rank_index", 0)),
+            key=lambda row: (
+                0 if bool(row.get("exact_match")) else 1,
+                int(row.get("rank_index", 0)),
+                int(row.get("residual_length", 0)),
+                str(row.get("donor", "")),
+            ),
         )
 
         # Hard guard: if any viable donor has len>=2, suppress len==1 donors.
@@ -560,7 +596,7 @@ class RemainderExtractionCrew:
 
         branch_count = 0
         cycle_skips = 0
-        sibling_states: set[tuple[str, str, str]] = set()
+        sibling_states: set[tuple[str, str, str, str, str]] = set()
         for row in deduped_candidates:
             if branch_count >= MAX_DONOR_BRANCHES_PER_NODE:
                 break
@@ -568,7 +604,9 @@ class RemainderExtractionCrew:
             cand = row.get("cand", {})
             donor = self._normalize_root(row.get("donor", ""))
             chosen = row.get("chosen", {})
-            state = (host_word, token_norm, donor)
+            next_residual = self._normalize_root(chosen.get("residual", ""))
+            selected_variant = str(chosen.get("selected_variant", "") or "single_occurrence")
+            state = (token_norm, target_norm, donor, next_residual, selected_variant)
             if state in visited or state in sibling_states:
                 # Cycle protection is branch-local: one explored branch should
                 # not erase other viable branches at this same recursion node.
@@ -579,13 +617,15 @@ class RemainderExtractionCrew:
             chosen_payload = {
                 "host_word": token_norm.upper(),
                 "root": donor.upper(),
-                "residual": self._normalize_root(chosen.get("residual", "")).upper(),
+                "residual": next_residual.upper(),
                 "start": chosen.get("start", 0),
                 "end": chosen.get("end", 0),
                 "residuals": chosen.get("residuals", []),
                 "occurrence_index": chosen.get("occurrence_index", 0),
                 "total_occurrences": chosen.get("total_occurrences", 0),
                 "remove_all_occurrences": chosen.get("remove_all_occurrences"),
+                "selected_variant": selected_variant,
+                "remove_all": chosen.get("remove_all"),
             }
             donor_glosses_for_candidate = list(cand.get("glosses", []) or [])
             if donor_glosses_for_candidate:
@@ -596,9 +636,9 @@ class RemainderExtractionCrew:
                     chosen_payload["donor_definition"] = donor_definition
             trace = build_subtraction_evidence(
                 chosen_payload,
-                donor_source=str(cand.get("source", "other")),
+                donor_source="host_subtraction" if depth == 0 else str(cand.get("source", "other")),
                 recursion_depth=depth,
-                termination_reason="resolved" if not chosen_payload["residual"] else "residual_extracted",
+                termination_reason="resolved" if next_residual == target_norm else "residual_extracted",
             )
             traces.append(trace)
             branch_count += 1
@@ -606,28 +646,26 @@ class RemainderExtractionCrew:
             for gloss in donor_glosses_for_candidate:
                 donor_glosses.setdefault(donor, []).append(gloss)
 
+            if next_residual == target_norm:
+                continue
+
             # Recurse each branch independently to preserve ambiguity options.
             branch_visited = set(visited)
             branch_visited.add(state)
-            for fragment in trace.get("remaining_artifacts", []) or []:
-                if not isinstance(fragment, dict):
-                    continue
-                artifact = self._normalize_root(fragment.get("artifact", ""))
-                if not artifact or artifact == token_norm:
-                    continue
-                self._resolve_donor_hierarchy(
-                    host_word=host_word,
-                    token=artifact,
-                    depth=depth + 1,
-                    visited=branch_visited,
-                    donor_glosses=donor_glosses,
-                    traces=traces,
-                )
+            self._resolve_donor_hierarchy(
+                host_word=current_host,
+                token=next_residual,
+                target_residual=target_norm,
+                depth=depth + 1,
+                visited=branch_visited,
+                donor_glosses=donor_glosses,
+                traces=traces,
+            )
 
         # If candidates existed but all were skipped due seen-state, emit cycle terminal.
         if branch_count == 0 and cycle_skips > 0:
             self._append_terminal_hierarchy_trace(
-                host_word=host_word,
+                host_word=current_host,
                 token=token_norm,
                 depth=depth,
                 traces=traces,
@@ -639,9 +677,9 @@ class RemainderExtractionCrew:
     ) -> tuple[dict[str, list[str]], list[dict[str, object]]]:
         """Collect donor glosses and hierarchy traces for one residual root.
 
-        What: find host words containing the residual candidate, subtract the
-        residual from each host, then resolve donor roots recursively from the
-        leftover artifacts.
+        What: find host words containing the residual candidate, then recurse
+        from each full host toward the target residual by subtracting known
+        donor roots one step at a time.
 
         Why: prompts need both semantic anchors (accepted donor glosses) and the
         decision path that produced them (trace rows with source/depth/termination).
@@ -671,48 +709,15 @@ class RemainderExtractionCrew:
             if not host_word:
                 continue
 
-            for subtraction in compute_word_break_subtractions(host_word, res_norm):
-                residual_artifacts = [
-                    self._normalize_root(fragment.get("artifact", ""))
-                    for fragment in (subtraction.get("residuals", []) or [])
-                    if isinstance(fragment, dict)
-                ]
-                residual_artifacts = [fragment for fragment in residual_artifacts if fragment]
-                if not residual_artifacts:
-                    continue
-
-                # Trace host-minus-residual baseline for auditability.
-                base_trace = build_subtraction_evidence(
-                    {
-                        "host_word": host_word.upper(),
-                        "root": res_norm.upper(),
-                        "residual": self._normalize_root(subtraction.get("residual", "")).upper(),
-                        "start": subtraction.get("start", 0),
-                        "end": subtraction.get("end", 0),
-                        "residuals": subtraction.get("residuals", []),
-                        "occurrence_index": subtraction.get("occurrence_index", 0),
-                        "total_occurrences": subtraction.get("total_occurrences", 0),
-                        "remove_all_occurrences": subtraction.get("remove_all_occurrences"),
-                    },
-                    donor_source="host_subtraction",
-                    recursion_depth=0,
-                    termination_reason="residual_extracted",
-                )
-                traces.append(base_trace)
-
-                # IMPORTANT: recurse by residual artifacts (position-separated pieces),
-                # not the concatenated residual string. This prevents non-adjacent
-                # leftovers (e.g., O + Z around a removed middle root) from being
-                # recombined into a synthetic donor token (e.g., OZ).
-                for artifact in residual_artifacts:
-                    self._resolve_donor_hierarchy(
-                        host_word=host_word,
-                        token=artifact,
-                        depth=1,
-                        visited=set(),
-                        donor_glosses=donor_glosses,
-                        traces=traces,
-                    )
+            self._resolve_donor_hierarchy(
+                host_word=host_word,
+                token=host_word,
+                target_residual=res_norm,
+                depth=0,
+                visited=set(),
+                donor_glosses=donor_glosses,
+                traces=traces,
+            )
 
         # Deduplicate gloss JSON strings per donor root
         for k, v in list(donor_glosses.items()):
@@ -727,7 +732,21 @@ class RemainderExtractionCrew:
         return donor_glosses, traces
 
     def _get_dictionary_entry(self, token: str) -> EntryRecord | None:
-        return self.entry_by_norm.get(self._normalize_root(token))
+        """Return the canonical dictionary entry for a normalized token.
+
+        What: perform the central dictionary lookup used by subtraction ranking,
+        skip guards, and prompt-time semantic anchoring.
+        Why: several focused tests construct lightweight crew instances via
+        ``__new__`` and intentionally omit the full dictionary bootstrap.
+        Big picture: a graceful fallback here keeps the subtraction pipeline
+        auditable in production while letting isolated queue/persistence tests
+        exercise orchestration without fabricating the entire lexicon state.
+        """
+
+        entry_by_norm = getattr(self, "entry_by_norm", None)
+        if not isinstance(entry_by_norm, dict):
+            return None
+        return entry_by_norm.get(self._normalize_root(token))
 
     def _dictionary_definition(self, entry: EntryRecord | None) -> str:
         if not entry:
@@ -1284,7 +1303,10 @@ class RemainderExtractionCrew:
                     host_source,
                     None,
                     target_residual,
-                    json.dumps([ngram_norm], ensure_ascii=False),
+                    json.dumps(
+                        [_canonical_text(row.get("root")) or ngram_norm],
+                        ensure_ascii=False,
+                    ),
                     json.dumps([int(cluster_index)], ensure_ascii=False),
                     str(residual_definition or "").strip() or None,
                     confidence,
@@ -1817,6 +1839,7 @@ class RemainderExtractionCrew:
         residual_counter: Counter[str] = Counter()
         word_break_evidence: list[dict[str, object]] = []
         scoring_diagnostics: list[dict[str, object]] = []
+        cluster_donor_gloss_map: dict[str, list[str]] = {}
         seen_norms = set()
         for original in cluster:
             norm_form = _get_field(original, "normalized", "").lower()
@@ -1854,35 +1877,47 @@ class RemainderExtractionCrew:
                 if isinstance(row, dict):
                     scoring_diagnostics.append(row)
 
-            # Host-level baseline subtraction: this captures direct evidence for
-            # the candidate root before donor recursion is applied.
-            subtraction_candidates = compute_word_break_subtractions(
-                display_word,
-                ngram_lower,
+            # Host-level baseline subtraction: move from the host meaning toward
+            # the skipped residual by subtracting known donor roots, not by
+            # removing the skipped ngram itself.
+            host_word = str(display_word or norm_form).strip().lower()
+            host_traces: list[dict[str, object]] = []
+            host_donor_glosses: dict[str, list[str]] = {}
+            self._resolve_donor_hierarchy(
+                host_word=host_word,
+                token=host_word,
+                target_residual=ngram_lower,
+                depth=0,
+                visited=set(),
+                donor_glosses=host_donor_glosses,
+                traces=host_traces,
             )
-            if not subtraction_candidates and display_word.lower() != norm_form:
-                subtraction_candidates = compute_word_break_subtractions(
-                    norm_form,
-                    ngram_lower,
-                )
 
-            for subtraction in subtraction_candidates:
-                residual = self._normalize_root(subtraction.get("residual", ""))
-                if not residual or residual == ngram_lower:
-                    continue
-                residual_counter[residual] += 1
-                subtraction_payload = dict(subtraction)
-                subtraction_payload.setdefault("host_word", display_word)
-                subtraction_payload.setdefault("root", ngram_lower)
-                subtraction_payload["residual"] = residual
-                word_break_evidence.append(
-                    build_subtraction_evidence(
-                        subtraction_payload,
-                        donor_source="host_subtraction",
-                        recursion_depth=0,
-                        termination_reason="root_subtracted_from_host",
-                    )
-                )
+            for donor_root, glosses in host_donor_glosses.items():
+                cluster_donor_gloss_map.setdefault(donor_root, []).extend(glosses)
+
+            host_definition = _get_field(original, "enhanced_definition", "") or _get_field(
+                original, "definition", ""
+            )
+            host_source = _get_field(original, "source", "")
+            host_word_breaks = [
+                trace
+                for trace in host_traces
+                if str(trace.get("donor_source", "")).strip().lower() == "host_subtraction"
+            ]
+            for trace in host_word_breaks:
+                trace_copy = dict(trace)
+                if host_definition:
+                    trace_copy["host_definition"] = host_definition
+                if host_source:
+                    trace_copy["host_source"] = host_source
+                word_break_evidence.append(trace_copy)
+
+            if any(
+                self._normalize_root(trace.get("residual", "")) == ngram_lower
+                for trace in host_traces
+            ):
+                residual_counter[ngram_lower] += 1
 
         accepted_glosses: list[str] = []
         for entry in cluster:
@@ -1895,6 +1930,9 @@ class RemainderExtractionCrew:
         # (dictionary/sqlite/infix/recursion). We collect both gloss anchors and
         # per-step traces so prompts can explain *why* a residual meaning is proposed.
         donor_gloss_map, donor_traces = self._collect_donor_glosses_for_residual(ngram_lower)
+
+        for donor_root, glosses in cluster_donor_gloss_map.items():
+            donor_gloss_map.setdefault(donor_root, []).extend(glosses)
 
         for donor_root, glosses in donor_gloss_map.items():
             accepted_glosses.extend(glosses)
@@ -2026,39 +2064,32 @@ class RemainderExtractionCrew:
             ]
 
             # Ensure host-subtraction donors are surfaced first so direct equations
-            # like NAZPSAD - PSAD = NAZ are explicitly represented as key donors.
+            # like NAZPSAD - NAZ = PSAD are explicitly represented as key donors.
             direct_donor_rows: list[dict[str, object]] = []
-            seen_direct_keys: set[tuple[str, str]] = set()
+            seen_direct_keys: set[tuple[str, str, str]] = set()
             for wb in word_breaks:
                 if str(wb.get("donor_source", "")).lower() != "host_subtraction":
                     continue
+                if int(wb.get("recursion_depth", 0) or 0) != 0:
+                    continue
                 host_word = str(wb.get("host_word", "")).strip().upper()
                 base_equation = str(wb.get("equation", "")).strip()
-                artifacts = [
-                    str(fragment.get("artifact", "")).strip().upper()
-                    for fragment in (wb.get("remaining_artifacts") or [])
-                    if isinstance(fragment, dict)
-                ]
-                artifacts = [artifact for artifact in artifacts if artifact]
-                if not artifacts:
-                    donor_root = str(wb.get("residual", "")).strip().upper()
-                    artifacts = [donor_root] if donor_root else []
-
-                for artifact in artifacts:
-                    key = (host_word, artifact)
-                    if key in seen_direct_keys:
-                        continue
-                    seen_direct_keys.add(key)
-                    equation = base_equation
-                    if len(artifacts) > 1 and equation:
-                        equation = f"{equation} [artifact: {artifact}]"
-                    direct_donor_rows.append(
-                        {
-                            "donor_root": artifact,
-                            "host_word": host_word,
-                            "equation": equation,
-                        }
-                    )
+                donor_root = str(wb.get("root", "")).strip().upper()
+                residual = str(wb.get("residual", "")).strip().upper()
+                if not donor_root:
+                    continue
+                key = (host_word, donor_root, residual)
+                if key in seen_direct_keys:
+                    continue
+                seen_direct_keys.add(key)
+                direct_donor_rows.append(
+                    {
+                        "donor_root": donor_root,
+                        "host_word": host_word,
+                        "equation": base_equation,
+                        "residual": residual,
+                    }
+                )
 
             direct_donor_rows.sort(
                 key=lambda row: (
@@ -2087,7 +2118,7 @@ class RemainderExtractionCrew:
             for item in (analytics_summary.get("cooccurring_root_analyses") or []):
                 _register_gloss_item(item)
 
-            # Ensure direct donor remainders (e.g., NAZ from NAZPSAD - PSAD = NAZ)
+            # Ensure direct donor roots (e.g., NAZ from NAZPSAD - NAZ = PSAD)
             # import accepted gloss rows from SQLite so hypothetical fields are available.
             for direct in direct_donor_rows:
                 donor_root = str(direct.get("donor_root", "")).strip().lower()
@@ -2377,14 +2408,22 @@ class RemainderExtractionCrew:
                 norm: self._load_accepted_glosses(norm) for norm in parent_norms
             }
 
-            standalone_defined = (
-                self._get_dictionary_entry(ngram_lower) is not None and not parent_norms
+            dictionary_attested_full_word = self._is_dictionary_attested_full_word(
+                ngram_lower
             )
             has_parent_context = bool(
                 parent_dict_entries or any(parent_gloss_map.values())
             )
 
-            if not standalone_defined and not has_parent_context:
+            if dictionary_attested_full_word:
+                self._insert_skip(
+                    ngram_lower,
+                    reason_code="known_dictionary_word",
+                    cluster_index=None,
+                )
+                continue
+
+            if not has_parent_context:
                 self._insert_skip(
                     ngram_lower,
                     reason_code="no_parent_context",
@@ -2409,7 +2448,7 @@ class RemainderExtractionCrew:
 
             # If this ngram only makes sense as part of larger words, constrain the
             # cluster list to dictionary-backed parent entries per the remainder rules.
-            if not standalone_defined and parent_entries:
+            if parent_entries:
                 clusters = [parent_entries]
                 total_clusters = 1
             # dedupe any clusters that are identical up to ordering
