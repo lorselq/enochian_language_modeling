@@ -110,7 +110,11 @@ def test_process_ngrams_persists_semantic_subtraction_traces(monkeypatch):
     crew._load_queue_order = lambda: []
     crew._get_current_cycle = lambda: 0
     crew._is_root_processed = lambda *_args, **_kwargs: False
-    crew._get_dictionary_entry = lambda _token: {"enhanced_definition": "defined"}
+    crew._get_dictionary_entry = (
+        lambda token: {"enhanced_definition": "defined"}
+        if str(token or "").strip().lower() == "nazpsad"
+        else None
+    )
     crew._load_accepted_glosses = lambda _token: []
     crew._insert_skip = lambda *_args, **_kwargs: None
     crew._build_parent_entries = lambda *_args, **_kwargs: []
@@ -136,7 +140,17 @@ def test_process_ngrams_persists_semantic_subtraction_traces(monkeypatch):
 
     class _DummyFinderInstance:
         def get_all_ngram_candidates(self, *_args, **_kwargs):
-            return []
+            return [
+                {
+                    "word": "NAZPSAD",
+                    "normalized": "nazpsad",
+                    "canonical": "NAZPSAD",
+                    "definition": "host",
+                    "enhanced_definition": "host",
+                    "source": "index",
+                    "citations": [],
+                }
+            ]
 
     crew.candidate_finder = _DummyFinderInstance()
 
@@ -212,7 +226,7 @@ def test_process_ngrams_persists_semantic_subtraction_traces(monkeypatch):
 
     crew.evaluate_ngram = _fake_evaluate_ngram
 
-    crew.process_ngrams(single_ngram="NAZ", style="solo", max_words=1)
+    crew.process_ngrams(single_ngram="PSAD", style="solo", max_words=1)
 
     rows = db.conn.execute(
         """
@@ -231,7 +245,7 @@ def test_process_ngrams_persists_semantic_subtraction_traces(monkeypatch):
     assert any(r[8] == "equation" for r in rows)
 
     # Required persisted fields from Addendum J mapping.
-    assert any(r[0] == "NAZ" for r in rows)
+    assert any(r[0] == "PSAD" for r in rows)
     assert any(r[1] == "NAZPSAD" and r[2] == "NAZ" and r[3] == "PSAD" for r in rows)
     assert any(r[4] == "NAZPSAD - NAZ = PSAD" for r in rows)
     assert any(r[5] == "dictionary" and int(r[6]) == 1 and r[7] == "residual_extracted" for r in rows)
