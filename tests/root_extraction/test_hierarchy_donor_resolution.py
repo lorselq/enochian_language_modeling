@@ -118,6 +118,7 @@ def test_resolve_donor_hierarchy_emits_empty_token_terminal_trace():
     crew._resolve_donor_hierarchy(
         host_word="ALNAZPSAD",
         token="",
+        target_residual="PSAD",
         depth=1,
         visited=set(),
         donor_glosses={},
@@ -135,6 +136,7 @@ def test_resolve_donor_hierarchy_emits_max_depth_terminal_trace():
     crew._resolve_donor_hierarchy(
         host_word="ALNAZPSAD",
         token="naz",
+        target_residual="PSAD",
         depth=999,
         visited=set(),
         donor_glosses={},
@@ -155,6 +157,7 @@ def test_resolve_donor_hierarchy_emits_no_viable_donor_terminal_trace():
     crew._resolve_donor_hierarchy(
         host_word="ALNAZPSAD",
         token="naz",
+        target_residual="A",
         depth=1,
         visited=set(),
         donor_glosses={},
@@ -168,7 +171,7 @@ def test_resolve_donor_hierarchy_emits_cycle_detected_terminal_trace():
     crew = RemainderExtractionCrew.__new__(RemainderExtractionCrew)
     crew._normalize_root = lambda token: str(token or "").strip().lower()
 
-    # Only donor 'a' is viable for token 'na', and it is pre-marked visited.
+    # Only donor 'a' is viable for token 'ba', and it is pre-marked visited.
     crew._get_dictionary_entry = (
         lambda token: {"enhanced_definition": "in"}
         if str(token).strip().lower() == "a"
@@ -181,10 +184,11 @@ def test_resolve_donor_hierarchy_emits_cycle_detected_terminal_trace():
 
     traces: list[dict[str, object]] = []
     crew._resolve_donor_hierarchy(
-        host_word="ALNAZPSAD",
-        token="na",
+        host_word="BA",
+        token="ba",
+        target_residual="B",
         depth=1,
-        visited={("ALNAZPSAD", "na", "a")},
+        visited={("ba", "b", "a", "b", "single_occurrence")},
         donor_glosses={},
         traces=traces,
     )
@@ -222,6 +226,7 @@ def test_resolve_donor_hierarchy_prefers_longest_donor_for_same_coverage():
     crew._resolve_donor_hierarchy(
         host_word="NAZPSAD",
         token="nazpsad",
+        target_residual="psad",
         depth=1,
         visited=set(),
         donor_glosses=donor_glosses,
@@ -239,3 +244,77 @@ def test_resolve_donor_hierarchy_prefers_longest_donor_for_same_coverage():
     assert not any("NAZPSAD - N =" in eq for eq in top_level_equations)
     assert not any("NAZPSAD - A =" in eq for eq in top_level_equations)
     assert not any("NAZPSAD - Z =" in eq for eq in top_level_equations)
+
+
+def test_resolve_donor_hierarchy_keeps_remove_all_branch_for_repeated_roots():
+    crew = RemainderExtractionCrew.__new__(RemainderExtractionCrew)
+    crew._normalize_root = lambda token: str(token or "").strip().lower()
+    crew._get_dictionary_entry = (
+        lambda token: {"enhanced_definition": "rectangular prism"}
+        if str(token or "").strip().lower() == "naz"
+        else None
+    )
+    crew._dictionary_definition = (
+        lambda entry: str(entry.get("enhanced_definition", "")).strip() if entry else ""
+    )
+    crew._load_accepted_glosses = lambda _token: []
+
+    traces: list[dict[str, object]] = []
+    crew._resolve_donor_hierarchy(
+        host_word="ANAZNAZ",
+        token="anaznaz",
+        target_residual="a",
+        depth=0,
+        visited=set(),
+        donor_glosses={},
+        traces=traces,
+    )
+
+    assert any(
+        str(trace.get("equation", "")) == "ANAZNAZ - NAZ = A"
+        and bool(trace.get("remove_all"))
+        and str(trace.get("selected_variant", "")).lower() == "remove_all_occurrences"
+        for trace in traces
+    )
+    assert any(
+        str(trace.get("equation", "")) == "ANAZNAZ - NAZ = ANAZ"
+        and str(trace.get("selected_variant", "")).lower() == "single_occurrence"
+        for trace in traces
+    )
+
+
+def test_resolve_donor_hierarchy_recursively_boils_off_intermediate_residual():
+    crew = RemainderExtractionCrew.__new__(RemainderExtractionCrew)
+    crew._normalize_root = lambda token: str(token or "").strip().lower()
+
+    dictionary_defs = {
+        "de": "undo / remove",
+        "forest": "woodland mass",
+    }
+
+    def _get_dictionary_entry(token: str):
+        key = str(token or "").strip().lower()
+        if key in dictionary_defs:
+            return {"enhanced_definition": dictionary_defs[key]}
+        return None
+
+    crew._get_dictionary_entry = _get_dictionary_entry
+    crew._dictionary_definition = (
+        lambda entry: str(entry.get("enhanced_definition", "")).strip() if entry else ""
+    )
+    crew._load_accepted_glosses = lambda _token: []
+
+    traces: list[dict[str, object]] = []
+    crew._resolve_donor_hierarchy(
+        host_word="FODERESTA",
+        token="foderesta",
+        target_residual="a",
+        depth=0,
+        visited=set(),
+        donor_glosses={},
+        traces=traces,
+    )
+
+    equations = [str(trace.get("equation", "")) for trace in traces]
+    assert "FODERESTA - DE = FORESTA" in equations
+    assert "FORESTA - FOREST = A" in equations

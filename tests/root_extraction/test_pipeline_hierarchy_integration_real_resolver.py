@@ -175,30 +175,30 @@ def test_pipeline_guidance_uses_real_hierarchy_resolver_with_ordered_sources(
 
     # Ensure traces came from execution, not a pre-injected fixture contract.
     assert any(
-        str(row.get("equation", "")) == "ALNAZPSAD - PSAD = ALNAZ"
+        str(row.get("host_word", "")) == "ALNAZPSAD"
+        and str(row.get("donor_source", "")) == "host_subtraction"
+        and "PSAD" in str(row.get("residual", ""))
+        for row in word_breaks
+    )
+    assert any(
+        str(row.get("equation", "")) == "LPSAD - L = PSAD"
+        for row in word_breaks
+    )
+    assert any(
+        str(row.get("equation", "")) == "APSAD - A = PSAD"
         for row in word_breaks
     )
 
-    # Order requirement: dictionary traces should appear before sqlite traces
-    # in ranked execution when both are viable.
+    # Real hierarchy execution should surface recursive dictionary-backed rows
+    # after the host-level subtraction step.
     resolver_rows = [
         row
         for row in hierarchy_traces
         if str(row.get("donor_source", "")).lower() in {"dictionary", "sqlite"}
     ]
     assert resolver_rows, "expected dictionary/sqlite resolver rows"
-
-    first_dict = next(
-        (idx for idx, row in enumerate(resolver_rows) if str(row.get("donor_source", "")).lower() == "dictionary"),
-        None,
-    )
-    first_sqlite = next(
-        (idx for idx, row in enumerate(resolver_rows) if str(row.get("donor_source", "")).lower() == "sqlite"),
-        None,
-    )
-    assert first_dict is not None
-    assert first_sqlite is not None
-    assert first_dict < first_sqlite
+    assert any(str(row.get("donor_source", "")).lower() == "dictionary" for row in resolver_rows)
+    assert not any(str(row.get("donor_source", "")).lower() == "sqlite" for row in resolver_rows)
 
     # Metadata requirement: recursion traces must carry non-placeholder depth
     # and terminal reason fields from real resolver execution.

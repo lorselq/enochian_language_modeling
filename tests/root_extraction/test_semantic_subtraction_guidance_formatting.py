@@ -51,12 +51,28 @@ if "enochian_lm.root_extraction.utils.types_lexicon" not in sys.modules:
     lex_stub.EntryRecord = dict
     sys.modules["enochian_lm.root_extraction.utils.types_lexicon"] = lex_stub
 
-if "enochian_lm.root_extraction.utils.embeddings" not in sys.modules:
+embeddings_stub = sys.modules.get("enochian_lm.root_extraction.utils.embeddings")
+if embeddings_stub is None:
     embeddings_stub = types.ModuleType("enochian_lm.root_extraction.utils.embeddings")
-    embeddings_stub.get_sentence_transformer = lambda *a, **k: object()
-    embeddings_stub.select_definitions = lambda defs, max_words=300: defs
-    embeddings_stub.stream_text = lambda *a, **k: None
     sys.modules["enochian_lm.root_extraction.utils.embeddings"] = embeddings_stub
+
+embeddings_stub.get_fasttext_model = getattr(
+    embeddings_stub, "get_fasttext_model", lambda *a, **k: object()
+)
+embeddings_stub.get_sentence_transformer = getattr(
+    embeddings_stub, "get_sentence_transformer", lambda *a, **k: object()
+)
+embeddings_stub.select_definitions = getattr(
+    embeddings_stub, "select_definitions", lambda defs, max_words=300: defs
+)
+embeddings_stub.stream_text = getattr(
+    embeddings_stub, "stream_text", lambda *a, **k: None
+)
+
+# Other subtraction tests install lightweight module stubs during collection.
+# Drop those placeholders here so this file exercises the real formatter helpers.
+sys.modules.pop("enochian_lm.root_extraction.tools.debate_semantic_subtraction_engine", None)
+sys.modules.pop("enochian_lm.root_extraction.tools.solo_semantic_subtraction_engine", None)
 
 from enochian_lm.root_extraction.tools.debate_semantic_subtraction_engine import (  # noqa: E402
     _format_subtraction_guidance_compact as debate_compact,
