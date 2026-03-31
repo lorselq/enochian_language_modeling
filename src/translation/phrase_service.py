@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 from collections.abc import Callable, Iterable, Sequence
+from typing import Protocol
 
 from enochian_lm.common.config import get_config_paths
 
@@ -24,7 +25,21 @@ from .llm_synthesis import (
     render_phrase_translation,
 )
 from .memory import TranslationMemoryRepository
+from .placeholder_glosses import sanitize_human_gloss, unresolved_token_gloss
 from .service import SingleWordTranslationService
+
+
+class PhraseProgressReporter(Protocol):
+    """Describe the phrase-stage status interface used by the CLI renderer.
+
+    Phrase translation performs several deterministic steps around the optional
+    LLM calls. Keeping those stage updates behind a small protocol lets the
+    service report progress without depending on the CLI implementation.
+    """
+
+    def stage(self, message: str) -> None: ...
+
+    def done(self) -> None: ...
 from .tokenization import tokenize_words
 
 
@@ -36,6 +51,7 @@ class PhraseTokenCandidate:
     rank: int
     analysis_type: str
     definition: str | None
+    raw_definition: str | None
     alternates: list[str]
     confidence: float
     score: float
@@ -132,6 +148,7 @@ class PhraseTranslationService:
         evidence_mode: SingleWordTranslationService.EvidenceMode = SingleWordTranslationService.EvidenceMode.ALL,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
+        progress_reporter: PhraseProgressReporter | None = None,
     ) -> dict[str, object]:
         """Translate a phrase and expose both technical and layman-readable outputs.
 
@@ -154,108 +171,142 @@ class PhraseTranslationService:
         active_variants = list(variants) if variants else self.word_service.active_variants
         candidate_matrix: list[list[PhraseTokenCandidate]] = []
         token_payloads: list[dict[str, object]] = []
+        footnoted_translation = ""
+        translation_footnotes: list[dict[str, object]] = []
 
-        for token in tokens:
-            word_result = self.word_service.translate_word(
-                token,
-                variants=active_variants,
-                strategy=strategy,
-                top_k=top_k,
-                llm=False,
-                llm_context=llm_context,
-                evidence_mode=evidence_mode,
-                weight_enabled=weight_enabled,
-                allow_whole_word=allow_whole_word,
-            )
-            token_candidates = self._token_candidates_from_word_result(
-                token,
-                word_result,
-                top_k=top_k,
-            )
-            if not token_candidates:
-                token_candidates = self._fallback_token_candidates(token)
-            candidate_matrix.append(token_candidates)
-            token_payloads.append(
-                {
-                    "token": token,
-                    "candidates": [asdict(candidate) for candidate in token_candidates],
-                    "word_result": word_result,
-                }
-            )
-
-        parse_candidates = self._build_parse_candidates(
-            tokens,
-            candidate_matrix,
-            top_k=max(3, top_k),
-        )
-        chosen_parse = parse_candidates[0] if parse_candidates else None
-
-        rendered_translation = chosen_parse.translation_skeleton if chosen_parse else ""
-        render_reasoning = "Algorithmic phrase rendering only."
-        render_confidence = 0.0
-        render_warnings: list[str] = []
-        lay_translation = rendered_translation
-        lay_reasoning = "Lay translation fell back to the algorithmic phrase skeleton."
-        lay_confidence = 0.0
-        lay_warnings: list[str] = []
-        if chosen_parse is not None:
-            render_confidence = self._parse_confidence(chosen_parse)
-            lay_confidence = render_confidence
-        render_payload = (
-            self._phrase_render_payload(normalized_phrase, chosen_parse)
-            if chosen_parse is not None
-            else None
-        )
-        if llm_enabled and chosen_parse is not None:
-            render_context = {
-                "phrase": normalized_phrase,
-                "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
-                "use_remote": self.word_service.llm_use_remote,
-                "confidence": render_confidence,
-            }
-            rendered = self.llm_renderer(
-                render_payload,
-                render_context,
-            )
-            rendered_translation = rendered.rendered_translation or rendered_translation
-            render_reasoning = rendered.reasoning
-            render_confidence = rendered.confidence
-            render_warnings = list(rendered.warnings)
-        if render_payload is not None:
-            lay_context = {
-                "phrase": normalized_phrase,
-                "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
-                "use_remote": self.word_service.llm_use_remote,
-                "confidence": render_confidence,
-            }
-            lay_rendered = self.lay_renderer(
-                render_payload,
-                lay_context,
-            )
-            lay_translation = lay_rendered.rendered_translation or rendered_translation
-            lay_reasoning = lay_rendered.reasoning
-            lay_confidence = lay_rendered.confidence
-            lay_warnings = list(lay_rendered.warnings)
-
-        memory_updates: list[dict[str, object]] = []
-        if memory_update and chosen_parse is not None:
-            for index, candidate in enumerate(chosen_parse.token_choices):
-                if candidate.analysis_type != "provisional":
-                    continue
-                glosses = [
-                    gloss for gloss in [candidate.definition, *candidate.alternates]
-                    if isinstance(gloss, str) and gloss.strip()
-                ]
-                update = self.memory_repository.record_observation(
-                    word=candidate.token,
-                    phrase=normalized_phrase,
-                    role_hint=candidate.role_hint,
-                    glosses=glosses,
-                    confidence=candidate.confidence,
-                    left_neighbor=tokens[index - 1] if index > 0 else None,
-                    right_neighbor=tokens[index + 1] if index + 1 < len(tokens) else None,
+        self._report_progress(progress_reporter, "Preparing phrase translation...")
+        try:
+            for index, token in enumerate(tokens, start=1):
+                self._report_progress(
+                    progress_reporter,
+                    f"Analyzing token {index}/{len(tokens)}: {token.upper()}",
                 )
-                memory_updates.append(update)
+                word_result = self.word_service.translate_word(
+                    token,
+                    variants=active_variants,
+                    strategy=strategy,
+                    top_k=top_k,
+                    llm=False,
+                    llm_context=llm_context,
+                    evidence_mode=evidence_mode,
+                    weight_enabled=weight_enabled,
+                    allow_whole_word=allow_whole_word,
+                )
+                token_candidates = self._token_candidates_from_word_result(
+                    token,
+                    word_result,
+                    top_k=top_k,
+                )
+                if not token_candidates:
+                    token_candidates = self._fallback_token_candidates(token)
+                candidate_matrix.append(token_candidates)
+                token_payloads.append(
+                    {
+                        "token": token,
+                        "candidates": [asdict(candidate) for candidate in token_candidates],
+                        "word_result": word_result,
+                    }
+                )
+
+            self._report_progress(
+                progress_reporter,
+                "Building and scoring parse candidates...",
+            )
+            parse_candidates = self._build_parse_candidates(
+                tokens,
+                candidate_matrix,
+                top_k=max(3, top_k),
+            )
+            chosen_parse = parse_candidates[0] if parse_candidates else None
+
+            rendered_translation = chosen_parse.translation_skeleton if chosen_parse else ""
+            render_reasoning = "Algorithmic phrase rendering only."
+            render_confidence = 0.0
+            render_warnings: list[str] = []
+            lay_translation = rendered_translation
+            lay_reasoning = "Lay translation fell back to the algorithmic phrase skeleton."
+            lay_confidence = 0.0
+            lay_warnings: list[str] = []
+            if chosen_parse is not None:
+                render_confidence = self._parse_confidence(chosen_parse)
+                lay_confidence = render_confidence
+            render_payload = (
+                self._phrase_render_payload(normalized_phrase, chosen_parse)
+                if chosen_parse is not None
+                else None
+            )
+            if llm_enabled and chosen_parse is not None:
+                self._report_progress(
+                    progress_reporter,
+                    "Rendering technical translation...",
+                )
+                render_context = {
+                    "phrase": normalized_phrase,
+                    "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+                    "use_remote": self.word_service.llm_use_remote,
+                    "confidence": render_confidence,
+                }
+                rendered = self.llm_renderer(
+                    render_payload,
+                    render_context,
+                )
+                rendered_translation = rendered.rendered_translation or rendered_translation
+                render_reasoning = rendered.reasoning
+                render_confidence = rendered.confidence
+                render_warnings = list(rendered.warnings)
+            if render_payload is not None:
+                self._report_progress(
+                    progress_reporter,
+                    "Rendering lay translation and footnotes...",
+                )
+                lay_context = {
+                    "phrase": normalized_phrase,
+                    "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+                    "use_remote": self.word_service.llm_use_remote,
+                    "confidence": render_confidence,
+                }
+                lay_rendered = self.lay_renderer(
+                    render_payload,
+                    lay_context,
+                )
+                lay_translation = lay_rendered.rendered_translation or rendered_translation
+                lay_reasoning = lay_rendered.reasoning
+                lay_confidence = lay_rendered.confidence
+                lay_warnings = list(lay_rendered.warnings)
+                footnoted_translation = lay_rendered.footnoted_translation or ""
+                raw_footnotes = lay_rendered.translation_footnotes
+                translation_footnotes = (
+                    list(raw_footnotes)
+                    if isinstance(raw_footnotes, list)
+                    else []
+                )
+
+            memory_updates: list[dict[str, object]] = []
+            if memory_update and chosen_parse is not None:
+                self._report_progress(
+                    progress_reporter,
+                    "Recording provisional memory updates...",
+                )
+                for index, candidate in enumerate(chosen_parse.token_choices):
+                    if candidate.analysis_type != "provisional":
+                        continue
+                    glosses = [
+                        gloss for gloss in [candidate.definition, *candidate.alternates]
+                        if isinstance(gloss, str) and gloss.strip()
+                    ]
+                    update = self.memory_repository.record_observation(
+                        word=candidate.token,
+                        phrase=normalized_phrase,
+                        role_hint=candidate.role_hint,
+                        glosses=glosses,
+                        confidence=candidate.confidence,
+                        left_neighbor=tokens[index - 1] if index > 0 else None,
+                        right_neighbor=tokens[index + 1] if index + 1 < len(tokens) else None,
+                    )
+                    memory_updates.append(update)
+        finally:
+            if progress_reporter is not None:
+                progress_reporter.done()
 
         return {
             "phrase": normalized_phrase,
@@ -285,6 +336,8 @@ class PhraseTranslationService:
             "lay_reasoning": lay_reasoning,
             "lay_confidence": lay_confidence,
             "lay_warnings": lay_warnings,
+            "footnoted_translation": footnoted_translation,
+            "translation_footnotes": translation_footnotes,
             "lay_translation_mode": (
                 "remote" if chosen_parse is not None and self.word_service.llm_use_remote
                 else "local" if chosen_parse is not None
@@ -309,12 +362,22 @@ class PhraseTranslationService:
                 continue
             meanings = candidate.get("meanings", [])
             meaning_list = meanings if isinstance(meanings, list) else []
-            primary_definition = self._candidate_definition(meaning_list)
+            raw_definition = self._candidate_definition(meaning_list)
+            primary_definition = self._human_facing_definition(raw_definition, token=token)
             alternates = self._candidate_alternates(meaning_list)
+            warnings = [
+                str(warning)
+                for warning in candidate.get("warnings", [])
+                if isinstance(warning, str)
+            ]
+            if primary_definition is None and raw_definition is not None:
+                warnings.append(
+                    "Suppressed placeholder residual gloss in phrase output."
+                )
             role_hint = self._infer_role_hint(
                 token,
                 candidate,
-                primary_definition,
+                primary_definition or raw_definition,
             )
             converted.append(
                 PhraseTokenCandidate(
@@ -322,6 +385,7 @@ class PhraseTranslationService:
                     rank=int(candidate.get("rank") or 0),
                     analysis_type=str(candidate.get("analysis_type") or "compositional"),
                     definition=primary_definition,
+                    raw_definition=raw_definition,
                     alternates=alternates,
                     confidence=float(candidate.get("confidence") or 0.0),
                     score=float(candidate.get("score") or 0.0),
@@ -331,11 +395,7 @@ class PhraseTranslationService:
                         for morph in candidate.get("morphs", [])
                         if isinstance(morph, str)
                     ],
-                    warnings=[
-                        str(warning)
-                        for warning in candidate.get("warnings", [])
-                        if isinstance(warning, str)
-                    ],
+                    warnings=warnings,
                 )
             )
         return converted
@@ -350,6 +410,7 @@ class PhraseTranslationService:
                     rank=1,
                     analysis_type="provisional",
                     definition=memory_entry.best_gloss,
+                    raw_definition=memory_entry.best_gloss,
                     alternates=list(memory_entry.alternates),
                     confidence=memory_entry.confidence,
                     score=30.0 + memory_entry.evidence_count,
@@ -359,15 +420,16 @@ class PhraseTranslationService:
                 )
             ]
         return [
-            PhraseTokenCandidate(
-                token=token,
-                rank=1,
-                analysis_type="provisional",
-                definition=None,
-                alternates=[],
-                confidence=0.1,
-                score=1.0,
-                role_hint="unknown",
+                PhraseTokenCandidate(
+                    token=token,
+                    rank=1,
+                    analysis_type="provisional",
+                    definition=None,
+                    raw_definition=None,
+                    alternates=[],
+                    confidence=0.1,
+                    score=1.0,
+                    role_hint="unknown",
                 morphs=[token],
                 warnings=["No supported lexical analysis yet."],
             )
@@ -532,8 +594,8 @@ class PhraseTranslationService:
                 return definition.strip()
         return None
 
-    @staticmethod
-    def _candidate_alternates(meanings: Sequence[object]) -> list[str]:
+    @classmethod
+    def _candidate_alternates(cls, meanings: Sequence[object]) -> list[str]:
         alternates: list[str] = []
         seen: set[str] = set()
         for meaning in meanings:
@@ -545,12 +607,45 @@ class PhraseTranslationService:
             for definition in definitions:
                 if not isinstance(definition, str):
                     continue
-                normalized = definition.strip()
+                normalized = cls._human_facing_definition(definition)
                 if not normalized or normalized in seen:
                     continue
                 seen.add(normalized)
                 alternates.append(normalized)
         return alternates
+
+    @staticmethod
+    def _human_facing_definition(
+        definition: str | None,
+        *,
+        token: str | None = None,
+    ) -> str | None:
+        """Filter raw diagnostic residue out of phrase-facing token glosses.
+
+        The word translator still surfaces raw residual headlines for debugging,
+        but the phrase layer should only pass through glosses a human can read
+        as translations. Centralizing that cleanup here keeps the chosen parse
+        explicit when evidence is weak instead of echoing diagnostic strings.
+        """
+
+        return sanitize_human_gloss(definition, token=token)
+
+    @staticmethod
+    def _report_progress(
+        progress_reporter: PhraseProgressReporter | None,
+        message: str,
+    ) -> None:
+        """Emit a phrase-stage status update when a reporter is available.
+
+        Phrase translation now exposes deterministic stage boundaries so the CLI
+        can tell the user where a long-running request currently is. This helper
+        keeps the service logic focused on translation while isolating the
+        reporter's optional nature.
+        """
+
+        if progress_reporter is None:
+            return
+        progress_reporter.stage(message)
 
     @staticmethod
     def _translation_skeleton(
@@ -563,7 +658,7 @@ class PhraseTranslationService:
             if candidate.definition:
                 glosses.append(candidate.definition)
             else:
-                glosses.append(f"[{token}]")
+                glosses.append(unresolved_token_gloss(token))
         return " ".join(glosses)
 
     @staticmethod

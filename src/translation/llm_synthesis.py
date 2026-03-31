@@ -12,11 +12,14 @@ callers resilient to LLM variability.
 """
 
 from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
 from typing import Literal, Protocol
 import json
 import logging
 
 from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
+
+from .placeholder_glosses import sanitize_human_gloss, unresolved_token_gloss
 
 LOGGER = logging.getLogger(__name__)
 
@@ -145,6 +148,8 @@ class PhraseRenderResult:
     rendered_translation: str
     confidence: float
     reasoning: str
+    footnoted_translation: str | None = None
+    translation_footnotes: list[dict[str, object]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     raw_response: str | None = None
 
@@ -153,6 +158,8 @@ class PhraseRenderResult:
             "rendered_translation": self.rendered_translation,
             "confidence": self.confidence,
             "reasoning": self.reasoning,
+            "footnoted_translation": self.footnoted_translation,
+            "translation_footnotes": list(self.translation_footnotes),
             "warnings": list(self.warnings),
             "raw_response": self.raw_response,
         }
@@ -934,17 +941,23 @@ def render_phrase_lay_translation(
     )
     try:
         response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
-        parsed = _parse_phrase_render_response(
+        parsed = _parse_phrase_lay_render_response(
             response.get("response_text", ""),
             fallback=skeleton,
+            parse_payload=parse_payload,
         )
         return PhraseRenderResult(
             rendered_translation=parsed["rendered_translation"],
             confidence=parsed["confidence"],
             reasoning=parsed["reasoning"],
+            footnoted_translation=parsed["footnoted_translation"],
+            translation_footnotes=parsed["translation_footnotes"],
             raw_response=response.get("response_text"),
         )
     except Exception as exc:
+        fallback_footnoted, fallback_notes = _build_phrase_footnote_fallback(
+            parse_payload
+        )
         return PhraseRenderResult(
             rendered_translation=skeleton,
             confidence=_safe_float(context.get("confidence"), default=0.5),
@@ -952,6 +965,8 @@ def render_phrase_lay_translation(
                 "Lay translation renderer unavailable; using deterministic "
                 f"skeleton. ({exc})"
             ),
+            footnoted_translation=fallback_footnoted,
+            translation_footnotes=fallback_notes,
             warnings=["LLM lay translation unavailable."],
         )
 
@@ -1003,6 +1018,15 @@ def _build_phrase_lay_render_prompt(
     schema = json.dumps(
         {
             "rendered_translation": "<plain-English paraphrase>",
+            "footnoted_translation": "<same translation with [^1] style markers>",
+            "translation_footnotes": [
+                {
+                    "index": 1,
+                    "source_token": "<original token>",
+                    "rendered_text": "<English chunk contributed by this token>",
+                    "explanation": "<brief grounded explanation for this choice>",
+                }
+            ],
             "confidence": 0.0,
             "reasoning": "<brief note explaining the simplification>",
         },
@@ -1018,6 +1042,10 @@ def _build_phrase_lay_render_prompt(
             "- Use ONLY the supplied token choices, relations, and skeleton.",
             "- Keep the same core meaning, but you may replace technical or archaic phrasing with everyday English.",
             "- Do not add any new actors, actions, objects, or claims.",
+            "- Return exactly one footnote entry per token choice, in source order.",
+            "- Each rendered_text value may contain multiple English words when grammar requires it.",
+            "- Explanations must stay grounded in the selected token glosses, alternates, and relations.",
+            "- If you add helper words for readable English, explain that smoothing in the relevant footnote.",
             "- Return STRICT JSON only.",
             "PARSE PAYLOAD:",
             payload,
@@ -1051,3 +1079,194 @@ def _parse_phrase_render_response(
         "confidence": max(0.0, min(1.0, confidence)),
         "reasoning": reasoning.strip(),
     }
+
+
+def _parse_phrase_lay_render_response(
+    payload: str,
+    *,
+    fallback: str,
+    parse_payload: dict[str, object],
+) -> dict[str, object]:
+    """Parse lay-translation JSON and rebuild footnotes when the model drifts.
+
+    The lay renderer now carries both the human-readable translation and the
+    footnoted closing block needed by the CLI. This parser keeps that contract
+    stable by validating the footnote list against the chosen parse and falling
+    back to a deterministic token-by-token view when the model omits or mangles
+    the new structure.
+    """
+
+    base = _parse_phrase_render_response(payload, fallback=fallback)
+    fallback_footnoted, fallback_notes = _build_phrase_footnote_fallback(parse_payload)
+    data = _load_json_payload(payload)
+    if data is None:
+        return {
+            **base,
+            "footnoted_translation": fallback_footnoted,
+            "translation_footnotes": fallback_notes,
+        }
+
+    notes = _coerce_phrase_footnotes(data.get("translation_footnotes"), parse_payload)
+    footnoted = data.get("footnoted_translation")
+    if not isinstance(footnoted, str) or not footnoted.strip():
+        footnoted = _build_footnoted_translation(notes)
+    normalized_markers = [f"[^{index}]" for index in range(1, len(notes) + 1)]
+    if any(marker not in footnoted for marker in normalized_markers):
+        footnoted = _build_footnoted_translation(notes)
+
+    return {
+        **base,
+        "footnoted_translation": footnoted.strip(),
+        "translation_footnotes": notes,
+    }
+
+
+def _coerce_phrase_footnotes(
+    raw_value: object,
+    parse_payload: dict[str, object],
+) -> list[dict[str, object]]:
+    """Normalize lay-render footnotes so downstream formatting can trust them.
+
+    The final markdown-style output depends on one explanation per source token.
+    This helper validates that shape against the chosen parse, preserving usable
+    model output when possible and rebuilding the whole list when it is not.
+    """
+
+    token_choices = parse_payload.get("token_choices")
+    expected = token_choices if isinstance(token_choices, Sequence) else []
+    if not isinstance(raw_value, list) or len(raw_value) != len(expected):
+        return _build_phrase_footnote_fallback(parse_payload)[1]
+
+    normalized: list[dict[str, object]] = []
+    for index, (entry, token_choice) in enumerate(zip(raw_value, expected, strict=False), start=1):
+        if not isinstance(entry, Mapping) or not isinstance(token_choice, Mapping):
+            return _build_phrase_footnote_fallback(parse_payload)[1]
+        source_token = str(token_choice.get("token") or f"TOKEN_{index}").upper()
+        rendered_text_raw = entry.get("rendered_text")
+        rendered_text = sanitize_human_gloss(rendered_text_raw, token=source_token)
+        if rendered_text is None:
+            rendered_text = _fallback_rendered_text(token_choice, source_token)
+        explanation = entry.get("explanation")
+        if not isinstance(explanation, str) or not explanation.strip():
+            explanation = _fallback_footnote_explanation(token_choice, source_token)
+        normalized.append(
+            {
+                "index": index,
+                "source_token": source_token,
+                "rendered_text": rendered_text,
+                "explanation": explanation.strip(),
+            }
+        )
+    return normalized
+
+
+def _build_phrase_footnote_fallback(
+    parse_payload: dict[str, object],
+) -> tuple[str, list[dict[str, object]]]:
+    """Return deterministic footnotes when lay rendering cannot provide them.
+
+    The phrase pipeline must always be able to close with a readable
+    token-aligned explanation block. When the LLM output is empty or malformed,
+    this helper synthesizes a conservative fallback directly from the selected
+    parse so callers still get a stable final section.
+    """
+
+    token_choices = parse_payload.get("token_choices")
+    choices = token_choices if isinstance(token_choices, Sequence) else []
+    notes: list[dict[str, object]] = []
+    for index, token_choice in enumerate(choices, start=1):
+        if not isinstance(token_choice, Mapping):
+            continue
+        source_token = str(token_choice.get("token") or f"TOKEN_{index}").upper()
+        notes.append(
+            {
+                "index": index,
+                "source_token": source_token,
+                "rendered_text": _fallback_rendered_text(token_choice, source_token),
+                "explanation": _fallback_footnote_explanation(token_choice, source_token),
+            }
+        )
+    return _build_footnoted_translation(notes), notes
+
+
+def _build_footnoted_translation(notes: Sequence[Mapping[str, object]]) -> str:
+    """Assemble a markdown-footnoted line from normalized token notes.
+
+    The CLI wants a single closing translation line with inline markers, while
+    JSON consumers want the structured note list. Building the combined string
+    here keeps the two representations derived from the same normalized data.
+    """
+
+    segments: list[str] = []
+    for note in notes:
+        rendered_text = note.get("rendered_text")
+        index = note.get("index")
+        if not isinstance(rendered_text, str) or not rendered_text.strip():
+            continue
+        if not isinstance(index, int):
+            continue
+        segments.append(f"{rendered_text.strip()} [^{index}]")
+    return " ".join(segments).strip()
+
+
+def _fallback_rendered_text(token_choice: Mapping[str, object], token: str) -> str:
+    """Choose a human-facing rendered chunk for fallback footnotes.
+
+    The lay renderer may fail precisely on difficult phrases. Falling back to
+    the sanitized token definition keeps the final translation explicit while
+    still respecting the chosen parse and the placeholder-cleanup rules.
+    """
+
+    definition = sanitize_human_gloss(token_choice.get("definition"), token=token)
+    if definition is not None:
+        return definition
+    raw_definition = sanitize_human_gloss(token_choice.get("raw_definition"), token=token)
+    if raw_definition is not None:
+        return raw_definition
+    return unresolved_token_gloss(token)
+
+
+def _fallback_footnote_explanation(
+    token_choice: Mapping[str, object],
+    token: str,
+) -> str:
+    """Explain fallback token choices in a way that mirrors the render contract.
+
+    Even deterministic fallback output should tell the reader why a token was
+    rendered in a particular way. This helper summarizes the selected analysis
+    type and whether the token had to remain unresolved after placeholder
+    cleanup.
+    """
+
+    rendered_text = _fallback_rendered_text(token_choice, token)
+    analysis_type = str(token_choice.get("analysis_type") or "unknown")
+    if rendered_text == unresolved_token_gloss(token):
+        return (
+            f'"{token}" remains unresolved because only weak or placeholder evidence '
+            "survived for this token."
+        )
+    if analysis_type == "dictionary_exact":
+        return (
+            f'"{token}" keeps its dictionary-backed reading because it is the '
+            "strongest exact-match evidence available."
+        )
+    if analysis_type == "whole_word_anchor":
+        return (
+            f'"{token}" uses the full-token anchor because the surviving evidence '
+            "directly supports the whole word."
+        )
+    if analysis_type == "provisional":
+        return (
+            f'"{token}" stays provisional because attested context suggests this '
+            "reading, but stronger grounding is still missing."
+        )
+    role_hint = str(token_choice.get("role_hint") or "unknown")
+    if role_hint in {"verb", "modifier", "relational"}:
+        return (
+            f'"{token}" is rendered this way because the surrounding phrase uses it '
+            f"as a {role_hint} and that role fits the neighboring tokens best."
+        )
+    return (
+        f'"{token}" is rendered from the selected compositional reading because it '
+        "fit the chosen parse better than the available alternatives."
+    )

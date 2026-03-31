@@ -148,6 +148,7 @@ from translation.llm_synthesis import (
     PhraseRenderResult,
     _build_phrase_lay_render_prompt,
     _build_phrase_render_prompt,
+    _parse_phrase_lay_render_response,
 )
 from translation.memory import TranslationMemoryRepository
 from translation.phrase_service import PhraseTranslationService
@@ -157,6 +158,7 @@ from translation.repository import (
     ClusterRecord,
     DictionaryMorph,
     InsightsRepository,
+    ResidualSemanticRecord,
     WordEvidence,
     _parse_glossator_definition,
 )
@@ -332,6 +334,42 @@ def _cluster_record(morph: str, definition: str, *, cluster_id: int = 1) -> Clus
         best_config=None,
         residual_details=[],
         raw_definitions=[],
+    )
+
+
+def _residual_record(
+    residual: str,
+    definition: str,
+    *,
+    parent_word: str | None = None,
+) -> ResidualSemanticRecord:
+    """Build a residual-semantic record for placeholder-anchor regressions.
+
+    The placeholder demotion tests need the same raw residual headline shape the
+    production pipeline sees when a whole-word anchor is derived from residual
+    evidence rather than a grounded dictionary or cluster gloss.
+    """
+
+    normalized_parent = parent_word or residual
+    return ResidualSemanticRecord(
+        variant="solo",
+        run_id="run-1",
+        residual=residual,
+        parent_word=normalized_parent,
+        group_index=0,
+        group_size=1,
+        glossator_def=json.dumps({"DEFINITION": definition, "REJECTED": False}),
+        glossator_prompt=None,
+        residual_headline=definition,
+        residual_focus_prompt=None,
+        semantic_coverage=None,
+        cohesion=None,
+        semantic_cohesion=None,
+        residual_explained=None,
+        residual_ratio=None,
+        derivational_validity=None,
+        rebuttal_resilience=None,
+        created_at=None,
     )
 
 
@@ -792,6 +830,135 @@ def test_phrase_lay_render_prompt_requires_plain_english_without_new_claims() ->
     assert "Do not add any new actors, actions, objects, or claims." in prompt
 
 
+def test_parse_phrase_lay_render_response_accepts_structured_footnotes() -> None:
+    """Preserve structured lay footnotes when the renderer returns valid JSON.
+
+    The final phrase report now depends on a token-aligned footnote payload in
+    addition to the plain lay translation. This regression keeps the parser from
+    discarding valid structured explanations when the LLM follows the new
+    schema.
+    """
+
+    parse_payload = {
+        "phrase": "ol sonf vorsg",
+        "translation_skeleton": "I reign above",
+        "token_choices": [
+            {
+                "token": "OL",
+                "definition": "I",
+                "raw_definition": "I",
+                "analysis_type": "dictionary_exact",
+                "role_hint": "noun",
+            },
+            {
+                "token": "SONF",
+                "definition": "rule",
+                "raw_definition": "rule",
+                "analysis_type": "compositional",
+                "role_hint": "verb",
+            },
+            {
+                "token": "VORSG",
+                "definition": "above",
+                "raw_definition": "above",
+                "analysis_type": "compositional",
+                "role_hint": "relational",
+            },
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+
+    parsed = _parse_phrase_lay_render_response(
+        json.dumps(
+            {
+                "rendered_translation": "I rule above",
+                "footnoted_translation": "I [^1] rule [^2] above [^3]",
+                "translation_footnotes": [
+                    {
+                        "index": 1,
+                        "source_token": "OL",
+                        "rendered_text": "I",
+                        "explanation": "OL contributes the first-person subject.",
+                    },
+                    {
+                        "index": 2,
+                        "source_token": "SONF",
+                        "rendered_text": "rule",
+                        "explanation": "SONF supplies the governing action.",
+                    },
+                    {
+                        "index": 3,
+                        "source_token": "VORSG",
+                        "rendered_text": "above",
+                        "explanation": "VORSG keeps the upward relational sense.",
+                    },
+                ],
+                "confidence": 0.81,
+                "reasoning": "Simplified the phrase while keeping the same parse.",
+            }
+        ),
+        fallback="I reign above",
+        parse_payload=parse_payload,
+    )
+
+    assert parsed["rendered_translation"] == "I rule above"
+    assert parsed["footnoted_translation"] == "I [^1] rule [^2] above [^3]"
+    assert parsed["translation_footnotes"][1]["rendered_text"] == "rule"
+    assert parsed["translation_footnotes"][2]["explanation"] == (
+        "VORSG keeps the upward relational sense."
+    )
+
+
+def test_parse_phrase_lay_render_response_rebuilds_missing_footnotes() -> None:
+    """Fall back to deterministic token notes when structured footnotes are absent.
+
+    The lay renderer may return valid JSON without the new footnote fields. The
+    CLI still needs a stable closing section, so the parser must reconstruct the
+    token-aligned output directly from the chosen parse in that case.
+    """
+
+    parse_payload = {
+        "phrase": "mirc cicasb",
+        "translation_skeleton": "to strike enemy",
+        "token_choices": [
+            {
+                "token": "MIRC",
+                "definition": "to strike",
+                "raw_definition": "to strike",
+                "analysis_type": "compositional",
+                "role_hint": "verb",
+            },
+            {
+                "token": "CICASB",
+                "definition": "enemy",
+                "raw_definition": "enemy",
+                "analysis_type": "dictionary_exact",
+                "role_hint": "noun",
+            },
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+
+    parsed = _parse_phrase_lay_render_response(
+        json.dumps(
+            {
+                "rendered_translation": "hit the enemy",
+                "confidence": 0.82,
+                "reasoning": "Smoothed the phrase for a lay reader.",
+            }
+        ),
+        fallback="to strike enemy",
+        parse_payload=parse_payload,
+    )
+
+    assert parsed["rendered_translation"] == "hit the enemy"
+    assert parsed["footnoted_translation"] == "to strike [^1] enemy [^2]"
+    assert parsed["translation_footnotes"][0]["source_token"] == "MIRC"
+    assert "chosen parse" not in parsed["translation_footnotes"][0]["explanation"].lower()
+
+
 def test_phrase_report_includes_technical_and_lay_translations() -> None:
     """Show both translation styles clearly in CLI text output."""
     report = translation_cli._format_phrase_report(
@@ -814,6 +981,298 @@ def test_phrase_report_includes_technical_and_lay_translations() -> None:
     assert "Lay translation: I rule in the middle of them" in report
     assert "Constrained render enabled: False" in report
     assert "Lay translation mode: remote" in report
+
+
+def test_phrase_report_appends_markdown_style_footnotes_last() -> None:
+    """Print the new footnoted closing translation after all summary sections.
+
+    The final phrase report should still show the existing technical and lay
+    translations, but now end with a token-aligned markdown-style explanation
+    block so readers can inspect how each source token contributed to the final
+    wording.
+    """
+
+    report = translation_cli._format_phrase_report(
+        {
+            "phrase": "ol sonf vorsg",
+            "variant": "solo",
+            "strategy": "prefer-balance",
+            "llm_enabled": False,
+            "rendered_translation": "I reign above",
+            "render_confidence": 0.72,
+            "render_reasoning": "Algorithmic phrase rendering only.",
+            "lay_translation": "I rule above",
+            "lay_confidence": 0.88,
+            "lay_reasoning": "Simplified the phrasing for a modern reader.",
+            "footnoted_translation": "I [^1] rule [^2] above [^3]",
+            "translation_footnotes": [
+                {
+                    "index": 1,
+                    "source_token": "OL",
+                    "rendered_text": "I",
+                    "explanation": "OL supplies the first-person subject.",
+                },
+                {
+                    "index": 2,
+                    "source_token": "SONF",
+                    "rendered_text": "rule",
+                    "explanation": "SONF contributes the governing action.",
+                },
+                {
+                    "index": 3,
+                    "source_token": "VORSG",
+                    "rendered_text": "above",
+                    "explanation": "VORSG keeps the upward relational reading.",
+                },
+            ],
+        }
+    )
+
+    assert "Final translation: I [^1] rule [^2] above [^3]" in report
+    assert '[^1]: "OL" rendered as "I". OL supplies the first-person subject.' in report
+    assert report.rfind("Final translation:") > report.rfind("Lay reasoning:")
+    assert report.strip().endswith(
+        '[^3]: "VORSG" rendered as "above". VORSG keeps the upward relational reading.'
+    )
+
+
+def test_translate_phrase_cli_emits_progress_updates_to_stderr(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Expose deterministic phrase-stage progress lines during CLI translation.
+
+    Phrase translation can take noticeable time even without the strict render
+    pass because token analysis, parse search, and the always-on lay renderer
+    still run. This regression proves the CLI now tells the user where it is in
+    that longer workflow.
+    """
+
+    word_service = FakeWordService(
+        results_by_word={
+            "MIRC": _word_result(
+                "MIRC",
+                _word_candidate(
+                    "to strike",
+                    analysis_type="compositional",
+                    score=9.5,
+                    confidence=0.7,
+                    morphs=["MIRC"],
+                ),
+            ),
+            "CICASB": _word_result(
+                "CICASB",
+                _word_candidate(
+                    "enemy",
+                    analysis_type="dictionary_exact",
+                    score=10.0,
+                    confidence=0.8,
+                    morphs=["CICASB"],
+                ),
+            ),
+        },
+        dictionary={
+            "mirc": {"canonical": "MIRC", "pos": "verb"},
+            "cicasb": {"canonical": "CICASB", "pos": "noun"},
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-progress.sqlite3")
+
+    def _fake_lay_renderer(
+        _parse_payload: dict[str, object],
+        _context: dict[str, object],
+    ) -> PhraseRenderResult:
+        return PhraseRenderResult(
+            rendered_translation="hit the enemy",
+            confidence=0.84,
+            reasoning="Simplified the phrase for a modern reader.",
+            footnoted_translation="hit [^1] the enemy [^2]",
+            translation_footnotes=[
+                {
+                    "index": 1,
+                    "source_token": "MIRC",
+                    "rendered_text": "hit",
+                    "explanation": "MIRC contributes the striking action.",
+                },
+                {
+                    "index": 2,
+                    "source_token": "CICASB",
+                    "rendered_text": "the enemy",
+                    "explanation": "CICASB names the object of that action.",
+                },
+            ],
+        )
+
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+        lay_renderer=_fake_lay_renderer,
+    )
+
+    monkeypatch.setattr(
+        translation_cli.PhraseTranslationService,
+        "from_config",
+        classmethod(lambda cls, **_kwargs: service),
+    )
+    monkeypatch.setattr(translation_cli, "_missing_db_paths", lambda _variants: [])
+    monkeypatch.setattr(translation_cli, "_configure_llm_env", lambda _mode: None)
+
+    args = translation_cli.build_parser().parse_args(
+        ["translate-phrase", "mirc cicasb", "--no-llm"]
+    )
+
+    exit_code = translation_cli.translate_phrase_from_args(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Preparing phrase translation..." in captured.err
+    assert "Analyzing token 1/2: MIRC" in captured.err
+    assert "Building and scoring parse candidates..." in captured.err
+    assert "Rendering lay translation and footnotes..." in captured.err
+    assert "Done." in captured.err
+
+
+def test_translate_word_demotes_residual_placeholder_anchor_below_composition() -> None:
+    """Prefer grounded full-cover decomposition over residual-only whole-word text.
+
+    NACRO and ASCLAD both showed that raw residual headlines can surface as
+    high-scoring whole-word anchors even when the word already has complete
+    compositional analyses. This regression targets the shared merge/enrichment
+    path that now demotes those anchors before final ranking and confidence
+    reporting.
+    """
+
+    evidence = WordEvidence(
+        word="NACRO",
+        variants_queried=["solo"],
+        residual_semantics=[
+            _residual_record("NACRO", "Top residuals: nacro:1.00", parent_word="NACRO")
+        ],
+    )
+    repository = FakeRepository(evidence_by_word={"NACRO": evidence})
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    placeholder_anchor = service._build_single_morph_candidate(
+        "NACRO",
+        definition="Top residuals: nacro:1.00",
+        definitions=["Top residuals: nacro:1.00"],
+        provenance="residual",
+        score=150.0,
+        analysis_type="whole_word_anchor",
+        warnings=[],
+    )
+    compositional_candidate = {
+        "rank": 1,
+        "analysis_type": "compositional",
+        "morphs": ["NA", "CRO"],
+        "canonicals": ["NA", "CRO"],
+        "score": 1.5,
+        "breakdown": {
+            "segments": [
+                {"start": 0, "end": 2, "ngram": "NA", "canonical": "NA"},
+                {"start": 2, "end": 5, "ngram": "CRO", "canonical": "CRO"},
+            ],
+            "uncovered": [],
+            "coverage_ratio": 1.0,
+            "residual_ratio": 0.0,
+        },
+        "score_breakdown": None,
+        "meanings": [
+            {
+                "morph": "NA",
+                "canonical": "NA",
+                "definition": "divine essence",
+                "definitions": ["divine essence"],
+                "provenance": "cluster",
+                "anchor_strength": 1.0,
+            },
+            {
+                "morph": "CRO",
+                "canonical": "CRO",
+                "definition": "origin",
+                "definitions": ["origin"],
+                "provenance": "cluster",
+                "anchor_strength": 1.0,
+            },
+        ],
+        "warnings": [],
+    }
+
+    merged = service._merge_candidate_pool(
+        [placeholder_anchor],
+        [compositional_candidate],
+        top_k=3,
+    )
+    enriched = service._enrich_candidates(
+        merged,
+        evidence=evidence,
+        strategy="prefer-balance",
+        llm_enabled=False,
+        llm_context=None,
+    )
+
+    assert merged[0]["analysis_type"] == "compositional"
+    assert merged[0]["morphs"] == ["NA", "CRO"]
+    placeholder = next(
+        candidate
+        for candidate in enriched
+        if candidate["analysis_type"] == "whole_word_anchor"
+    )
+    assert float(placeholder["score"]) < float(merged[0]["score"])
+    assert float(placeholder["confidence"]) <= 0.2
+    assert any(
+        "Residual-only whole-word placeholder anchor demoted" in warning
+        for warning in placeholder.get("warnings", [])
+    )
+
+
+def test_phrase_translation_hides_placeholder_leftovers_when_no_clean_gloss_exists(
+    tmp_path: Path,
+) -> None:
+    """Render unresolved tokens cleanly instead of echoing residual dump text.
+
+    Even after ranking demotion, some phrases will still contain tokens whose
+    only surviving evidence is a placeholder residual headline. The phrase layer
+    should mark those tokens as unresolved in human-facing output while keeping
+    the raw single-word diagnostics intact.
+    """
+
+    word_service = FakeWordService(
+        results_by_word={
+            "NACRO": _word_result(
+                "NACRO",
+                _word_candidate(
+                    "Top residuals: nacro:1.00",
+                    analysis_type="whole_word_anchor",
+                    score=10.0,
+                    confidence=0.92,
+                    morphs=["NACRO"],
+                    warnings=["Raw residual placeholder surfaced."],
+                ),
+            ),
+        },
+        dictionary={"nacro": {"canonical": "NACRO", "pos": "noun"}},
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-placeholder.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase("nacro", top_k=1, llm=False)
+
+    assert result["rendered_translation"] == "[NACRO]"
+    assert result["lay_translation"] == "[NACRO]"
+    assert result["footnoted_translation"] == "[NACRO] [^1]"
+    assert result["translation_footnotes"][0]["source_token"] == "NACRO"
+    assert "Top residuals:" not in result["footnoted_translation"]
+    assert result["token_analyses"][0]["word_result"]["candidates"][0]["meanings"][0]["definition"] == (
+        "Top residuals: nacro:1.00"
+    )
 
 
 def test_translation_cli_registers_translate_phrase_command() -> None:
