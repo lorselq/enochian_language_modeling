@@ -257,11 +257,13 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--no-whole-word",
+        "--no-whole-words",
         dest="allow_whole_word",
         action="store_false",
         help=(
-            "Disallow whole-word decompositions except for single-letter words "
-            "(e.g., A, I)."
+            "Disallow single-piece whole-word decomposition paths for multi-letter "
+            "words. Exact dictionary anchors and provisional full-word readings "
+            "may still appear."
         ),
     )
 
@@ -309,18 +311,24 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
     llm_group.add_argument(
         "--llm",
         action="store_true",
-        help="Enable constrained LLM rendering for the chosen phrase parse.",
+        help=(
+            "Enable an additional constrained/historical LLM render for the "
+            "chosen phrase parse. The lay translation is always attempted."
+        ),
     )
     llm_group.add_argument(
         "--no-llm",
         action="store_true",
-        help="Disable LLM phrase rendering (default).",
+        help=(
+            "Disable the additional constrained/historical render. The lay "
+            "translation is still attempted (default behavior)."
+        ),
     )
     parser.add_argument(
         "--llm-mode",
         choices=["local", "remote"],
         default="remote",
-        help="Choose which LLM backend to use when --llm is enabled.",
+        help="Choose which LLM backend to use for lay and constrained phrase rendering.",
     )
     parser.add_argument(
         "--llm-context",
@@ -373,9 +381,14 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--no-whole-word",
+        "--no-whole-words",
         dest="allow_whole_word",
         action="store_false",
-        help="Disallow whole-word token analyses when decomposition is available.",
+        help=(
+            "Suppress single-piece whole-word decomposition paths for multi-letter "
+            "tokens. Exact dictionary anchors and provisional full-word readings "
+            "can still surface."
+        ),
     )
 
 
@@ -615,10 +628,10 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
 
     llm_enabled = bool(args.llm) if args.llm or args.no_llm else False
     llm_use_remote = args.llm_mode == "remote"
-    if llm_enabled:
-        try:
-            _configure_llm_env(args.llm_mode)
-        except FileNotFoundError as exc:
+    try:
+        _configure_llm_env(args.llm_mode)
+    except FileNotFoundError as exc:
+        if llm_enabled:
             _emit_error(str(exc))
             return 2
 
@@ -888,6 +901,11 @@ def _build_phrase_output_payload(
         "render_reasoning": result.get("render_reasoning"),
         "render_confidence": result.get("render_confidence"),
         "render_warnings": result.get("render_warnings", []),
+        "lay_translation": result.get("lay_translation"),
+        "lay_reasoning": result.get("lay_reasoning"),
+        "lay_confidence": result.get("lay_confidence"),
+        "lay_warnings": result.get("lay_warnings", []),
+        "lay_translation_mode": result.get("lay_translation_mode"),
         "memory_updates": result.get("memory_updates", []),
     }
     if verbose:
@@ -1585,19 +1603,34 @@ def _format_phrase_report(
     lines.append(f"Phrase: {payload.get('phrase', '')}")
     lines.append(f"Variant: {payload.get('variant', '')}")
     lines.append(f"Strategy: {payload.get('strategy', '')}")
-    lines.append(f"LLM enabled: {payload.get('llm_enabled', False)}")
+    lines.append(f"Constrained render enabled: {payload.get('llm_enabled', False)}")
+    lay_mode = payload.get("lay_translation_mode")
+    if isinstance(lay_mode, str) and lay_mode:
+        lines.append(f"Lay translation mode: {lay_mode}")
 
     rendered_translation = payload.get("rendered_translation")
     if isinstance(rendered_translation, str) and rendered_translation:
-        lines.append(_wrap_text(f"Rendered translation: {rendered_translation}", indent=0))
+        lines.append(_wrap_text(f"Technical translation: {rendered_translation}", indent=0))
 
     render_confidence = payload.get("render_confidence")
     if isinstance(render_confidence, (int, float)):
-        lines.append(f"Render confidence: {float(render_confidence):.2f}")
+        lines.append(f"Technical confidence: {float(render_confidence):.2f}")
 
     render_reasoning = payload.get("render_reasoning")
     if isinstance(render_reasoning, str) and render_reasoning:
-        lines.append(_wrap_text(f"Render reasoning: {render_reasoning}", indent=0))
+        lines.append(_wrap_text(f"Technical reasoning: {render_reasoning}", indent=0))
+
+    lay_translation = payload.get("lay_translation")
+    if isinstance(lay_translation, str) and lay_translation:
+        lines.append(_wrap_text(f"Lay translation: {lay_translation}", indent=0))
+
+    lay_confidence = payload.get("lay_confidence")
+    if isinstance(lay_confidence, (int, float)):
+        lines.append(f"Lay confidence: {float(lay_confidence):.2f}")
+
+    lay_reasoning = payload.get("lay_reasoning")
+    if isinstance(lay_reasoning, str) and lay_reasoning:
+        lines.append(_wrap_text(f"Lay reasoning: {lay_reasoning}", indent=0))
 
     chosen_parse = payload.get("chosen_parse")
     if isinstance(chosen_parse, dict):
@@ -1655,7 +1688,11 @@ def _format_phrase_report(
 
     warnings = payload.get("render_warnings")
     if isinstance(warnings, list) and warnings:
-        lines.append(_wrap_text("Warnings: " + "; ".join(str(item) for item in warnings), indent=0))
+        lines.append(_wrap_text("Technical warnings: " + "; ".join(str(item) for item in warnings), indent=0))
+
+    lay_warnings = payload.get("lay_warnings")
+    if isinstance(lay_warnings, list) and lay_warnings:
+        lines.append(_wrap_text("Lay warnings: " + "; ".join(str(item) for item in lay_warnings), indent=0))
 
     return "\n".join(lines)
 

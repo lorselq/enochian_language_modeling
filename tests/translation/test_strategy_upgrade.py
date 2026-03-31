@@ -144,7 +144,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from enochian_lm.common.config import get_config_paths
 from translation.decomposition import Decomposition
-from translation.llm_synthesis import _build_phrase_render_prompt
+from translation.llm_synthesis import (
+    PhraseRenderResult,
+    _build_phrase_lay_render_prompt,
+    _build_phrase_render_prompt,
+)
 from translation.memory import TranslationMemoryRepository
 from translation.phrase_service import PhraseTranslationService
 from translation import cli as translation_cli
@@ -629,6 +633,78 @@ def test_phrase_translation_uses_global_parse_scores_across_tokens(tmp_path: Pat
     assert chosen["token_choices"][0]["definition"] == "to strike"
     assert chosen["relations"][0]["relation"] == "predicate-argument"
     assert result["rendered_translation"] == "to strike enemy"
+    assert result["lay_translation"] == "to strike enemy"
+
+
+def test_phrase_translation_always_provides_lay_translation(tmp_path: Path) -> None:
+    """Keep a plain-English phrase paraphrase available even without the strict render pass.
+
+    The phrase service now exposes two parallel outputs: a technical translation
+    that stays close to the selected glosses, and an always-on lay translation
+    that is meant for human readers. This regression ensures the lay path still
+    runs when the stricter `--llm` render is disabled.
+    """
+    word_service = FakeWordService(
+        results_by_word={
+            "MIRC": _word_result(
+                "MIRC",
+                _word_candidate(
+                    "to strike",
+                    analysis_type="compositional",
+                    score=9.5,
+                    confidence=0.6,
+                    morphs=["MIRC"],
+                ),
+            ),
+            "CICASB": _word_result(
+                "CICASB",
+                _word_candidate(
+                    "enemy",
+                    analysis_type="dictionary_exact",
+                    score=10.0,
+                    confidence=0.8,
+                    morphs=["CICASB"],
+                ),
+            ),
+        },
+        dictionary={
+            "cicasb": {"canonical": "CICASB", "pos": "noun"},
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-memory.sqlite3")
+
+    def _unexpected_constrained_renderer(
+        _parse_payload: dict[str, object],
+        _context: dict[str, object],
+    ) -> PhraseRenderResult:
+        raise AssertionError("The constrained phrase renderer should stay disabled.")
+
+    def _fake_lay_renderer(
+        parse_payload: dict[str, object],
+        context: dict[str, object],
+    ) -> PhraseRenderResult:
+        assert parse_payload["translation_skeleton"] == "to strike enemy"
+        assert context["phrase"] == "mirc cicasb"
+        return PhraseRenderResult(
+            rendered_translation="hit the enemy",
+            confidence=0.84,
+            reasoning="Simplified the technical gloss into plain English.",
+        )
+
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+        llm_renderer=_unexpected_constrained_renderer,
+        lay_renderer=_fake_lay_renderer,
+    )
+
+    result = service.translate_phrase("mirc cicasb", top_k=2, llm=False)
+
+    assert result["llm_enabled"] is False
+    assert result["rendered_translation"] == "to strike enemy"
+    assert result["lay_translation"] == "hit the enemy"
+    assert result["lay_confidence"] == 0.84
+    assert result["lay_reasoning"] == "Simplified the technical gloss into plain English."
 
 
 def test_phrase_translation_memory_accumulates_repeated_provisional_reads(tmp_path: Path) -> None:
@@ -698,6 +774,48 @@ def test_phrase_render_prompt_forbids_unsupported_semantics() -> None:
     assert "Do not infer extra syntax" in prompt
 
 
+def test_phrase_lay_render_prompt_requires_plain_english_without_new_claims() -> None:
+    """Ground the lay translation prompt in the chosen parse instead of freewheeling."""
+    prompt = _build_phrase_lay_render_prompt(
+        {
+            "phrase": "ol sonf vorsg",
+            "translation_skeleton": "I reign among",
+            "token_choices": [],
+            "relations": [],
+            "score": 1.0,
+        },
+        {"llm_context": "Use only the supplied parse."},
+    )
+
+    assert "lay reader" in prompt
+    assert "Keep the same core meaning" in prompt
+    assert "Do not add any new actors, actions, objects, or claims." in prompt
+
+
+def test_phrase_report_includes_technical_and_lay_translations() -> None:
+    """Show both translation styles clearly in CLI text output."""
+    report = translation_cli._format_phrase_report(
+        {
+            "phrase": "ol sonf vorsg",
+            "variant": "solo",
+            "strategy": "prefer-balance",
+            "llm_enabled": False,
+            "lay_translation_mode": "remote",
+            "rendered_translation": "I reign among",
+            "render_confidence": 0.72,
+            "render_reasoning": "Algorithmic phrase rendering only.",
+            "lay_translation": "I rule in the middle of them",
+            "lay_confidence": 0.88,
+            "lay_reasoning": "Simplified the phrasing for a modern reader.",
+        }
+    )
+
+    assert "Technical translation: I reign among" in report
+    assert "Lay translation: I rule in the middle of them" in report
+    assert "Constrained render enabled: False" in report
+    assert "Lay translation mode: remote" in report
+
+
 def test_translation_cli_registers_translate_phrase_command() -> None:
     """Expose the new phrase-translation command through the public CLI parser."""
     parser = translation_cli.build_parser()
@@ -706,3 +824,21 @@ def test_translation_cli_registers_translate_phrase_command() -> None:
     assert args.command == "translate-phrase"
     assert args.phrase == "ol sonf vorsg"
     assert args.handler == translation_cli._run_translate_phrase
+
+
+def test_translation_cli_accepts_plural_no_whole_words_alias_for_phrase() -> None:
+    """Support the more natural plural alias for the phrase-level whole-word flag."""
+    parser = translation_cli.build_parser()
+    args = parser.parse_args(
+        ["translate-phrase", "ol sonf vorsg", "--no-whole-words"]
+    )
+
+    assert args.allow_whole_word is False
+
+
+def test_translation_cli_accepts_plural_no_whole_words_alias_for_word() -> None:
+    """Keep the single-word parser aligned with the phrase parser's flag alias."""
+    parser = translation_cli.build_parser()
+    args = parser.parse_args(["translate-word", "OL", "--no-whole-words"])
+
+    assert args.allow_whole_word is False
