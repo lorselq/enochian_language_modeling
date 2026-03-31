@@ -20,6 +20,7 @@ from enochian_lm.common.config import get_config_paths
 from .llm_synthesis import (
     DEFAULT_LLM_CONTEXT,
     PhraseRenderResult,
+    render_phrase_lay_translation,
     render_phrase_translation,
 )
 from .memory import TranslationMemoryRepository
@@ -74,10 +75,12 @@ class PhraseTranslationService:
         word_service: SingleWordTranslationService,
         memory_repository: TranslationMemoryRepository,
         llm_renderer: Callable[[dict[str, object], dict[str, object]], PhraseRenderResult] = render_phrase_translation,
+        lay_renderer: Callable[[dict[str, object], dict[str, object]], PhraseRenderResult] = render_phrase_lay_translation,
     ) -> None:
         self.word_service = word_service
         self.memory_repository = memory_repository
         self.llm_renderer = llm_renderer
+        self.lay_renderer = lay_renderer
 
     @classmethod
     def from_config(
@@ -130,7 +133,15 @@ class PhraseTranslationService:
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
     ) -> dict[str, object]:
-        """Translate a phrase by jointly scoring token analyses and structure."""
+        """Translate a phrase and expose both technical and layman-readable outputs.
+
+        The phrase parser still chooses candidates through deterministic token
+        analysis and global parse scoring. Once that source-of-truth parse is
+        selected, this method can optionally add a constrained render and now
+        always tries to add a separate lay translation so downstream consumers
+        can inspect the technical read and the plain-English paraphrase side by
+        side.
+        """
         normalized_phrase = (phrase or "").strip()
         if not normalized_phrase:
             raise ValueError("Phrase must be a non-empty string.")
@@ -183,22 +194,48 @@ class PhraseTranslationService:
         render_reasoning = "Algorithmic phrase rendering only."
         render_confidence = 0.0
         render_warnings: list[str] = []
+        lay_translation = rendered_translation
+        lay_reasoning = "Lay translation fell back to the algorithmic phrase skeleton."
+        lay_confidence = 0.0
+        lay_warnings: list[str] = []
         if chosen_parse is not None:
             render_confidence = self._parse_confidence(chosen_parse)
+            lay_confidence = render_confidence
+        render_payload = (
+            self._phrase_render_payload(normalized_phrase, chosen_parse)
+            if chosen_parse is not None
+            else None
+        )
         if llm_enabled and chosen_parse is not None:
             render_context = {
                 "phrase": normalized_phrase,
                 "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
                 "use_remote": self.word_service.llm_use_remote,
+                "confidence": render_confidence,
             }
             rendered = self.llm_renderer(
-                self._phrase_render_payload(normalized_phrase, chosen_parse),
+                render_payload,
                 render_context,
             )
             rendered_translation = rendered.rendered_translation or rendered_translation
             render_reasoning = rendered.reasoning
             render_confidence = rendered.confidence
             render_warnings = list(rendered.warnings)
+        if render_payload is not None:
+            lay_context = {
+                "phrase": normalized_phrase,
+                "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+                "use_remote": self.word_service.llm_use_remote,
+                "confidence": render_confidence,
+            }
+            lay_rendered = self.lay_renderer(
+                render_payload,
+                lay_context,
+            )
+            lay_translation = lay_rendered.rendered_translation or rendered_translation
+            lay_reasoning = lay_rendered.reasoning
+            lay_confidence = lay_rendered.confidence
+            lay_warnings = list(lay_rendered.warnings)
 
         memory_updates: list[dict[str, object]] = []
         if memory_update and chosen_parse is not None:
@@ -244,6 +281,15 @@ class PhraseTranslationService:
             "render_reasoning": render_reasoning,
             "render_confidence": render_confidence,
             "render_warnings": render_warnings,
+            "lay_translation": lay_translation,
+            "lay_reasoning": lay_reasoning,
+            "lay_confidence": lay_confidence,
+            "lay_warnings": lay_warnings,
+            "lay_translation_mode": (
+                "remote" if chosen_parse is not None and self.word_service.llm_use_remote
+                else "local" if chosen_parse is not None
+                else None
+            ),
             "memory_updates": memory_updates,
         }
 
