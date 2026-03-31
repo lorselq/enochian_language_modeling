@@ -30,7 +30,12 @@ from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
 from enochian_lm.root_extraction.utils.residual_refresh import refresh_residual_details
 
-from translation.cli import configure_translate_word_parser, translate_word_from_args
+from translation.cli import (
+    configure_translate_phrase_parser,
+    configure_translate_word_parser,
+    translate_phrase_from_args,
+    translate_word_from_args,
+)
 
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
@@ -1425,6 +1430,13 @@ def _run_translate_word(args: argparse.Namespace) -> None:
         raise SystemExit(exit_code)
 
 
+def _run_translate_phrase(args: argparse.Namespace) -> None:
+    """Translate an Enochian phrase using stored insights and parse search."""
+    exit_code = translate_phrase_from_args(args)
+    if exit_code != 0:
+        raise SystemExit(exit_code)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="enlm",
@@ -1669,6 +1681,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     configure_translate_word_parser(translate_word)
     translate_word.set_defaults(handler=_run_translate_word)
+
+    translate_phrase = subparsers.add_parser(
+        "translate-phrase",
+        help="Translate an Enochian phrase using stored insights and parse search",
+    )
+    configure_translate_phrase_parser(translate_phrase)
+    translate_phrase.set_defaults(handler=_run_translate_phrase)
 
     report = subparsers.add_parser("report", help="Reporting utilities")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)

@@ -133,6 +133,31 @@ class ConsensusSynthesisResult:
         }
 
 
+@dataclass(slots=True)
+class PhraseRenderResult:
+    """Structured output for phrase-level rendering.
+
+    Phrase rendering is intentionally downstream of the algorithmic parse. The
+    LLM is allowed to improve readability and tone, but not to change the token
+    inventory, structure, or meaning bundle selected by the parser.
+    """
+
+    rendered_translation: str
+    confidence: float
+    reasoning: str
+    warnings: list[str] = field(default_factory=list)
+    raw_response: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "rendered_translation": self.rendered_translation,
+            "confidence": self.confidence,
+            "reasoning": self.reasoning,
+            "warnings": list(self.warnings),
+            "raw_response": self.raw_response,
+        }
+
+
 def synthesize_definition(
     morphs: list[str],
     meanings: list[str],
@@ -830,3 +855,199 @@ def _safe_float(value: object, *, default: float) -> float:
         except ValueError:
             return default
     return default
+
+
+def render_phrase_translation(
+    parse_payload: dict[str, object],
+    context: dict[str, object],
+) -> PhraseRenderResult:
+    """Render a chosen phrase parse into readable English without changing it.
+
+    The algorithmic parser remains the source of truth. This helper simply
+    verbalizes the selected token meanings and relations so `translate-phrase`
+    can produce smoother English while staying pinned to the chosen parse.
+    """
+    skeleton = str(parse_payload.get("translation_skeleton") or "").strip()
+    prompt = _build_phrase_render_prompt(parse_payload, context)
+    use_remote = bool(context.get("use_remote", False))
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    tool = QueryModelTool(
+        system_prompt=(
+            "You are a constrained phrase renderer for Enochian translation. "
+            "You may improve fluency, but you must not introduce any meaning, "
+            "relation, or token not present in the supplied parse. "
+            f"Historical scope: {llm_context}"
+        ),
+        name="Phrase Translation Renderer",
+        description="Render a chosen phrase parse into readable prose",
+        use_remote=use_remote,
+        progress_style="silent",
+    )
+    try:
+        response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+        parsed = _parse_phrase_render_response(
+            response.get("response_text", ""),
+            fallback=skeleton,
+        )
+        return PhraseRenderResult(
+            rendered_translation=parsed["rendered_translation"],
+            confidence=parsed["confidence"],
+            reasoning=parsed["reasoning"],
+            raw_response=response.get("response_text"),
+        )
+    except Exception as exc:
+        return PhraseRenderResult(
+            rendered_translation=skeleton,
+            confidence=_safe_float(context.get("confidence"), default=0.5),
+            reasoning=f"Phrase renderer unavailable; using deterministic skeleton. ({exc})",
+            warnings=["LLM phrase rendering unavailable."],
+        )
+
+
+def render_phrase_lay_translation(
+    parse_payload: dict[str, object],
+    context: dict[str, object],
+) -> PhraseRenderResult:
+    """Produce a plain-English paraphrase for the chosen phrase parse.
+
+    The phrase parser intentionally preserves technical, token-level structure so
+    debugging and corpus work can stay inspectable. This companion renderer
+    always tries to convert that selected parse into everyday English, giving
+    downstream callers a consistently human-friendly reading without replacing
+    the parser's source-of-truth skeleton.
+    """
+    skeleton = str(parse_payload.get("translation_skeleton") or "").strip()
+    prompt = _build_phrase_lay_render_prompt(parse_payload, context)
+    use_remote = bool(context.get("use_remote", False))
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    tool = QueryModelTool(
+        system_prompt=(
+            "You are a plain-English paraphraser for Enochian translation output. "
+            "You may simplify archaic or technical wording, but you must stay "
+            "within the meanings and relations already present in the supplied "
+            f"parse. Historical scope: {llm_context}"
+        ),
+        name="Phrase Lay Translation Renderer",
+        description="Render a chosen phrase parse into everyday English",
+        use_remote=use_remote,
+        progress_style="silent",
+    )
+    try:
+        response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+        parsed = _parse_phrase_render_response(
+            response.get("response_text", ""),
+            fallback=skeleton,
+        )
+        return PhraseRenderResult(
+            rendered_translation=parsed["rendered_translation"],
+            confidence=parsed["confidence"],
+            reasoning=parsed["reasoning"],
+            raw_response=response.get("response_text"),
+        )
+    except Exception as exc:
+        return PhraseRenderResult(
+            rendered_translation=skeleton,
+            confidence=_safe_float(context.get("confidence"), default=0.5),
+            reasoning=(
+                "Lay translation renderer unavailable; using deterministic "
+                f"skeleton. ({exc})"
+            ),
+            warnings=["LLM lay translation unavailable."],
+        )
+
+
+def _build_phrase_render_prompt(
+    parse_payload: dict[str, object],
+    context: dict[str, object],
+) -> str:
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    schema = json.dumps(
+        {
+            "rendered_translation": "<readable translation>",
+            "confidence": 0.0,
+            "reasoning": "<brief note anchored to supplied parse>",
+        },
+        ensure_ascii=False,
+    )
+    payload = json.dumps(parse_payload, ensure_ascii=False, indent=2)
+    return "\n".join(
+        [
+            "ROLE: You are a constrained Enochian phrase renderer.",
+            "TASK: Rewrite the supplied translation skeleton into readable English.",
+            f"HISTORICAL CONTEXT: {llm_context}",
+            "CONSTRAINTS:",
+            "- Use ONLY the supplied token choices and relations.",
+            "- Do not add, remove, or replace meanings.",
+            "- Do not infer extra syntax beyond the relation inventory already supplied.",
+            "- Return STRICT JSON only.",
+            "PARSE PAYLOAD:",
+            payload,
+            "SCHEMA:",
+            schema,
+        ]
+    )
+
+
+def _build_phrase_lay_render_prompt(
+    parse_payload: dict[str, object],
+    context: dict[str, object],
+) -> str:
+    """Build the always-on layman's-speak prompt for phrase translation.
+
+    This prompt sits beside the stricter historical renderer so the phrase
+    pipeline can expose two complementary views of the same parse: one close to
+    the selected glosses, and one phrased for readers who just want the idea in
+    plain English.
+    """
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    schema = json.dumps(
+        {
+            "rendered_translation": "<plain-English paraphrase>",
+            "confidence": 0.0,
+            "reasoning": "<brief note explaining the simplification>",
+        },
+        ensure_ascii=False,
+    )
+    payload = json.dumps(parse_payload, ensure_ascii=False, indent=2)
+    return "\n".join(
+        [
+            "ROLE: You are a plain-English Enochian phrase explainer.",
+            "TASK: Rewrite the supplied translation skeleton so a lay reader can understand it immediately.",
+            f"HISTORICAL CONTEXT: {llm_context}",
+            "CONSTRAINTS:",
+            "- Use ONLY the supplied token choices, relations, and skeleton.",
+            "- Keep the same core meaning, but you may replace technical or archaic phrasing with everyday English.",
+            "- Do not add any new actors, actions, objects, or claims.",
+            "- Return STRICT JSON only.",
+            "PARSE PAYLOAD:",
+            payload,
+            "SCHEMA:",
+            schema,
+        ]
+    )
+
+
+def _parse_phrase_render_response(
+    payload: str,
+    *,
+    fallback: str,
+) -> dict[str, object]:
+    data = _load_json_payload(payload)
+    if data is None:
+        return {
+            "rendered_translation": fallback,
+            "confidence": 0.5,
+            "reasoning": "Renderer returned non-JSON output; using deterministic skeleton.",
+        }
+    rendered = data.get("rendered_translation")
+    if not isinstance(rendered, str) or not rendered.strip():
+        rendered = fallback
+    confidence = _safe_float(data.get("confidence"), default=0.5)
+    reasoning = data.get("reasoning")
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        reasoning = "Rendered directly from the chosen parse."
+    return {
+        "rendered_translation": rendered.strip(),
+        "confidence": max(0.0, min(1.0, confidence)),
+        "reasoning": reasoning.strip(),
+    }

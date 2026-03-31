@@ -90,7 +90,17 @@ class _DummyDB:
 
 class _DummyFinderInstance:
     def get_all_ngram_candidates(self, *_args, **_kwargs):
-        return []
+        return [
+            {
+                "word": "NAZPSAD",
+                "normalized": "nazpsad",
+                "canonical": "NAZPSAD",
+                "definition": "host",
+                "enhanced_definition": "host",
+                "source": "index",
+                "citations": [],
+            }
+        ]
 
 
 def test_process_ngrams_allows_debate_mode_and_reaches_evaluate_dispatch(monkeypatch):
@@ -109,7 +119,11 @@ def test_process_ngrams_allows_debate_mode_and_reaches_evaluate_dispatch(monkeyp
     crew._load_queue_order = lambda: []
     crew._get_current_cycle = lambda: 0
     crew._is_root_processed = lambda *_args, **_kwargs: False
-    crew._get_dictionary_entry = lambda _token: {"enhanced_definition": "defined"}
+    crew._get_dictionary_entry = (
+        lambda token: {"enhanced_definition": "defined"}
+        if str(token or "").strip().lower() == "nazpsad"
+        else None
+    )
     crew._load_accepted_glosses = lambda _token: []
     crew._insert_skip = lambda *_args, **_kwargs: None
     crew._build_parent_entries = lambda *_args, **_kwargs: []
@@ -171,7 +185,7 @@ def test_process_ngrams_allows_debate_mode_and_reaches_evaluate_dispatch(monkeyp
     crew.evaluate_ngram = _fake_evaluate_ngram
 
     # This call used to raise ValueError for style='debate'.
-    crew.process_ngrams(single_ngram="NAZ", style="debate", max_words=1)
+    crew.process_ngrams(single_ngram="PSAD", style="debate", max_words=1)
 
     assert seen_styles == ["debate"]
 
@@ -206,3 +220,70 @@ def test_process_ngrams_uses_reason_filtered_skipped_queue(monkeypatch):
     crew.process_ngrams(style="debate", skipped_reason_code="no_parent_context")
 
     assert called.get("reason_code") == "no_parent_context"
+
+
+def test_process_ngrams_records_known_dictionary_word_skip_reason(monkeypatch):
+    """Ensure full dictionary words are skipped with an explicit audit reason."""
+
+    crew = RemainderExtractionCrew.__new__(RemainderExtractionCrew)
+
+    crew._normalize_root = lambda token: str(token or "").strip().lower()
+    crew._refresh_ngram_inventory = lambda: None
+    crew._load_queue_order = lambda: []
+    crew._get_current_cycle = lambda: 0
+    crew._is_root_processed = lambda *_args, **_kwargs: False
+    crew._get_dictionary_entry = (
+        lambda token: {"enhanced_definition": "known word"}
+        if str(token or "").strip().lower() in {"naz", "nazpsad"}
+        else None
+    )
+    crew._load_accepted_glosses = lambda _token: []
+    crew._build_parent_entries = lambda *_args, **_kwargs: []
+    crew._get_field_value = (
+        lambda item, field, default="": item.get(field, default)
+        if isinstance(item, dict)
+        else default
+    )
+    crew.is_ngram_in_variants = lambda *_args, **_kwargs: True
+    crew.get_matching_variant = lambda *_args, **_kwargs: None
+    crew._dynamic_coh_floor = lambda *_args, **_kwargs: 0.0
+    crew._build_stats_summary = lambda *_args, **_kwargs: "stub-summary"
+    crew._mark_root_complete = lambda *_args, **_kwargs: None
+    crew._record_preanalysis_consumed = lambda *_args, **_kwargs: None
+
+    crew.entries = []
+    crew.fasttext = object()
+    crew.sentence_model = object()
+    crew.subst_map = {}
+    crew.candidate_finder = _DummyFinderInstance()
+    crew.new_definitions_db = _DummyDB()
+    crew.ngram_db = _DummyDB()
+
+    recorded_skips: list[tuple[str, str]] = []
+    crew._insert_skip = (
+        lambda ngram, reason_code, cluster_index=None: recorded_skips.append((ngram, reason_code))
+    )
+
+    def _fail_evaluate(**_kwargs):
+        raise AssertionError("known dictionary words should not reach evaluate_ngram")
+
+    crew.evaluate_ngram = _fail_evaluate
+
+    monkeypatch.setattr(
+        pipeline,
+        "find_semantically_similar_words",
+        lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "cluster_definitions",
+        lambda candidates, _sentence_model: {"clusters": [candidates], "config": {}},
+    )
+    monkeypatch.setattr(pipeline, "compute_cluster_cohesion", lambda *_a, **_k: 0.7)
+    monkeypatch.setattr(pipeline, "stream_text", lambda *_a, **_k: None)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(pipeline, "save_log", lambda *_a, **_k: None)
+
+    crew.process_ngrams(single_ngram="NAZ", style="debate", max_words=1)
+
+    assert recorded_skips == [("naz", "known_dictionary_word")]

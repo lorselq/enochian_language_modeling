@@ -191,6 +191,7 @@ src/enochian_lm/root_extraction/data/ngram_index.sqlite3-shm
 src/enochian_lm/root_extraction/data/ngram_index.sqlite3-wal
 # Generated interpretation artifacts are local research outputs, not source files.
 src/enochian_lm/root_extraction/interpretation/
+src/enochian_lm/root_extraction/interpretation/*
 src/loagaeth/data/liber_loagaeth.sqlite3
 src/loagaeth/data/liber_loagaeth.sqlite3
 src/loagaeth/data/liber_loagaeth.sqlite3-shm

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Iterable, Mapping
@@ -45,9 +46,19 @@ class AttestedDefinition:
 
 @dataclass
 class DictionaryMorph:
+    """Carry dictionary-backed morph metadata into translation decisions.
+
+    Dictionary entries are authoritative anchors for exact known words and a
+    useful weak signal for phrase translation. Keeping the definition, senses,
+    and coarse POS together allows downstream code to separate definitive
+    whole-word anchors from weaker substring hints without reparsing the raw
+    dictionary entry.
+    """
+
     morph: str
     definition: str | None
     senses: list[str] = field(default_factory=list)
+    part_of_speech: str | None = None
 
 
 @dataclass
@@ -128,6 +139,7 @@ class WordEvidence:
     definition_glosses: dict[str, list[tuple[str, float | None]]] = field(
         default_factory=dict
     )
+    rejected_morphs: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -332,41 +344,19 @@ class InsightsRepository:
     ) -> list[ClusterRecord]:
         # Only fetch accepted clusters (action='escalate' AND verdict='True')
         # Non-accepted clusters are either skipped or rejected definitions
-        supports_json = _sqlite_supports_json(conn)
-        if supports_json:
-            query = """SELECT *, json_valid(glossator_def) AS glossator_valid FROM clusters
-               WHERE TRIM(ngram) COLLATE NOCASE = ?
-                 AND action = 'escalate'
-                 AND verdict = 'True'
-                 AND (
-                   (json_valid(glossator_def)
-                     AND COALESCE(TRIM(json_extract(glossator_def, '$.DEFINITION')), '') <> ''
-                     AND COALESCE(LOWER(CAST(json_extract(glossator_def, '$.REJECTED') AS TEXT)), '') NOT IN ('1', 'true', 'yes'))
-                   OR NOT json_valid(glossator_def)
-                 )
-               ORDER BY cluster_index ASC;"""
-        else:
-            query = """SELECT * FROM clusters
-               WHERE TRIM(ngram) COLLATE NOCASE = ?
-                 AND action = 'escalate'
-                 AND verdict = 'True'
-               ORDER BY cluster_index ASC;"""
+        query = """SELECT * FROM clusters
+           WHERE TRIM(ngram) COLLATE NOCASE = ?
+             AND action = 'escalate'
+             AND verdict = 'True'
+           ORDER BY cluster_index ASC;"""
         cursor = conn.execute(query, (ngram,))
         cluster_rows = cursor.fetchall()
         if cluster_rows:
-            if supports_json:
-                cluster_rows = [
-                    row
-                    for row in cluster_rows
-                    if row["glossator_valid"]
-                    or _glossator_definition_is_accepted(row["glossator_def"])
-                ]
-            else:
-                cluster_rows = [
-                    row
-                    for row in cluster_rows
-                    if _glossator_definition_is_accepted(row["glossator_def"])
-                ]
+            cluster_rows = [
+                row
+                for row in cluster_rows
+                if _glossator_definition_is_accepted(row["glossator_def"])
+            ]
         if not cluster_rows:
             return []
 
@@ -465,6 +455,9 @@ class InsightsRepository:
             min_n=dictionary_min_n,
             max_n=max_n,
         )
+        rejected_morphs = self.fetch_rejected_morphs(
+            [normalized], variants=active_variants
+        )
 
         fasttext_neighbors: list[FasttextNeighbor] = []
         if not (
@@ -487,6 +480,7 @@ class InsightsRepository:
             fasttext_neighbors=fasttext_neighbors,
             attested_definitions=attested_definitions,
             dictionary_morphs=dictionary_morphs,
+            rejected_morphs=rejected_morphs,
         )
 
     def fetch_morph_support(
@@ -515,6 +509,49 @@ class InsightsRepository:
             )
         return clusters, residuals, hypotheses
 
+    def fetch_rejected_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> set[str]:
+        """Return morphs that are explicitly rejected in residual analysis.
+
+        Negative evidence matters for translation because a tempting split can
+        look plausible from raw attestation while a glossator payload has
+        already rejected that piece as a valid standalone root. We surface
+        these tokens separately so ranking can penalize them without treating
+        them as support.
+        """
+        selected = list(variants) if variants else self.variants
+        unique = {m.upper() for m in morphs if m}
+        rejected: set[str] = set()
+
+        for morph in sorted(unique):
+            for variant in selected:
+                conn = self._connections.get(variant)
+                if conn is None:
+                    continue
+                rows = conn.execute(
+                    """
+                    SELECT glossator_def
+                    FROM root_residual_semantics
+                    WHERE TRIM(residual) COLLATE NOCASE = ?
+                    ORDER BY group_idx;
+                    """,
+                    (morph,),
+                ).fetchall()
+                for row in rows:
+                    payload = row["glossator_def"] if "glossator_def" in row.keys() else row[0]
+                    definition, rejected_flag = _parse_glossator_definition(payload)
+                    if rejected_flag or not definition:
+                        rejected.add(morph)
+                        break
+                if morph in rejected:
+                    break
+
+        return rejected
+
     def fetch_accepted_definition_counts(
         self,
         morphs: Iterable[str],
@@ -536,16 +573,18 @@ class InsightsRepository:
                 conn = self._connections.get(variant)
                 if conn is None:
                     continue
-                cursor = conn.execute(
-                    """SELECT COUNT(*) FROM clusters
+                rows = conn.execute(
+                    """SELECT glossator_def FROM clusters
                        WHERE TRIM(ngram) COLLATE NOCASE = ?
                          AND action = 'escalate'
                          AND verdict = 'True'""",
                     (morph,),
+                ).fetchall()
+                total += sum(
+                    1
+                    for row in rows
+                    if _glossator_definition_is_accepted(row["glossator_def"])
                 )
-                row = cursor.fetchone()
-                if row:
-                    total += row[0]
             counts[morph] = total
 
         return counts
@@ -688,36 +727,16 @@ class InsightsRepository:
             conn = self._connections.get(variant)
             if conn is None:
                 continue
-            supports_json = _sqlite_supports_json(conn)
-            if supports_json:
-                query = """SELECT *, json_valid(glossator_def) AS glossator_valid FROM root_residual_semantics
-                    WHERE TRIM(residual) COLLATE NOCASE = ?
-                      AND (
-                        (json_valid(glossator_def)
-                          AND COALESCE(TRIM(json_extract(glossator_def, '$.DEFINITION')), '') <> ''
-                          AND COALESCE(LOWER(CAST(json_extract(glossator_def, '$.REJECTED') AS TEXT)), '') NOT IN ('1', 'true', 'yes'))
-                        OR NOT json_valid(glossator_def)
-                      )
-                    ORDER BY group_idx;"""
-            else:
-                query = """SELECT * FROM root_residual_semantics
-                    WHERE TRIM(residual) COLLATE NOCASE = ?
-                    ORDER BY group_idx;"""
+            query = """SELECT * FROM root_residual_semantics
+                WHERE TRIM(residual) COLLATE NOCASE = ?
+                ORDER BY group_idx;"""
             rows = conn.execute(query, (residual,)).fetchall()
             if rows:
-                if supports_json:
-                    rows = [
-                        row
-                        for row in rows
-                        if row["glossator_valid"]
-                        or _glossator_definition_is_accepted(row["glossator_def"])
-                    ]
-                else:
-                    rows = [
-                        row
-                        for row in rows
-                        if _glossator_definition_is_accepted(row["glossator_def"])
-                    ]
+                rows = [
+                    row
+                    for row in rows
+                    if _glossator_definition_is_accepted(row["glossator_def"])
+                ]
             for row in rows:
                 data = {key: row[key] for key in row.keys()}
                 records.append(
@@ -894,6 +913,7 @@ def _dictionary_morphs_for_word(
                 morph=slice_text,
                 definition=definition,
                 senses=senses,
+                part_of_speech=_dictionary_entry_pos(entry),
             )
     return morphs
 
@@ -930,6 +950,13 @@ def _dictionary_entry_senses(entry: Mapping[str, object]) -> list[str]:
     return definitions
 
 
+def _dictionary_entry_pos(entry: Mapping[str, object]) -> str | None:
+    pos = entry.get("pos")
+    if isinstance(pos, str) and pos.strip():
+        return pos.strip()
+    return None
+
+
 def _safe_json_array(payload: object) -> list[str]:
     if isinstance(payload, (list, tuple)):
         return [str(item) for item in payload]
@@ -952,16 +979,13 @@ def _parse_glossator_definition(payload: object) -> tuple[str | None, bool]:
     payload = payload.strip()
     if not payload:
         return None, False
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError:
-        return payload, False
+    data = _parse_glossator_json(payload)
     if isinstance(data, Mapping):
         definition = data.get("DEFINITION")
         if definition is None:
             definition = data.get("definition")
         if isinstance(definition, str):
-            definition = definition.strip()
+            definition = definition.strip() or None
         else:
             definition = None
         rejected = data.get("REJECTED")
@@ -983,6 +1007,56 @@ def _glossator_definition_is_accepted(payload: object) -> bool:
     if rejected:
         return False
     return bool(definition and definition.strip())
+
+
+def _parse_glossator_json(payload: str) -> Mapping[str, object] | str | None:
+    """Parse nested glossator payloads into a consistent mapping.
+
+    Translation data includes several generations of payload formatting:
+    plain JSON objects, JSON wrapped in Markdown fences, and top-level objects
+    that stash the real payload under ``RAW_TEXT``. Repository reads need to
+    understand all of them so exact-word anchors and rejected residuals are not
+    silently lost.
+    """
+    for attempt in (_load_nested_raw_text, _load_json_from_code_fence, _load_json):
+        result = attempt(payload)
+        if result is not None:
+            return result
+    return None
+
+
+def _load_json(text: str) -> Mapping[str, object] | str | None:
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(data, Mapping):
+        return data
+    if isinstance(data, str):
+        return data
+    return None
+
+
+def _load_json_from_code_fence(text: str) -> Mapping[str, object] | None:
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if not match:
+        return None
+    parsed = _load_json(match.group(1))
+    return parsed if isinstance(parsed, Mapping) else None
+
+
+def _load_nested_raw_text(text: str) -> Mapping[str, object] | None:
+    parsed = _load_json(text)
+    if not isinstance(parsed, Mapping):
+        return None
+    raw_text = parsed.get("RAW_TEXT")
+    if not isinstance(raw_text, str):
+        return None
+    nested = _load_json_from_code_fence(raw_text) or _load_json(raw_text)
+    return nested if isinstance(nested, Mapping) else None
 
 
 def _sqlite_supports_json(conn: sqlite3.Connection) -> bool:

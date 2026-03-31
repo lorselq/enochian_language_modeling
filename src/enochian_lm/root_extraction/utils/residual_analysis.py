@@ -95,6 +95,64 @@ def compute_word_break_subtractions(host_word: str, root: str) -> list[dict[str,
     return matches
 
 
+def expand_subtraction_variants(subtraction: dict[str, object]) -> list[dict[str, object]]:
+    """Expand one subtraction row into executable ambiguity branches.
+
+    What: turn a single-occurrence subtraction row plus its optional
+    ``remove_all_occurrences`` payload into concrete branch records.
+    Why: the pipeline must be able to recurse through repeated-root ambiguity
+    instead of carrying the remove-all option as inert metadata.
+    Big picture: keeps subtraction exploration honest for cases like
+    ``ANAZNAZ - NAZ = ANAZ`` and ``ANAZNAZ - NAZ (remove-all) = A``.
+    """
+
+    if not isinstance(subtraction, dict):
+        return []
+
+    base_variant = dict(subtraction)
+    base_variant.setdefault("selected_variant", "single_occurrence")
+
+    variants: list[dict[str, object]] = [base_variant]
+
+    remove_all = subtraction.get("remove_all_occurrences")
+    if not isinstance(remove_all, dict):
+        return variants
+
+    remove_all_residual = str(remove_all.get("residual", "")).strip()
+    remove_all_artifacts = [
+        item
+        for item in (remove_all.get("residuals") or [])
+        if isinstance(item, dict)
+    ]
+    removed_spans = [
+        span
+        for span in (remove_all.get("removed_spans") or [])
+        if isinstance(span, (list, tuple)) and len(span) == 2
+    ]
+
+    base_residual = str(subtraction.get("residual", "")).strip()
+    base_spans = subtraction.get("occurrence_spans") or []
+
+    # Skip the synthetic remove-all branch when it is not meaningfully distinct.
+    if (
+        remove_all_residual == base_residual
+        and list(removed_spans) == list(base_spans)
+    ):
+        return variants
+
+    remove_all_variant = dict(subtraction)
+    remove_all_variant["residual"] = remove_all_residual
+    remove_all_variant["residuals"] = remove_all_artifacts
+    if removed_spans:
+        remove_all_variant["start"] = int(removed_spans[0][0])
+        remove_all_variant["end"] = int(removed_spans[-1][1])
+    remove_all_variant["selected_variant"] = "remove_all_occurrences"
+    remove_all_variant["remove_all"] = True
+    variants.append(remove_all_variant)
+
+    return variants
+
+
 def build_subtraction_evidence(
     subtraction: dict[str, object],
     *,
@@ -143,10 +201,20 @@ def build_subtraction_evidence(
     }
 
     # Optional semantic anchors for prompt construction.
-    for optional_key in ("host_definition", "donor_gloss", "donor_definition"):
+    for optional_key in (
+        "host_definition",
+        "host_source",
+        "donor_gloss",
+        "donor_definition",
+        "residual_definition",
+        "confidence",
+        "selected_variant",
+    ):
         value = subtraction.get(optional_key)
         if value not in (None, ""):
             payload[optional_key] = value
+    if subtraction.get("remove_all"):
+        payload["remove_all"] = True
 
     if "occurrence_index" in subtraction:
         payload["occurrence_index"] = int(subtraction.get("occurrence_index", 0) or 0)

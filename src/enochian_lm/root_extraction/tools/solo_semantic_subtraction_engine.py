@@ -95,7 +95,10 @@ def _format_subtraction_guidance_compact(
             continue
         seen.add(triple)
 
-        suffix = " (remove-all option)" if row.get("remove_all") else ""
+        is_remove_all = bool(row.get("remove_all")) or str(
+            row.get("selected_variant", "")
+        ).strip().lower() == "remove_all_occurrences"
+        suffix = " (remove-all option)" if is_remove_all else ""
         equations.append(f"- {host} - {donor_root} = {residual}{suffix}")
         if len(equations) >= max_equations:
             break
@@ -173,14 +176,26 @@ def solo_semantic_subtraction(
                 )
             )
 
-    # Determine if we have compositional evidence (donor roots with accepted glosses)
+    # Determine if we have compositional evidence (dictionary or accepted donor traces)
     has_compositional_evidence = False
     if residual_guidance and isinstance(residual_guidance, dict):
-        cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
-        for analysis in cooccurring:
-            if isinstance(analysis, dict):
+        for row in residual_guidance.get("word_breaks") or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("donor_definition", "")).strip() or row.get("donor_gloss"):
+                has_compositional_evidence = True
+                break
+
+        if not has_compositional_evidence:
+            cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
+            for analysis in cooccurring:
+                if not isinstance(analysis, dict):
+                    continue
                 eval_status = str(analysis.get("EVALUATION", "")).lower()
-                if "accept" in eval_status:
+                donor_def = str(
+                    analysis.get("DEFINITION") or analysis.get("definition") or ""
+                ).strip()
+                if "accept" in eval_status or donor_def:
                     has_compositional_evidence = True
                     break
 
@@ -281,7 +296,8 @@ def solo_semantic_subtraction(
     subtraction_brief = ""
 
     # === COMPOSITIONAL ANALYSIS SECTION ===
-    # Build explicit semantic subtraction equations for each host word
+    # Build explicit semantic subtraction equations from the actual trace rows
+    # emitted by the pipeline, rather than rebuilding them via substring matches.
     compositional_section = ""
     if residual_guidance and isinstance(residual_guidance, dict):
         cooccurring = residual_guidance.get("cooccurring_root_analyses") or []
@@ -297,31 +313,67 @@ def solo_semantic_subtraction(
                         donor_def = donor_def[:97] + "..."
                     donor_defs[donor_root] = donor_def
 
-        # Build subtraction equations for each candidate
-        equations: list[str] = []
+        host_defs: dict[str, str] = {}
         for c in candidates:
             word = _get_field(c, "word", "").upper()
-            norm = _get_field(c, "normalized", "").lower()
-            definition = _get_field(c, "enhanced_definition", "") or _get_field(c, "definition", "")
+            definition = _get_field(c, "enhanced_definition", "") or _get_field(
+                c, "definition", ""
+            )
+            if word and definition:
+                host_defs[word] = definition
 
-            if not word or not norm or not definition:
+        equations: list[str] = []
+        seen_equations: set[tuple[str, str, str, str]] = set()
+        for row in residual_guidance.get("word_breaks") or []:
+            if not isinstance(row, dict):
+                continue
+            host = str(row.get("host_word", "")).strip().upper()
+            donor_root = str(row.get("root", "")).strip().upper()
+            residual = str(row.get("residual", "")).strip().upper()
+            if not host or not donor_root or not residual:
+                continue
+            if root.upper() not in residual:
                 continue
 
-            # Find which donor root(s) this word contains (besides the residual)
-            for donor_root, donor_def in donor_defs.items():
-                donor_lower = donor_root.lower()
-                if donor_lower in norm and donor_lower != root.lower():
-                    # This word contains both the donor root and the residual
-                    equations.append(
-                        f"  {word} (\"{definition}\") = {donor_root} (\"{donor_def}\") + {root.upper()} (?)\n"
-                        f"    → What semantic contribution would {root.upper()} make to transform \"{donor_def.split('.')[0]}\" into \"{definition}\"?"
-                    )
+            selected_variant = str(row.get("selected_variant", "")).strip().lower()
+            key = (host, donor_root, residual, selected_variant)
+            if key in seen_equations:
+                continue
+            seen_equations.add(key)
+
+            host_definition = str(row.get("host_definition", "")).strip() or host_defs.get(
+                host, ""
+            )
+            donor_def = str(row.get("donor_definition", "")).strip()
+            if not donor_def:
+                donor_def = donor_defs.get(donor_root, "")
+            if not donor_def and row.get("donor_gloss"):
+                try:
+                    donor_def = str(json.loads(str(row.get("donor_gloss"))).get("DEFINITION", "")).strip()
+                except json.JSONDecodeError:
+                    donor_def = ""
+
+            equation = f"{host} - {donor_root} = {residual}"
+            if selected_variant == "remove_all_occurrences" or row.get("remove_all"):
+                equation += " (remove-all option)"
+
+            host_phrase = f" (\"{host_definition}\")" if host_definition else ""
+            donor_phrase = f" (\"{donor_def}\")" if donor_def else ""
+            target_note = (
+                "directly isolates the target residual"
+                if residual == root.upper()
+                else f"moves closer to the target residual {root.upper()}"
+            )
+            equations.append(
+                f"  {equation}\n"
+                f"    → host{host_phrase}; donor={donor_root}{donor_phrase}; this step {target_note}."
+            )
 
         if equations:
             compositional_section = textwrap.dedent(
                 f"""
                 COMPOSITIONAL ANALYSIS
-                For each host word containing {root.upper()}, consider the semantic subtraction:
+                Follow the actual subtraction chain(s) that isolate {root.upper()}:
 
                 """
             ).strip() + "\n\n" + "\n\n".join(equations)

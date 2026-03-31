@@ -1,7 +1,7 @@
-"""Command-line interface for interpretation and single-word translation.
+"""Command-line interface for interpretation and translation workflows.
 
 This module deliberately houses both the interpret-text workflow (legacy
-entrypoint behavior) and the single-word translation CLI. Keeping the two
+entrypoint behavior) and the word/phrase translation CLIs. Keeping them
 together reduces drift in shared behaviors such as output rendering, variant
 selection, and error handling.
 """
@@ -20,14 +20,17 @@ from dotenv import find_dotenv, load_dotenv
 from enochian_lm.common.config import get_config_paths
 
 from .llm_synthesis import DEFAULT_LLM_CONTEXT, LLMRequestProgress
+from .phrase_service import PhraseTranslationService
 from .service import InterpretationService, SingleWordTranslationService
 
 INTERPRET_COMMAND = "interpret-text"
 TRANSLATE_WORD_COMMAND = "translate-word"
+TRANSLATE_PHRASE_COMMAND = "translate-phrase"
 COMMAND_ALIASES = {
     "interpret": INTERPRET_COMMAND,
     INTERPRET_COMMAND: INTERPRET_COMMAND,
     TRANSLATE_WORD_COMMAND: TRANSLATE_WORD_COMMAND,
+    TRANSLATE_PHRASE_COMMAND: TRANSLATE_PHRASE_COMMAND,
 }
 
 
@@ -120,6 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     configure_translate_word_parser(translate_word_parser)
     translate_word_parser.set_defaults(handler=_run_translate_word)
+
+    translate_phrase_parser = subparsers.add_parser(
+        TRANSLATE_PHRASE_COMMAND,
+        help="Translate a phrase using token analyses and global parse search.",
+    )
+    configure_translate_phrase_parser(translate_phrase_parser)
+    translate_phrase_parser.set_defaults(handler=_run_translate_phrase)
 
     return parser
 
@@ -247,11 +257,137 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--no-whole-word",
+        "--no-whole-words",
         dest="allow_whole_word",
         action="store_false",
         help=(
-            "Disallow whole-word decompositions except for single-letter words "
-            "(e.g., A, I)."
+            "Disallow single-piece whole-word decomposition paths for multi-letter "
+            "words. Exact dictionary anchors and provisional full-word readings "
+            "may still appear."
+        ),
+    )
+
+
+def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
+    """Register translate-phrase CLI arguments on an existing parser.
+
+    Phrase translation reuses the same lexical evidence and LLM controls as
+    single-word translation, but adds memory persistence so unknown canonical
+    words can accumulate cautious evidence across many phrases.
+    """
+    parser.add_argument("phrase", help="Phrase to translate.")
+    parser.add_argument(
+        "--variant",
+        choices=["solo", "debate", "both"],
+        default="both",
+        help="Insights variant to query (default: both).",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["prefer-fewer", "prefer-known", "prefer-balance"],
+        default="prefer-balance",
+        help="Word-level reranking strategy to apply inside the phrase parser.",
+    )
+    parser.add_argument(
+        "--evidence-mode",
+        choices=["all", "clusters-only", "residuals-only"],
+        default="all",
+        help="Evidence sources to use while building token analyses.",
+    )
+    parser.add_argument(
+        "--weight",
+        type=_parse_bool,
+        default=True,
+        help="Enable weighted word-level scoring (default: true).",
+    )
+    parser.add_argument(
+        "--no-weight",
+        dest="weight",
+        action="store_false",
+        help="Disable weighted word-level scoring.",
+    )
+
+    llm_group = parser.add_mutually_exclusive_group()
+    llm_group.add_argument(
+        "--llm",
+        action="store_true",
+        help=(
+            "Enable an additional constrained/historical LLM render for the "
+            "chosen phrase parse. The lay translation is always attempted."
+        ),
+    )
+    llm_group.add_argument(
+        "--no-llm",
+        action="store_true",
+        help=(
+            "Disable the additional constrained/historical render. The lay "
+            "translation is still attempted (default behavior)."
+        ),
+    )
+    parser.add_argument(
+        "--llm-mode",
+        choices=["local", "remote"],
+        default="remote",
+        help="Choose which LLM backend to use for lay and constrained phrase rendering.",
+    )
+    parser.add_argument(
+        "--llm-context",
+        default=DEFAULT_LLM_CONTEXT,
+        help="Historical/context scope for LLM rendering.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text).",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Optional path to write the output. Defaults to stdout.",
+    )
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output with indentation.",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=3,
+        help="Number of token candidates and parse candidates to retain.",
+    )
+    parser.add_argument(
+        "--memory-db",
+        type=Path,
+        help="Optional translation-memory SQLite path.",
+    )
+    parser.add_argument(
+        "--no-memory-update",
+        action="store_true",
+        help="Do not write provisional unknown-word observations to translation memory.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Include token analyses and parse candidates in text output.",
+    )
+    parser.add_argument(
+        "--allow-whole-word",
+        dest="allow_whole_word",
+        action="store_true",
+        default=True,
+        help="Allow whole-word token analyses (default: true).",
+    )
+    parser.add_argument(
+        "--no-whole-word",
+        "--no-whole-words",
+        dest="allow_whole_word",
+        action="store_false",
+        help=(
+            "Suppress single-piece whole-word decomposition paths for multi-letter "
+            "tokens. Exact dictionary anchors and provisional full-word readings "
+            "can still surface."
         ),
     )
 
@@ -377,6 +513,11 @@ def _run_translate_word(args: argparse.Namespace) -> int:
     return translate_word_from_args(args)
 
 
+def _run_translate_phrase(args: argparse.Namespace) -> int:
+    """Run the phrase translation pipeline and emit text or JSON output."""
+    return translate_phrase_from_args(args)
+
+
 def translate_word_from_args(args: argparse.Namespace) -> int:
     """Translate a single word based on parsed CLI arguments.
 
@@ -464,6 +605,88 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
             verbose=args.verbose,
             trace_filters=args.trace_filters,
         )
+        _emit_output(rendered, output_path=args.output)
+
+    return exit_code
+
+
+def translate_phrase_from_args(args: argparse.Namespace) -> int:
+    """Translate a phrase based on parsed CLI arguments."""
+    phrase = (args.phrase or "").strip()
+    if not phrase:
+        _emit_error("Phrase must be a non-empty string.")
+        return 2
+
+    variants = _resolve_variants(args.variant)
+    missing = _missing_db_paths(variants)
+    if missing:
+        _emit_error(
+            "Missing insights database file(s): "
+            + ", ".join(str(path) for path in missing)
+        )
+        return 2
+
+    llm_enabled = bool(args.llm) if args.llm or args.no_llm else False
+    llm_use_remote = args.llm_mode == "remote"
+    try:
+        _configure_llm_env(args.llm_mode)
+    except FileNotFoundError as exc:
+        if llm_enabled:
+            _emit_error(str(exc))
+            return 2
+
+    top_k = max(1, int(args.top_k)) if args.top_k is not None else 3
+
+    try:
+        with PhraseTranslationService.from_config(
+            variants=variants,
+            llm_enabled=llm_enabled,
+            llm_use_remote=llm_use_remote,
+            memory_db=args.memory_db,
+        ) as service:
+            outputs: list[dict[str, object]] = []
+            for variant in variants:
+                result = service.translate_phrase(
+                    phrase,
+                    variants=[variant],
+                    strategy=args.strategy,
+                    top_k=top_k,
+                    llm=llm_enabled,
+                    llm_context=args.llm_context,
+                    memory_update=not bool(args.no_memory_update),
+                    evidence_mode=_resolve_evidence_mode(args.evidence_mode),
+                    weight_enabled=bool(args.weight),
+                    allow_whole_word=bool(args.allow_whole_word),
+                )
+                outputs.append(
+                    _build_phrase_output_payload(
+                        result,
+                        variant=variant,
+                        verbose=args.verbose,
+                    )
+                )
+    except FileNotFoundError as exc:
+        _emit_error(str(exc))
+        return 2
+    except ValueError as exc:
+        _emit_error(str(exc))
+        return 2
+
+    payload: dict[str, object] | list[dict[str, object]]
+    if args.variant == "both":
+        payload = outputs
+    else:
+        payload = outputs[0] if outputs else {}
+
+    exit_code = 0 if any(
+        isinstance(output.get("chosen_parse"), dict) for output in outputs
+    ) else 1
+
+    if args.format == "json":
+        rendered = _render_json(payload, pretty=args.pretty)
+        _emit_output(rendered, output_path=args.output)
+    else:
+        rendered = _format_text_report(payload, verbose=args.verbose)
         _emit_output(rendered, output_path=args.output)
 
     return exit_code
@@ -624,6 +847,7 @@ def _build_output_payload(
             {
                 "rank": candidate.get("rank"),
                 "variant": variant,
+                "analysis_type": candidate.get("analysis_type"),
                 "morphs": list(morphs_raw) if isinstance(morphs_raw, (list, tuple)) else [],
                 "score": candidate.get("score"),
                 "breakdown": candidate.get("breakdown"),
@@ -652,6 +876,46 @@ def _build_output_payload(
     return payload
 
 
+def _build_phrase_output_payload(
+    result: dict[str, object],
+    *,
+    variant: str,
+    verbose: bool = False,
+) -> dict[str, object]:
+    """Normalize phrase translation results into a CLI-friendly payload."""
+    payload: dict[str, object] = {
+        "phrase": result.get("phrase"),
+        "variant": variant,
+        "variants_queried": result.get("variants_queried", []),
+        "strategy": result.get("strategy"),
+        "evidence_mode": result.get("evidence_mode"),
+        "weighting_enabled": result.get("weighting_enabled"),
+        "timestamp": result.get("timestamp"),
+        "llm_enabled": result.get("llm_enabled"),
+        "llm_mode": result.get("llm_mode"),
+        "llm_context": result.get("llm_context"),
+        "token_analyses": result.get("token_analyses", []),
+        "parse_candidates": result.get("parse_candidates", []),
+        "chosen_parse": result.get("chosen_parse"),
+        "rendered_translation": result.get("rendered_translation"),
+        "render_reasoning": result.get("render_reasoning"),
+        "render_confidence": result.get("render_confidence"),
+        "render_warnings": result.get("render_warnings", []),
+        "lay_translation": result.get("lay_translation"),
+        "lay_reasoning": result.get("lay_reasoning"),
+        "lay_confidence": result.get("lay_confidence"),
+        "lay_warnings": result.get("lay_warnings", []),
+        "lay_translation_mode": result.get("lay_translation_mode"),
+        "memory_updates": result.get("memory_updates", []),
+    }
+    if verbose:
+        payload["diagnostics"] = {
+            "token_count": len(result.get("tokens", [])),
+            "parse_candidate_count": len(result.get("parse_candidates", [])),
+        }
+    return payload
+
+
 def _apply_residual_only_adjustment(payload: dict[str, object]) -> None:
     """Annotate residual-only matches with a caution note and lower confidence.
 
@@ -673,6 +937,10 @@ def _apply_residual_only_adjustment(payload: dict[str, object]) -> None:
         return
 
     for sense in senses:
+        if not isinstance(sense, dict):
+            continue
+        if sense.get("analysis_type") == "whole_word_anchor":
+            continue
         meanings = sense.get("meanings") if isinstance(sense, dict) else None
         if not isinstance(meanings, list) or not meanings:
             continue
@@ -771,7 +1039,9 @@ def _format_text_report(
     """
     if isinstance(payload, list):
         blocks = [
-            _format_variant_report(
+            _format_phrase_report(item, verbose=verbose)
+            if isinstance(item, dict) and "phrase" in item
+            else _format_variant_report(
                 item,
                 verbose=verbose,
                 trace_filters=trace_filters,
@@ -779,6 +1049,8 @@ def _format_text_report(
             for item in payload
         ]
         return "\n\n".join(blocks)
+    if isinstance(payload, dict) and "phrase" in payload:
+        return _format_phrase_report(payload, verbose=verbose)
     return _format_variant_report(payload, verbose=verbose, trace_filters=trace_filters)
 
 
@@ -843,6 +1115,9 @@ def _format_variant_report(
             morphs_list = morphs_raw if isinstance(morphs_raw, list) else []
             morphs_str = " + ".join(str(m) for m in morphs_list)
             lines.append(f"\nRank {rank}: {morphs_str}")
+            analysis_type = sense.get("analysis_type")
+            if isinstance(analysis_type, str) and analysis_type:
+                lines.append(f"Analysis type: {analysis_type}")
             score = sense.get("score")
             if isinstance(score, (int, float)):
                 lines.append(f"Score: {score:.2f}")
@@ -1314,6 +1589,110 @@ def _format_variant_report(
         warnings = consensus.get("warnings")
         if isinstance(warnings, list) and warnings:
             lines.append(_wrap_text("Warnings: " + "; ".join(warnings), indent=0))
+
+    return "\n".join(lines)
+
+
+def _format_phrase_report(
+    payload: dict[str, object],
+    *,
+    verbose: bool = False,
+) -> str:
+    """Render a phrase translation payload in a readable terminal format."""
+    lines: list[str] = []
+    lines.append(f"Phrase: {payload.get('phrase', '')}")
+    lines.append(f"Variant: {payload.get('variant', '')}")
+    lines.append(f"Strategy: {payload.get('strategy', '')}")
+    lines.append(f"Constrained render enabled: {payload.get('llm_enabled', False)}")
+    lay_mode = payload.get("lay_translation_mode")
+    if isinstance(lay_mode, str) and lay_mode:
+        lines.append(f"Lay translation mode: {lay_mode}")
+
+    rendered_translation = payload.get("rendered_translation")
+    if isinstance(rendered_translation, str) and rendered_translation:
+        lines.append(_wrap_text(f"Technical translation: {rendered_translation}", indent=0))
+
+    render_confidence = payload.get("render_confidence")
+    if isinstance(render_confidence, (int, float)):
+        lines.append(f"Technical confidence: {float(render_confidence):.2f}")
+
+    render_reasoning = payload.get("render_reasoning")
+    if isinstance(render_reasoning, str) and render_reasoning:
+        lines.append(_wrap_text(f"Technical reasoning: {render_reasoning}", indent=0))
+
+    lay_translation = payload.get("lay_translation")
+    if isinstance(lay_translation, str) and lay_translation:
+        lines.append(_wrap_text(f"Lay translation: {lay_translation}", indent=0))
+
+    lay_confidence = payload.get("lay_confidence")
+    if isinstance(lay_confidence, (int, float)):
+        lines.append(f"Lay confidence: {float(lay_confidence):.2f}")
+
+    lay_reasoning = payload.get("lay_reasoning")
+    if isinstance(lay_reasoning, str) and lay_reasoning:
+        lines.append(_wrap_text(f"Lay reasoning: {lay_reasoning}", indent=0))
+
+    chosen_parse = payload.get("chosen_parse")
+    if isinstance(chosen_parse, dict):
+        lines.append("Chosen parse:")
+        score = chosen_parse.get("score")
+        if isinstance(score, (int, float)):
+            lines.append(_wrap_text(f"Score: {float(score):.2f}", indent=2))
+        skeleton = chosen_parse.get("translation_skeleton")
+        if isinstance(skeleton, str) and skeleton:
+            lines.append(_wrap_text(f"Skeleton: {skeleton}", indent=2))
+        relations = chosen_parse.get("relations")
+        if isinstance(relations, list) and relations:
+            lines.append(_wrap_text("Relations:", indent=2))
+            for relation in relations:
+                if not isinstance(relation, dict):
+                    continue
+                label = (
+                    f"{relation.get('left_index')}->{relation.get('right_index')}: "
+                    f"{relation.get('relation')} ({relation.get('direction')})"
+                )
+                lines.append(_wrap_text(label, indent=4, bullet=True))
+
+    if verbose:
+        token_analyses = payload.get("token_analyses")
+        if isinstance(token_analyses, list) and token_analyses:
+            lines.append("Token analyses:")
+            for token_payload in token_analyses:
+                if not isinstance(token_payload, dict):
+                    continue
+                token = token_payload.get("token", "")
+                lines.append(_wrap_text(f"{token}:", indent=2))
+                for candidate in token_payload.get("candidates", []):
+                    if not isinstance(candidate, dict):
+                        continue
+                    label = (
+                        f"rank={candidate.get('rank')} "
+                        f"type={candidate.get('analysis_type')} "
+                        f"role={candidate.get('role_hint')} "
+                        f"definition={candidate.get('definition') or '[' + str(token) + ']'}"
+                    )
+                    lines.append(_wrap_text(label, indent=4, bullet=True))
+
+    memory_updates = payload.get("memory_updates")
+    if isinstance(memory_updates, list) and memory_updates:
+        lines.append("Memory updates:")
+        for update in memory_updates:
+            if not isinstance(update, dict):
+                continue
+            label = (
+                f"{update.get('word')}: {update.get('best_gloss') or '[unresolved]'} "
+                f"(confidence {float(update.get('confidence') or 0.0):.2f}, "
+                f"evidence {int(update.get('evidence_count') or 0)})"
+            )
+            lines.append(_wrap_text(label, indent=2, bullet=True))
+
+    warnings = payload.get("render_warnings")
+    if isinstance(warnings, list) and warnings:
+        lines.append(_wrap_text("Technical warnings: " + "; ".join(str(item) for item in warnings), indent=0))
+
+    lay_warnings = payload.get("lay_warnings")
+    if isinstance(lay_warnings, list) and lay_warnings:
+        lines.append(_wrap_text("Lay warnings: " + "; ".join(str(item) for item in lay_warnings), indent=0))
 
     return "\n".join(lines)
 
