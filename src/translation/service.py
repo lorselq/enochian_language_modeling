@@ -41,6 +41,7 @@ from .llm_synthesis import (
     LLMRequestProgress,
     TranslationProgressReporter,
 )
+from .progress import LLMProgressReporterAdapter, TranslationPhaseReporter
 from .repository import (
     ClusterRecord,
     DictionaryMorph,
@@ -431,7 +432,7 @@ class SingleWordTranslationService:
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
         use_beam_search: bool = False,
-        progress_reporter: TranslationProgressReporter | None = None,
+        progress_reporter: TranslationPhaseReporter | TranslationProgressReporter | None = None,
     ) -> dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
 
@@ -451,7 +452,22 @@ class SingleWordTranslationService:
             self.repository.require_variants(active_variants)
 
         dictionary_snapshot = self.candidate_finder.dictionary
+        phase_reporter = (
+            progress_reporter
+            if progress_reporter is not None and hasattr(progress_reporter, "begin")
+            else None
+        )
+        llm_reporter: TranslationProgressReporter | None = None
+        if progress_reporter is not None and hasattr(progress_reporter, "prepare"):
+            llm_reporter = progress_reporter
+        elif phase_reporter is not None:
+            llm_reporter = LLMProgressReporterAdapter(phase_reporter)
         try:
+            if phase_reporter is not None:
+                phase_reporter.begin(
+                    "evidence_fetch",
+                    detail=f"Fetching evidence for {normalized}",
+                )
             evidence = self.repository.fetch_word_evidence(
                 normalized,
                 variants=active_variants,
@@ -459,6 +475,8 @@ class SingleWordTranslationService:
                 min_n=self.candidate_finder.min_n,
                 max_n=self.candidate_finder.max_n,
             )
+            if phase_reporter is not None:
+                phase_reporter.end("evidence_fetch", detail="Evidence fetched")
             if not evidence or not getattr(evidence, "word", None):
                 llm_enabled = self.llm_enabled if llm is None else bool(llm)
                 llm_progress = self._build_llm_progress_plan(
@@ -576,6 +594,11 @@ class SingleWordTranslationService:
                 normalized,
                 evidence,
             )
+            if phase_reporter is not None:
+                phase_reporter.begin(
+                    "decomposition_generation",
+                    detail="Generating and filtering decompositions",
+                )
 
             attested_pieces = _collect_attested_pieces(
                 evidence, evidence_mode=evidence_mode.value
@@ -802,6 +825,11 @@ class SingleWordTranslationService:
                 evidence,
                 evidence_mode=evidence_mode.value,
             )
+            if phase_reporter is not None:
+                phase_reporter.end(
+                    "decomposition_generation",
+                    detail=f"Generated {len(decompositions)}, kept {len(filtered)}",
+                )
             stage1_drops_total = int(
                 filter_diagnostics.get(
                     "stage1_drops_total",
@@ -928,6 +956,13 @@ class SingleWordTranslationService:
                 k=top_k,
                 evidence=evidence,
             )
+            if phase_reporter is not None:
+                phase_reporter.advance(
+                    "strategy_rerank",
+                    current=len(selected),
+                    total=top_k,
+                    detail="Applied rerank and top-k selection",
+                )
             for candidate in selected:
                 self._annotate_candidate(
                     candidate,
@@ -959,8 +994,14 @@ class SingleWordTranslationService:
                 include_consensus=llm_enabled and len(candidate_pool) > 1,
                 include_validation_repairs=llm_enabled,
             )
-            if llm_enabled and llm_progress is not None and progress_reporter is not None:
-                progress_reporter.prepare(llm_progress)
+            if llm_enabled and llm_progress is not None and llm_reporter is not None:
+                assert llm_reporter is not None
+                llm_reporter.prepare(llm_progress)
+            if phase_reporter is not None:
+                phase_reporter.begin(
+                    "candidate_enrichment",
+                    detail="Enriching candidates and building consensus",
+                )
             try:
                 enriched = self._enrich_candidates(
                     candidate_pool,
@@ -969,7 +1010,7 @@ class SingleWordTranslationService:
                     llm_enabled=llm_enabled,
                     llm_context=llm_context,
                     llm_progress=llm_progress,
-                    progress_reporter=progress_reporter,
+                    progress_reporter=llm_reporter,
                 )
                 consensus_payload: dict[str, object] | None = None
                 if llm_enabled and len(enriched) > 1:
@@ -979,11 +1020,16 @@ class SingleWordTranslationService:
                         llm_use_remote=self.llm_use_remote,
                         llm_context=llm_context,
                         llm_progress=llm_progress,
-                        progress_reporter=progress_reporter,
+                        progress_reporter=llm_reporter,
                     )
             finally:
-                if llm_enabled and progress_reporter is not None:
-                    progress_reporter.done()
+                if llm_enabled and llm_reporter is not None:
+                    llm_reporter.done()
+                if phase_reporter is not None:
+                    phase_reporter.end(
+                        "candidate_enrichment",
+                        detail="Candidate enrichment complete",
+                    )
 
             return {
                 "word": normalized,

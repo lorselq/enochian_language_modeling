@@ -24,6 +24,7 @@ from .llm_synthesis import (
     render_phrase_translation,
 )
 from .memory import TranslationMemoryRepository
+from .progress import TranslationPhaseReporter
 from .service import SingleWordTranslationService
 from .tokenization import tokenize_words
 
@@ -132,6 +133,7 @@ class PhraseTranslationService:
         evidence_mode: SingleWordTranslationService.EvidenceMode = SingleWordTranslationService.EvidenceMode.ALL,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
+        progress_reporter: TranslationPhaseReporter | None = None,
     ) -> dict[str, object]:
         """Translate a phrase and expose both technical and layman-readable outputs.
 
@@ -149,13 +151,24 @@ class PhraseTranslationService:
         tokens = tokenize_words(normalized_phrase)
         if not tokens:
             raise ValueError("Phrase must contain at least one alphabetic token.")
+        if progress_reporter is not None:
+            progress_reporter.end("phrase.normalize", detail=f"Tokenized {len(tokens)} token(s)")
 
         llm_enabled = self.word_service.llm_enabled if llm is None else bool(llm)
         active_variants = list(variants) if variants else self.word_service.active_variants
         candidate_matrix: list[list[PhraseTokenCandidate]] = []
         token_payloads: list[dict[str, object]] = []
 
-        for token in tokens:
+        if progress_reporter is not None:
+            progress_reporter.begin("phrase.token_loop", total=len(tokens), detail="Analyzing tokens")
+        for index, token in enumerate(tokens):
+            if progress_reporter is not None:
+                progress_reporter.advance(
+                    "phrase.token_loop",
+                    current=index + 1,
+                    total=len(tokens),
+                    detail=f"token {index + 1}/{len(tokens)}: {token}",
+                )
             word_result = self.word_service.translate_word(
                 token,
                 variants=active_variants,
@@ -166,6 +179,7 @@ class PhraseTranslationService:
                 evidence_mode=evidence_mode,
                 weight_enabled=weight_enabled,
                 allow_whole_word=allow_whole_word,
+                progress_reporter=progress_reporter,
             )
             token_candidates = self._token_candidates_from_word_result(
                 token,
@@ -182,12 +196,21 @@ class PhraseTranslationService:
                     "word_result": word_result,
                 }
             )
+        if progress_reporter is not None:
+            progress_reporter.end("phrase.token_loop", detail="Token analysis complete")
 
+        if progress_reporter is not None:
+            progress_reporter.begin("phrase.parse", detail="Building parse candidates")
         parse_candidates = self._build_parse_candidates(
             tokens,
             candidate_matrix,
             top_k=max(3, top_k),
         )
+        if progress_reporter is not None:
+            progress_reporter.end(
+                "phrase.parse",
+                detail=f"Built {len(parse_candidates)} parse candidate(s)",
+            )
         chosen_parse = parse_candidates[0] if parse_candidates else None
 
         rendered_translation = chosen_parse.translation_skeleton if chosen_parse else ""
@@ -207,6 +230,8 @@ class PhraseTranslationService:
             else None
         )
         if llm_enabled and chosen_parse is not None:
+            if progress_reporter is not None:
+                progress_reporter.begin("phrase.llm_render", detail="Rendering phrase with LLM")
             render_context = {
                 "phrase": normalized_phrase,
                 "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
@@ -239,6 +264,12 @@ class PhraseTranslationService:
 
         memory_updates: list[dict[str, object]] = []
         if memory_update and chosen_parse is not None:
+            if progress_reporter is not None:
+                progress_reporter.begin(
+                    "phrase.memory",
+                    total=len(chosen_parse.token_choices),
+                    detail="Writing provisional memory updates",
+                )
             for index, candidate in enumerate(chosen_parse.token_choices):
                 if candidate.analysis_type != "provisional":
                     continue
@@ -256,6 +287,18 @@ class PhraseTranslationService:
                     right_neighbor=tokens[index + 1] if index + 1 < len(tokens) else None,
                 )
                 memory_updates.append(update)
+                if progress_reporter is not None:
+                    progress_reporter.advance(
+                        "phrase.memory",
+                        current=index + 1,
+                        total=len(chosen_parse.token_choices),
+                        detail=f"processed token {index + 1}/{len(chosen_parse.token_choices)}",
+                    )
+            if progress_reporter is not None:
+                progress_reporter.end(
+                    "phrase.memory",
+                    detail=f"Wrote {len(memory_updates)} memory update(s)",
+                )
 
         return {
             "phrase": normalized_phrase,
