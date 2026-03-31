@@ -10,8 +10,10 @@ enough to show to a user.
 """
 
 from collections.abc import Mapping, Sequence
+import re
 
 _PLACEHOLDER_PREFIXES = ("top residuals:",)
+_BRACKET_PLACEHOLDER_RE = re.compile(r"^\[[A-Z][A-Z' ?-]*\]$")
 
 
 def is_placeholder_gloss(text: object) -> bool:
@@ -28,7 +30,9 @@ def is_placeholder_gloss(text: object) -> bool:
     normalized = " ".join(text.strip().lower().split())
     if not normalized:
         return False
-    return normalized.startswith(_PLACEHOLDER_PREFIXES)
+    if normalized.startswith(_PLACEHOLDER_PREFIXES):
+        return True
+    return bool(_BRACKET_PLACEHOLDER_RE.fullmatch(text.strip()))
 
 
 def sanitize_human_gloss(text: object, *, token: str | None = None) -> str | None:
@@ -109,3 +113,30 @@ def candidate_is_residual_placeholder_anchor(candidate: Mapping[str, object]) ->
         if is_placeholder_gloss(meaning.get("definition")):
             has_placeholder = True
     return has_placeholder
+
+
+def candidate_is_placeholder_anchor(candidate: Mapping[str, object]) -> bool:
+    """Return whether a whole-word anchor exposes only opaque placeholder text.
+
+    Residual headlines are not the only anchors that can outrank better
+    decompositions. Some exact whole-word candidates surface unresolved
+    placeholders such as ``[ASCLAD]``; this helper lets ranking treat those
+    anchors as weak evidence instead of polished semantics.
+    """
+
+    if str(candidate.get("analysis_type") or "") != "whole_word_anchor":
+        return False
+    meanings = candidate.get("meanings")
+    if not isinstance(meanings, Sequence) or not meanings:
+        return False
+    saw_definition = False
+    for meaning in meanings:
+        if not isinstance(meaning, Mapping):
+            return False
+        definition = meaning.get("definition")
+        if not isinstance(definition, str) or not definition.strip():
+            continue
+        saw_definition = True
+        if not is_placeholder_gloss(definition):
+            return False
+    return saw_definition

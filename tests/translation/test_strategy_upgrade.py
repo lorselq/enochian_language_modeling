@@ -149,6 +149,8 @@ from translation.llm_synthesis import (
     _build_phrase_lay_render_prompt,
     _build_phrase_render_prompt,
     _parse_phrase_lay_render_response,
+    render_phrase_lay_translation,
+    render_phrase_translation,
 )
 from translation.memory import TranslationMemoryRepository
 from translation.phrase_service import PhraseTranslationService
@@ -954,9 +956,82 @@ def test_parse_phrase_lay_render_response_rebuilds_missing_footnotes() -> None:
     )
 
     assert parsed["rendered_translation"] == "hit the enemy"
-    assert parsed["footnoted_translation"] == "to strike [^1] enemy [^2]"
+    assert parsed["footnoted_translation"] == "strike [^1] enemy [^2]"
     assert parsed["translation_footnotes"][0]["source_token"] == "MIRC"
     assert "chosen parse" not in parsed["translation_footnotes"][0]["explanation"].lower()
+
+
+def test_parse_phrase_lay_render_response_compacts_overlong_lay_chunks() -> None:
+    """Collapse glossary-like lay chunks back into short token-level concepts.
+
+    The lay renderer should return short, sane phrasing, but remote runs can
+    drift into comma-heavy mini-definitions. This regression keeps the parser
+    from passing those long chunks straight through to the final footnoted
+    translation block.
+    """
+
+    parse_payload = {
+        "phrase": "gamph caf",
+        "translation_skeleton": "that which is not to rule",
+        "token_choices": [
+            {
+                "token": "GAMPH",
+                "definition": "that which is not",
+                "raw_definition": "that which is not",
+                "analysis_type": "provisional",
+                "role_hint": "modifier",
+                "alternates": [],
+            },
+            {
+                "token": "CAF",
+                "definition": "to rule, as a law that rules the holy ones",
+                "raw_definition": "to rule, as a law that rules the holy ones",
+                "analysis_type": "compositional",
+                "role_hint": "verb",
+                "alternates": [],
+            },
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+
+    parsed = _parse_phrase_lay_render_response(
+        json.dumps(
+            {
+                "rendered_translation": (
+                    "That which is not, including absence, to rule, as a law "
+                    "that rules the holy ones"
+                ),
+                "footnoted_translation": (
+                    "That which is not, including absence [^1] to rule, as a law "
+                    "that rules the holy ones [^2]"
+                ),
+                "translation_footnotes": [
+                    {
+                        "index": 1,
+                        "source_token": "GAMPH",
+                        "rendered_text": "That which is not, including absence",
+                        "explanation": "Keeps the negating sense.",
+                    },
+                    {
+                        "index": 2,
+                        "source_token": "CAF",
+                        "rendered_text": "to rule, as a law that rules the holy ones",
+                        "explanation": "Keeps the governing sense.",
+                    },
+                ],
+                "confidence": 0.67,
+                "reasoning": "Compressed the phrase for a lay reader.",
+            }
+        ),
+        fallback="that which is not to rule",
+        parse_payload=parse_payload,
+    )
+
+    assert parsed["rendered_translation"] == "not rule"
+    assert parsed["footnoted_translation"] == "not [^1] rule [^2]"
+    assert parsed["translation_footnotes"][0]["rendered_text"] == "not"
+    assert parsed["translation_footnotes"][1]["rendered_text"] == "rule"
 
 
 def test_phrase_report_includes_technical_and_lay_translations() -> None:
@@ -1133,6 +1208,170 @@ def test_translate_phrase_cli_emits_progress_updates_to_stderr(
     assert "Done." in captured.err
 
 
+def test_translate_phrase_cli_reports_variant_boundaries_once(
+    capsys,
+    monkeypatch,
+) -> None:
+    """Explain the built-in solo/debate loop instead of looking like a rerun.
+
+    `translate-phrase` defaults to running both insight variants. The CLI should
+    announce those boundaries explicitly and emit a single final completion line
+    so the second pass does not look like the command restarted from scratch.
+    """
+
+    class _FakePhraseService:
+        def __enter__(self) -> "_FakePhraseService":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def translate_phrase(self, phrase: str, **kwargs) -> dict[str, object]:
+            reporter = kwargs.get("progress_reporter")
+            if reporter is not None:
+                reporter.stage(f"Preparing phrase translation for {phrase.upper()}...")
+            return {
+                "phrase": phrase.upper(),
+                "variant": kwargs["variants"][0],
+                "strategy": kwargs["strategy"],
+                "llm_enabled": kwargs["llm"],
+                "rendered_translation": "technical",
+                "render_confidence": 0.5,
+                "render_reasoning": "stub",
+                "lay_translation": "plain",
+                "lay_confidence": 0.5,
+                "lay_reasoning": "stub",
+                "chosen_parse": {"score": 1.0},
+                "translation_footnotes": [],
+                "footnoted_translation": "",
+            }
+
+    monkeypatch.setattr(
+        translation_cli.PhraseTranslationService,
+        "from_config",
+        classmethod(lambda cls, **_kwargs: _FakePhraseService()),
+    )
+    monkeypatch.setattr(translation_cli, "_missing_db_paths", lambda _variants: [])
+    monkeypatch.setattr(translation_cli, "_configure_llm_env", lambda _mode: None)
+
+    args = translation_cli.build_parser().parse_args(
+        ["translate-phrase", "ol sonf", "--no-llm"]
+    )
+
+    exit_code = translation_cli.translate_phrase_from_args(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Running 2 translation variants: solo, debate" in captured.err
+    assert "Starting variant solo (1/2)..." in captured.err
+    assert "Completed variant solo (1/2)." in captured.err
+    assert "Starting variant debate (2/2)..." in captured.err
+    assert "Completed variant debate (2/2)." in captured.err
+    assert captured.err.count("Done.") == 1
+
+
+def test_phrase_renderers_report_wait_and_validation_steps(monkeypatch) -> None:
+    """Expose extra detail during the long technical and lay render phases.
+
+    The phrase service now surfaces coarse stage boundaries, but the slow part
+    is often the remote render itself. These regressions prove the renderers now
+    announce the wait-for-model and validation sub-steps that happen inside
+    those longer phases.
+    """
+
+    class _FakeTool:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def _run(self, *args, **kwargs) -> dict[str, str]:
+            return {
+                "response_text": json.dumps(
+                    {
+                        "rendered_translation": "holy rule",
+                        "footnoted_translation": "holy [^1] rule [^2]",
+                        "translation_footnotes": [
+                            {
+                                "index": 1,
+                                "source_token": "MAD",
+                                "rendered_text": "holy",
+                                "explanation": "Sacred sense.",
+                            },
+                            {
+                                "index": 2,
+                                "source_token": "CAF",
+                                "rendered_text": "rule",
+                                "explanation": "Governing sense.",
+                            },
+                        ],
+                        "confidence": 0.74,
+                        "reasoning": "Compact everyday phrasing.",
+                    }
+                )
+            }
+
+    class _StageReporter:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        def stage(self, message: str) -> None:
+            self.messages.append(message)
+
+    monkeypatch.setattr("translation.llm_synthesis.QueryModelTool", _FakeTool)
+    parse_payload = {
+        "phrase": "mad caf",
+        "translation_skeleton": "holy rule",
+        "token_choices": [
+            {
+                "token": "MAD",
+                "definition": "holy",
+                "raw_definition": "holy",
+                "analysis_type": "dictionary_exact",
+                "role_hint": "modifier",
+                "alternates": [],
+            },
+            {
+                "token": "CAF",
+                "definition": "to rule",
+                "raw_definition": "to rule",
+                "analysis_type": "compositional",
+                "role_hint": "verb",
+                "alternates": [],
+            },
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+
+    technical_reporter = _StageReporter()
+    render_phrase_translation(
+        parse_payload,
+        {
+            "use_remote": True,
+            "progress_reporter": technical_reporter,
+            "progress_label": "Rendering technical translation",
+        },
+    )
+
+    lay_reporter = _StageReporter()
+    render_phrase_lay_translation(
+        parse_payload,
+        {
+            "use_remote": True,
+            "progress_reporter": lay_reporter,
+            "progress_label": "Rendering lay translation and footnotes",
+        },
+    )
+
+    assert technical_reporter.messages == [
+        "Rendering technical translation... waiting for remote model response",
+        "Rendering technical translation... validating renderer response",
+    ]
+    assert lay_reporter.messages == [
+        "Rendering lay translation and footnotes... waiting for remote model response",
+        "Rendering lay translation and footnotes... validating renderer response",
+    ]
+
+
 def test_translate_word_demotes_residual_placeholder_anchor_below_composition() -> None:
     """Prefer grounded full-cover decomposition over residual-only whole-word text.
 
@@ -1226,6 +1465,98 @@ def test_translate_word_demotes_residual_placeholder_anchor_below_composition() 
     assert float(placeholder["confidence"]) <= 0.2
     assert any(
         "Residual-only whole-word placeholder anchor demoted" in warning
+        for warning in placeholder.get("warnings", [])
+    )
+
+
+def test_translate_word_demotes_opaque_placeholder_anchor_below_composition() -> None:
+    """Treat bracket placeholders like `[ASCLAD]` as unresolved, not preferred.
+
+    Solo analysis for ASCLAD was still ranking an opaque whole-word placeholder
+    above grounded compositional readings because the old demotion logic only
+    recognized residual headlines. This regression keeps unresolved bracket
+    anchors from winning once a full-cover compositional candidate exists.
+    """
+
+    evidence = WordEvidence(word="ASCLAD", variants_queried=["solo"])
+    repository = FakeRepository(evidence_by_word={"ASCLAD": evidence})
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    placeholder_anchor = service._build_single_morph_candidate(
+        "ASCLAD",
+        definition="[ASCLAD]",
+        definitions=["[ASCLAD]"],
+        provenance="cluster",
+        score=150.0,
+        analysis_type="whole_word_anchor",
+        warnings=[],
+    )
+    compositional = {
+        "word": "ASCLAD",
+        "rank": 1,
+        "analysis_type": "compositional",
+        "morphs": ["AS", "CL", "AD"],
+        "meanings": [
+            {
+                "morph": "AS",
+                "definition": "living spirit",
+                "definitions": ["living spirit"],
+                "provenance": "cluster",
+            },
+            {
+                "morph": "CL",
+                "definition": "word",
+                "definitions": ["word"],
+                "provenance": "dictionary",
+            },
+            {
+                "morph": "AD",
+                "definition": "before",
+                "definitions": ["before"],
+                "provenance": "cluster",
+            },
+        ],
+        "score": 91.0,
+        "warnings": [],
+        "breakdown": {
+            "segments": [
+                {"start": 0, "end": 2, "ngram": "AS", "canonical": "AS"},
+                {"start": 2, "end": 4, "ngram": "CL", "canonical": "CL"},
+                {"start": 4, "end": 6, "ngram": "AD", "canonical": "AD"},
+            ],
+            "uncovered": [],
+            "coverage_ratio": 1.0,
+            "residual_ratio": 0.0,
+        },
+    }
+
+    merged = service._merge_candidate_pool(
+        [placeholder_anchor],
+        [compositional],
+        [],
+        top_k=5,
+    )
+    enriched = service._enrich_candidates(
+        merged,
+        evidence=evidence,
+        strategy="prefer-balance",
+        llm_enabled=False,
+        llm_context=None,
+    )
+
+    placeholder = next(
+        candidate
+        for candidate in enriched
+        if candidate["analysis_type"] == "whole_word_anchor"
+    )
+    assert enriched[0]["analysis_type"] == "compositional"
+    assert float(placeholder["score"]) < float(merged[0]["score"])
+    assert float(placeholder["confidence"]) <= 0.25
+    assert any(
+        "Opaque whole-word placeholder anchor demoted" in warning
         for warning in placeholder.get("warnings", [])
     )
 

@@ -656,7 +656,16 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
             memory_db=args.memory_db,
         ) as service:
             outputs: list[dict[str, object]] = []
-            for variant in variants:
+            if len(variants) > 1:
+                progress_renderer.stage(
+                    f"Running {len(variants)} translation variants: "
+                    + ", ".join(str(variant) for variant in variants)
+                )
+            for index, variant in enumerate(variants, start=1):
+                if len(variants) > 1:
+                    progress_renderer.stage(
+                        f"Starting variant {variant} ({index}/{len(variants)})..."
+                    )
                 result = service.translate_phrase(
                     phrase,
                     variants=[variant],
@@ -677,12 +686,18 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
                         verbose=args.verbose,
                     )
                 )
+                if len(variants) > 1:
+                    progress_renderer.stage(
+                        f"Completed variant {variant} ({index}/{len(variants)})."
+                    )
     except FileNotFoundError as exc:
         _emit_error(str(exc))
         return 2
     except ValueError as exc:
         _emit_error(str(exc))
         return 2
+
+    progress_renderer.done()
 
     payload: dict[str, object] | list[dict[str, object]]
     if args.variant == "both":
