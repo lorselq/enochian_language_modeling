@@ -50,6 +50,16 @@ class TranslationCLIProgressRenderer:
             suffix += ")"
         self._write(f"Preparing LLM synthesis...{suffix}")
 
+    def stage(self, message: str) -> None:
+        """Render deterministic phrase-translation stage updates.
+
+        Phrase translation now exposes several non-LLM stages that can still
+        take noticeable time. Reusing the shared CLI renderer keeps those status
+        lines visually aligned with the existing single-word LLM progress path.
+        """
+
+        self._write(message)
+
     def start_primary(self, *, phase: str, current: int, total: int) -> None:
         self._write(f"{self._phase_label(phase)} ({current}/{total})")
 
@@ -636,6 +646,7 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
             return 2
 
     top_k = max(1, int(args.top_k)) if args.top_k is not None else 3
+    progress_renderer = TranslationCLIProgressRenderer()
 
     try:
         with PhraseTranslationService.from_config(
@@ -657,6 +668,7 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
                     allow_whole_word=bool(args.allow_whole_word),
+                    progress_reporter=progress_renderer,
                 )
                 outputs.append(
                     _build_phrase_output_payload(
@@ -905,6 +917,8 @@ def _build_phrase_output_payload(
         "lay_reasoning": result.get("lay_reasoning"),
         "lay_confidence": result.get("lay_confidence"),
         "lay_warnings": result.get("lay_warnings", []),
+        "footnoted_translation": result.get("footnoted_translation"),
+        "translation_footnotes": result.get("translation_footnotes", []),
         "lay_translation_mode": result.get("lay_translation_mode"),
         "memory_updates": result.get("memory_updates", []),
     }
@@ -1693,6 +1707,33 @@ def _format_phrase_report(
     lay_warnings = payload.get("lay_warnings")
     if isinstance(lay_warnings, list) and lay_warnings:
         lines.append(_wrap_text("Lay warnings: " + "; ".join(str(item) for item in lay_warnings), indent=0))
+
+    footnoted_translation = payload.get("footnoted_translation")
+    translation_footnotes = payload.get("translation_footnotes")
+    if (
+        isinstance(footnoted_translation, str)
+        and footnoted_translation.strip()
+        and isinstance(translation_footnotes, list)
+        and translation_footnotes
+    ):
+        lines.append(_wrap_text(f"Final translation: {footnoted_translation.strip()}", indent=0))
+        for footnote in translation_footnotes:
+            if not isinstance(footnote, dict):
+                continue
+            index = footnote.get("index")
+            source_token = footnote.get("source_token")
+            rendered_text = footnote.get("rendered_text")
+            explanation = footnote.get("explanation")
+            if not isinstance(index, int) or not isinstance(explanation, str):
+                continue
+            prefix = f"[^{index}]: "
+            if isinstance(source_token, str) and source_token.strip():
+                prefix += f'"{source_token.strip()}"'
+                if isinstance(rendered_text, str) and rendered_text.strip():
+                    prefix += f' rendered as "{rendered_text.strip()}". '
+                else:
+                    prefix += ". "
+            lines.append(_wrap_text(prefix + explanation.strip(), indent=0))
 
     return "\n".join(lines)
 

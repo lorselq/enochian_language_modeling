@@ -41,6 +41,10 @@ from .llm_synthesis import (
     LLMRequestProgress,
     TranslationProgressReporter,
 )
+from .placeholder_glosses import (
+    candidate_has_placeholder_gloss,
+    candidate_is_residual_placeholder_anchor,
+)
 from .repository import (
     ClusterRecord,
     DictionaryMorph,
@@ -1124,6 +1128,17 @@ class SingleWordTranslationService:
                 )
                 base["best_estimations"] = []
 
+            if candidate_is_residual_placeholder_anchor(base):
+                base["confidence"] = min(float(base.get("confidence") or 0.0), 0.2)
+                warnings.append(
+                    "Residual-only whole-word placeholder anchor has reduced confidence."
+                )
+            elif candidate_has_placeholder_gloss(base):
+                base["confidence"] = min(float(base.get("confidence") or 0.0), 0.45)
+                warnings.append(
+                    "Placeholder residual gloss lowered confidence for this candidate."
+                )
+
             if warnings:
                 base["warnings"] = warnings
 
@@ -1403,7 +1418,14 @@ class SingleWordTranslationService:
         *candidate_groups: Sequence[dict[str, object]],
         top_k: int,
     ) -> list[dict[str, object]]:
-        """Merge exact, compositional, and provisional candidates into one pool."""
+        """Merge and normalize candidate groups before final ranking.
+
+        Exact anchors, compositional parses, and provisional fallbacks all need
+        to coexist in one ranked pool. This method now also demotes residual
+        placeholder anchors so raw evidence diagnostics do not outrank grounded
+        full-cover decompositions that are better suited for human-facing
+        translation.
+        """
         merged: list[dict[str, object]] = []
         seen: set[tuple[object, ...]] = set()
 
@@ -1431,6 +1453,7 @@ class SingleWordTranslationService:
                 seen.add(key)
                 merged.append(dict(candidate))
 
+        self._demote_placeholder_candidates(merged)
         merged.sort(
             key=lambda item: float(item.get("score") or 0.0),
             reverse=True,
@@ -1440,6 +1463,68 @@ class SingleWordTranslationService:
         for idx, candidate in enumerate(merged, start=1):
             candidate["rank"] = idx
         return merged
+
+    @staticmethod
+    def _demote_placeholder_candidates(candidates: list[dict[str, object]]) -> None:
+        """Reduce the ranking strength of placeholder-only residual candidates.
+
+        Whole-word anchors intentionally get large base scores so they can beat
+        flimsy decompositions. That heuristic breaks down when the anchor gloss
+        is only a raw residual headline, so this pass lowers both those anchors
+        and any other placeholder-bearing candidate relative to grounded
+        compositional full-cover reads.
+        """
+
+        grounded_full_cover = [
+            candidate
+            for candidate in candidates
+            if SingleWordTranslationService._is_grounded_full_cover_compositional(
+                candidate
+            )
+        ]
+        if grounded_full_cover:
+            floor = min(float(candidate.get("score") or 0.0) for candidate in grounded_full_cover)
+            for candidate in candidates:
+                if not candidate_is_residual_placeholder_anchor(candidate):
+                    continue
+                candidate["score"] = min(float(candidate.get("score") or 0.0), floor - 0.01)
+                warnings = list(candidate.get("warnings", []))
+                warnings.append(
+                    "Residual-only whole-word placeholder anchor demoted below grounded compositional readings."
+                )
+                candidate["warnings"] = warnings
+
+        for candidate in candidates:
+            if not candidate_has_placeholder_gloss(candidate):
+                continue
+            if candidate_is_residual_placeholder_anchor(candidate):
+                continue
+            candidate["score"] = float(candidate.get("score") or 0.0) - 0.75
+            warnings = list(candidate.get("warnings", []))
+            warnings.append(
+                "Placeholder residual gloss penalized relative to grounded evidence."
+            )
+            candidate["warnings"] = warnings
+
+    @staticmethod
+    def _is_grounded_full_cover_compositional(candidate: dict[str, object]) -> bool:
+        """Return whether a candidate is a usable full-cover compositional read.
+
+        Placeholder demotion should only trigger when a real alternative exists.
+        This helper defines that threshold narrowly: a compositional candidate
+        that fully covers the word and whose visible glosses are not just raw
+        residual diagnostics.
+        """
+
+        if str(candidate.get("analysis_type") or "") != "compositional":
+            return False
+        breakdown = candidate.get("breakdown")
+        if not isinstance(breakdown, dict):
+            return False
+        coverage = breakdown.get("coverage_ratio")
+        if not isinstance(coverage, numbers.Real) or float(coverage) < 0.999:
+            return False
+        return not candidate_has_placeholder_gloss(candidate)
 
     @staticmethod
     def _full_word_breakdown(word: str) -> dict[str, object]:

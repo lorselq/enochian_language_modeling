@@ -38,6 +38,7 @@ spacy = "^3.8.11"
 pytest = "^9.0.1"
 hyperopt = "^0.2.7"
 setuptools = "<81"
+dotenv = "^0.9.9"
 
 [tool.poetry.extras]
 wordnet = ["nltk"]
