@@ -1,0 +1,708 @@
+"""Regression tests for the translation strategy upgrade work.
+
+These tests focus on the new behavior introduced for single-word and
+phrase-level translation:
+
+- debate DB path selection prefers the populated extraction-only artifact;
+- nested glossator payloads are parsed correctly;
+- rejected residual pieces are treated as negative evidence;
+- exact-word and provisional analyses are surfaced explicitly;
+- phrase parsing uses global scoring rather than a greedy left-to-right read;
+- provisional phrase observations accumulate in translation memory.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import sqlite3
+import sys
+import types
+from pathlib import Path
+
+
+def _install_dependency_shims() -> None:
+    """Install lightweight import shims for optional heavy dependencies.
+
+    The translation stack imports NumPy, gensim, sentence-transformers,
+    RapidFuzz, and the query-model wrapper at module import time. These tests
+    only exercise the orchestration logic, so small stand-ins keep the unit
+    suite focused and runnable in minimal environments.
+    """
+
+    if "numpy" not in sys.modules:
+        numpy_module = types.ModuleType("numpy")
+        numpy_module.ndarray = list  # type: ignore[attr-defined]
+        numpy_module.array = lambda values, dtype=None: list(values)  # type: ignore[attr-defined]
+        numpy_module.asarray = lambda values, dtype=None: list(values)  # type: ignore[attr-defined]
+        numpy_module.zeros = lambda size, dtype=float: [0.0] * int(size)  # type: ignore[attr-defined]
+        numpy_module.dot = lambda left, right: sum(  # type: ignore[attr-defined]
+            float(a) * float(b) for a, b in zip(left, right, strict=False)
+        )
+        numpy_module.linalg = types.SimpleNamespace(
+            norm=lambda values: sum(float(value) ** 2 for value in values) ** 0.5
+        )
+        sys.modules["numpy"] = numpy_module
+
+    gensim_module = sys.modules.setdefault("gensim", types.ModuleType("gensim"))
+    gensim_utils = sys.modules.setdefault(
+        "gensim.utils",
+        types.ModuleType("gensim.utils"),
+    )
+    gensim_utils.simple_preprocess = lambda text, deacc=True, min_len=1: [  # type: ignore[attr-defined]
+        str(text)
+    ]
+
+    gensim_models = sys.modules.setdefault(
+        "gensim.models",
+        types.ModuleType("gensim.models"),
+    )
+
+    class _DummyFastText:
+        """Provide the minimal FastText surface used by embeddings helpers."""
+
+        def __init__(self, *args, **kwargs) -> None:
+            self.wv = self
+
+        @classmethod
+        def load(cls, _path: str) -> "_DummyFastText":
+            return cls()
+
+        def get_vector(self, _token: str) -> list[float]:
+            return [0.0, 0.0, 0.0, 0.0]
+
+        def similar_by_word(self, _word: str, topn: int = 5) -> list[tuple[str, float]]:
+            return []
+
+    gensim_models.FastText = _DummyFastText  # type: ignore[attr-defined]
+    gensim_module.models = gensim_models  # type: ignore[attr-defined]
+    gensim_module.utils = gensim_utils  # type: ignore[attr-defined]
+
+    sentence_module = sys.modules.setdefault(
+        "sentence_transformers",
+        types.ModuleType("sentence_transformers"),
+    )
+
+    class _DummySentenceTransformer:
+        """Return a predictable embedding vector for definition clustering."""
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def encode(self, _text: str, normalize_embeddings: bool = True) -> list[float]:
+            return [0.0, 0.0, 0.0, 0.0]
+
+    sentence_module.SentenceTransformer = _DummySentenceTransformer  # type: ignore[attr-defined]
+
+    rapidfuzz_module = sys.modules.setdefault(
+        "rapidfuzz",
+        types.ModuleType("rapidfuzz"),
+    )
+    rapidfuzz_module.process = types.SimpleNamespace(extract=lambda *args, **kwargs: [])  # type: ignore[attr-defined]
+    rapidfuzz_module.fuzz = types.SimpleNamespace(ratio=lambda *args, **kwargs: 0)  # type: ignore[attr-defined]
+
+    query_tool_module = types.ModuleType(
+        "enochian_lm.root_extraction.tools.query_model_tool"
+    )
+
+    class _DummyQueryModelTool:
+        """Return empty JSON so rendering code can fall back deterministically."""
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def _run(self, *args, **kwargs) -> dict[str, str]:
+            return {"response_text": "{}"}
+
+    query_tool_module.QueryModelTool = _DummyQueryModelTool  # type: ignore[attr-defined]
+    sys.modules.setdefault(
+        "enochian_lm.root_extraction.tools.query_model_tool",
+        query_tool_module,
+    )
+
+    pydantic_module = sys.modules.setdefault("pydantic", types.ModuleType("pydantic"))
+
+    class _DummyBaseModel:
+        """Satisfy the dictionary loader's lightweight model declarations."""
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    pydantic_module.BaseModel = _DummyBaseModel  # type: ignore[attr-defined]
+    pydantic_module.Field = lambda default=None, **kwargs: default  # type: ignore[attr-defined]
+    pydantic_module.field_validator = (  # type: ignore[attr-defined]
+        lambda *args, **kwargs: (lambda func: func)
+    )
+
+    dotenv_module = sys.modules.setdefault("dotenv", types.ModuleType("dotenv"))
+    dotenv_module.find_dotenv = lambda *args, **kwargs: ""  # type: ignore[attr-defined]
+    dotenv_module.load_dotenv = lambda *args, **kwargs: False  # type: ignore[attr-defined]
+
+
+_install_dependency_shims()
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from enochian_lm.common.config import get_config_paths
+from translation.decomposition import Decomposition
+from translation.llm_synthesis import _build_phrase_render_prompt
+from translation.memory import TranslationMemoryRepository
+from translation.phrase_service import PhraseTranslationService
+from translation import cli as translation_cli
+from translation.repository import (
+    AttestedDefinition,
+    ClusterRecord,
+    DictionaryMorph,
+    InsightsRepository,
+    WordEvidence,
+    _parse_glossator_definition,
+)
+from translation.service import SingleWordTranslationService
+
+
+class FakeCandidateFinder:
+    """Expose the tiny candidate-finder interface the services need.
+
+    These tests target translation orchestration, not n-gram search quality, so
+    a small in-memory stub keeps the service under test while avoiding the
+    heavyweight real candidate-finder setup.
+    """
+
+    def __init__(self, dictionary: dict[str, dict[str, object]] | None = None) -> None:
+        self.dictionary = dictionary or {}
+        self.min_n = 1
+        self.max_n = 7
+        self.beam_width = 5
+        self.fasttext_model = None
+
+    def close(self) -> None:
+        """Mirror the real candidate-finder cleanup surface."""
+
+
+class FakeDecompositionEngine:
+    """Return a deterministic list of decompositions for one test scenario."""
+
+    def __init__(self, decompositions: list[Decomposition]) -> None:
+        self._decompositions = decompositions
+
+    def generate_decompositions(
+        self,
+        word: str,
+        evidence: WordEvidence,
+        **_kwargs: object,
+    ) -> tuple[list[Decomposition], dict[str, object]]:
+        """Act like the beam-search layer without invoking real segmentation."""
+        return copy.deepcopy(self._decompositions), {"decomposition_count": len(self._decompositions)}
+
+
+class FakeRepository:
+    """Supply deterministic evidence to the translation services.
+
+    The upgrade work is mainly about how the services rank and combine evidence,
+    so the repository fake focuses on returning clean, pre-shaped evidence
+    payloads while still exposing the same public API as the real repository.
+    """
+
+    def __init__(
+        self,
+        *,
+        evidence_by_word: dict[str, WordEvidence],
+        support_clusters: dict[str, ClusterRecord] | None = None,
+        rejected_morphs: set[str] | None = None,
+    ) -> None:
+        self.variants = ["solo"]
+        self._evidence_by_word = {
+            word.upper(): copy.deepcopy(evidence)
+            for word, evidence in evidence_by_word.items()
+        }
+        self._support_clusters = {
+            morph.upper(): copy.deepcopy(record)
+            for morph, record in (support_clusters or {}).items()
+        }
+        self._rejected_morphs = {morph.upper() for morph in (rejected_morphs or set())}
+
+    def close(self) -> None:
+        """Mirror the real repository cleanup surface."""
+
+    def require_variants(self, variants: list[str] | tuple[str, ...]) -> None:
+        """Accept requested variants so service setup can proceed."""
+
+    def fetch_word_evidence(
+        self,
+        word: str,
+        variants=None,
+        **_kwargs: object,
+    ) -> WordEvidence:
+        """Return a fresh evidence object so service mutation stays isolated."""
+        normalized = word.upper()
+        if normalized in self._evidence_by_word:
+            return copy.deepcopy(self._evidence_by_word[normalized])
+        return WordEvidence(word=normalized, variants_queried=["solo"])
+
+    def fetch_morph_support(self, morphs, variants=None):
+        """Return only accepted support records for the requested morphs."""
+        clusters = []
+        for morph in morphs:
+            cluster = self._support_clusters.get(str(morph).upper())
+            if cluster is not None:
+                clusters.append(copy.deepcopy(cluster))
+        return clusters, [], []
+
+    def fetch_rejected_morphs(self, morphs, variants=None) -> set[str]:
+        """Return the subset of requested morphs that are explicitly rejected."""
+        return {
+            str(morph).upper()
+            for morph in morphs
+            if str(morph).upper() in self._rejected_morphs
+        }
+
+    def fetch_accepted_definition_counts(self, morphs, variants=None) -> dict[str, int]:
+        """Keep ambiguity scoring inert so tests stay focused on ranking policy."""
+        return {}
+
+    def fetch_accepted_definition_glosses(
+        self,
+        morphs,
+        variants=None,
+        include_clusters: bool = True,
+        include_residuals: bool = True,
+    ) -> dict[str, list[tuple[str, float | None]]]:
+        """Keep definition clustering inert for these orchestration tests."""
+        return {}
+
+    def fasttext_diagnostics(self) -> dict[str, object]:
+        """Return empty model diagnostics for stable assertions."""
+        return {}
+
+    def path_diagnostics(self) -> dict[str, object]:
+        """Return empty path diagnostics for stable assertions."""
+        return {}
+
+    def word_lookup_diagnostics(self, word: str, variants=None) -> dict[str, object]:
+        """Return a minimal lookup diagnostic payload."""
+        return {"word": word, "variants": list(variants or self.variants)}
+
+
+class FakeWordService:
+    """Provide predictable token analyses to the phrase translation service."""
+
+    def __init__(
+        self,
+        *,
+        results_by_word: dict[str, dict[str, object]],
+        dictionary: dict[str, dict[str, object]] | None = None,
+    ) -> None:
+        self._results_by_word = {
+            word.upper(): copy.deepcopy(result)
+            for word, result in results_by_word.items()
+        }
+        self.candidate_finder = types.SimpleNamespace(dictionary=dictionary or {})
+        self.repository = types.SimpleNamespace(variants=["solo"])
+        self.active_variants = ["solo"]
+        self.llm_enabled = False
+        self.llm_use_remote = False
+
+    def translate_word(self, word: str, **_kwargs: object) -> dict[str, object]:
+        """Return the prebuilt single-word result for the requested token."""
+        return copy.deepcopy(self._results_by_word[word.upper()])
+
+    def close(self) -> None:
+        """Mirror the real word-service cleanup surface."""
+
+
+def _cluster_record(morph: str, definition: str, *, cluster_id: int = 1) -> ClusterRecord:
+    """Build a compact accepted cluster record for a target morph."""
+    return ClusterRecord(
+        variant="solo",
+        cluster_id=cluster_id,
+        run_id="run-1",
+        ngram=morph,
+        cluster_index=0,
+        glossator_def=json.dumps({"DEFINITION": definition, "REJECTED": False}),
+        residual_explained=None,
+        residual_ratio=None,
+        residual_headline=None,
+        residual_focus_prompt=None,
+        semantic_coverage=None,
+        cohesion=None,
+        semantic_cohesion=None,
+        best_config=None,
+        residual_details=[],
+        raw_definitions=[],
+    )
+
+
+def _word_candidate(
+    definition: str | None,
+    *,
+    analysis_type: str,
+    score: float,
+    confidence: float,
+    morphs: list[str] | None = None,
+    definitions: list[str] | None = None,
+    warnings: list[str] | None = None,
+) -> dict[str, object]:
+    """Build a translation candidate payload in the service's public schema."""
+    surface = morphs or ["TOKEN"]
+    normalized_definitions = []
+    if definition is not None:
+        normalized_definitions.append(definition)
+    if definitions:
+        normalized_definitions.extend(definitions)
+    unique_definitions = list(dict.fromkeys(normalized_definitions))
+    return {
+        "rank": 1,
+        "analysis_type": analysis_type,
+        "morphs": list(surface),
+        "score": score,
+        "confidence": confidence,
+        "meanings": [
+            {
+                "morph": surface[0],
+                "canonical": surface[0],
+                "definition": definition,
+                "definitions": unique_definitions,
+                "provenance": analysis_type,
+                "anchor_strength": 1.0,
+            }
+        ],
+        "warnings": list(warnings or []),
+    }
+
+
+def _word_result(word: str, *candidates: dict[str, object]) -> dict[str, object]:
+    """Wrap candidate payloads in the single-word result schema."""
+    return {
+        "word": word,
+        "variants_queried": ["solo"],
+        "strategy": "prefer-balance",
+        "evidence_mode": "all",
+        "weighting_enabled": True,
+        "llm_enabled": False,
+        "llm_mode": None,
+        "llm_context": None,
+        "timestamp": "2026-03-29T00:00:00Z",
+        "candidates": list(candidates),
+        "evidence": {},
+        "fallback_morphs": [],
+        "diagnostics": {},
+    }
+
+
+def test_config_prefers_populated_debate_extraction_only_database() -> None:
+    """Keep debate translation pointed at the populated on-disk SQLite file."""
+    paths = get_config_paths()
+
+    assert paths["debate_extraction_only"].exists()
+    assert paths["debate_primary"].exists()
+    assert paths["debate_primary"].stat().st_size == 0
+    assert paths["debate"] == paths["debate_extraction_only"]
+
+
+def test_debate_repository_opens_the_selected_extraction_only_database() -> None:
+    """Verify the configured debate path is immediately usable by translation."""
+    paths = get_config_paths()
+    repository = InsightsRepository(solo_path=None, debate_path=paths["debate"])
+    try:
+        assert repository.variants == ["debate"]
+    finally:
+        repository.close()
+
+
+def test_parse_glossator_definition_reads_nested_raw_text_payload() -> None:
+    """Recover accepted definitions even when the payload is nested in RAW_TEXT."""
+    payload = json.dumps(
+        {
+            "RAW_TEXT": "```json\n"
+            '{"DEFINITION":"sword","REJECTED":false}'
+            "\n```"
+        }
+    )
+
+    assert _parse_glossator_definition(payload) == ("sword", False)
+
+
+def test_fetch_rejected_morphs_uses_nested_rejected_payload(tmp_path: Path) -> None:
+    """Surface rejected residual pieces so translation can penalize them."""
+    db_path = tmp_path / "rejected.sqlite3"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            """
+            CREATE TABLE root_residual_semantics (
+                residual TEXT,
+                glossator_def TEXT,
+                group_idx INTEGER
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO root_residual_semantics (residual, glossator_def, group_idx)
+            VALUES (?, ?, ?);
+            """,
+            (
+                "PSAD",
+                json.dumps(
+                    {
+                        "RAW_TEXT": "```json\n"
+                        '{"DEFINITION":"","REJECTED":true}'
+                        "\n```"
+                    }
+                ),
+                0,
+            ),
+        )
+    conn.close()
+
+    repository = InsightsRepository(solo_path=db_path, debate_path=None)
+    try:
+        assert repository.fetch_rejected_morphs(["PSAD"], variants=["solo"]) == {"PSAD"}
+    finally:
+        repository.close()
+
+
+def test_translate_word_prioritizes_dictionary_exact_candidates() -> None:
+    """Expose exact dictionary items as the lead non-provisional reading."""
+    evidence = WordEvidence(
+        word="OD",
+        variants_queried=["solo"],
+        dictionary_morphs={
+            "OD": DictionaryMorph(
+                morph="OD",
+                definition="self",
+                senses=["self", "the selfsame"],
+                part_of_speech="pronoun",
+            )
+        },
+    )
+    repository = FakeRepository(evidence_by_word={"OD": evidence})
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(
+            {"od": {"canonical": "OD", "pos": "pronoun"}}
+        ),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine([])
+
+    result = service.translate_word("od", llm=False, use_beam_search=True)
+
+    assert result["candidates"]
+    lead = result["candidates"][0]
+    assert lead["analysis_type"] == "dictionary_exact"
+    assert lead["meanings"][0]["definition"] == "self"
+    assert float(lead["confidence"]) >= 0.98
+
+
+def test_translate_word_rejected_piece_does_not_survive_split_filter() -> None:
+    """Prefer a supported whole-word anchor over a split containing rejected evidence."""
+    whole_word_cluster = _cluster_record("NAZPSAD", "sword", cluster_id=10)
+    supported_piece = _cluster_record("NAZ", "pillar", cluster_id=11)
+    evidence = WordEvidence(
+        word="NAZPSAD",
+        variants_queried=["solo"],
+        direct_clusters=[whole_word_cluster],
+        rejected_morphs={"PSAD"},
+    )
+    repository = FakeRepository(
+        evidence_by_word={"NAZPSAD": evidence},
+        support_clusters={"NAZ": supported_piece},
+        rejected_morphs={"PSAD"},
+    )
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine(
+        [
+            Decomposition(
+                morphs=["NAZ", "PSAD"],
+                canonicals=["NAZ", "PSAD"],
+                beam_score=5.0,
+                breakdown={
+                    "segments": [
+                        {"start": 0, "end": 3, "ngram": "NAZ", "canonical": "NAZ"},
+                        {"start": 3, "end": 7, "ngram": "PSAD", "canonical": "PSAD"},
+                    ],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={"NAZ": "cluster", "PSAD": "unknown"},
+            )
+        ]
+    )
+
+    result = service.translate_word("NAZPSAD", llm=False, use_beam_search=True)
+
+    assert result["candidates"][0]["analysis_type"] == "whole_word_anchor"
+    assert all(
+        candidate["analysis_type"] != "compositional"
+        for candidate in result["candidates"]
+    )
+    assert result["evidence"]["rejected_morphs"] == ["PSAD"]
+
+
+def test_translate_word_returns_provisional_fallback_when_support_is_missing() -> None:
+    """Return an explicit provisional reading instead of failing silently."""
+    evidence = WordEvidence(
+        word="GAMFABURO",
+        variants_queried=["solo"],
+        attested_definitions=[
+            AttestedDefinition(
+                variant="solo",
+                source_word="GAMFABURO",
+                definition="banner of arising",
+                cluster_id=5,
+                root_ngram="GAM",
+            )
+        ],
+    )
+    repository = FakeRepository(evidence_by_word={"GAMFABURO": evidence})
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine([])
+
+    result = service.translate_word("GAMFABURO", llm=False, use_beam_search=True)
+
+    assert result["candidates"]
+    lead = result["candidates"][0]
+    assert lead["analysis_type"] == "provisional"
+    assert lead["meanings"][0]["definition"] == "banner of arising"
+    assert any(
+        "Provisional whole-word reading" in warning
+        for warning in lead.get("warnings", [])
+    )
+    assert float(lead["confidence"]) <= 0.55
+
+
+def test_phrase_translation_uses_global_parse_scores_across_tokens(tmp_path: Path) -> None:
+    """Let neighboring token roles tip the winning parse away from greedy local choice."""
+    word_service = FakeWordService(
+        results_by_word={
+            "MIRC": _word_result(
+                "MIRC",
+                _word_candidate(
+                    "stone",
+                    analysis_type="dictionary_exact",
+                    score=10.0,
+                    confidence=0.6,
+                    morphs=["MIRC"],
+                ),
+                _word_candidate(
+                    "to strike",
+                    analysis_type="compositional",
+                    score=9.5,
+                    confidence=0.6,
+                    morphs=["MIRC"],
+                ),
+            ),
+            "CICASB": _word_result(
+                "CICASB",
+                _word_candidate(
+                    "enemy",
+                    analysis_type="dictionary_exact",
+                    score=10.0,
+                    confidence=0.8,
+                    morphs=["CICASB"],
+                ),
+            ),
+        },
+        dictionary={
+            "cicasb": {"canonical": "CICASB", "pos": "noun"},
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-memory.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase("mirc cicasb", top_k=2, llm=False)
+
+    assert result["chosen_parse"] is not None
+    chosen = result["chosen_parse"]
+    assert chosen["token_choices"][0]["definition"] == "to strike"
+    assert chosen["relations"][0]["relation"] == "predicate-argument"
+    assert result["rendered_translation"] == "to strike enemy"
+
+
+def test_phrase_translation_memory_accumulates_repeated_provisional_reads(tmp_path: Path) -> None:
+    """Persist cautious unknown-word evidence across repeated phrase runs."""
+    word_service = FakeWordService(
+        results_by_word={
+            "GITHULCAG": _word_result(
+                "GITHULCAG",
+                _word_candidate(
+                    "storm-born",
+                    analysis_type="provisional",
+                    score=5.0,
+                    confidence=0.4,
+                    morphs=["GITHULCAG"],
+                    definitions=["storm-born", "wind-made"],
+                ),
+            ),
+            "MIRC": _word_result(
+                "MIRC",
+                _word_candidate(
+                    "watchman",
+                    analysis_type="dictionary_exact",
+                    score=10.0,
+                    confidence=0.9,
+                    morphs=["MIRC"],
+                ),
+            ),
+        },
+        dictionary={
+            "githulcag": {"canonical": "GITHULCAG", "pos": "adjective"},
+            "mirc": {"canonical": "MIRC", "pos": "noun"},
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "translation-memory.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    first = service.translate_phrase("githulcag mirc", top_k=2, llm=False)
+    second = service.translate_phrase("githulcag mirc", top_k=2, llm=False)
+    entry = memory.fetch_entry("GITHULCAG")
+
+    assert first["memory_updates"][0]["evidence_count"] == 1
+    assert second["memory_updates"][0]["evidence_count"] == 2
+    assert entry is not None
+    assert entry.best_gloss == "storm-born"
+    assert entry.evidence_count == 2
+    assert "githulcag mirc" in entry.examples
+
+
+def test_phrase_render_prompt_forbids_unsupported_semantics() -> None:
+    """Keep the phrase renderer pinned to the chosen parse payload."""
+    prompt = _build_phrase_render_prompt(
+        {
+            "phrase": "ol sonf vorsg",
+            "translation_skeleton": "I reign among",
+            "token_choices": [],
+            "relations": [],
+            "score": 1.0,
+        },
+        {"llm_context": "Use only the supplied parse."},
+    )
+
+    assert "Use ONLY the supplied token choices and relations." in prompt
+    assert "Do not add, remove, or replace meanings." in prompt
+    assert "Do not infer extra syntax" in prompt
+
+
+def test_translation_cli_registers_translate_phrase_command() -> None:
+    """Expose the new phrase-translation command through the public CLI parser."""
+    parser = translation_cli.build_parser()
+    args = parser.parse_args(["translate-phrase", "ol sonf vorsg"])
+
+    assert args.command == "translate-phrase"
+    assert args.phrase == "ol sonf vorsg"
+    assert args.handler == translation_cli._run_translate_phrase
