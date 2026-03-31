@@ -21,6 +21,7 @@ from enochian_lm.common.config import get_config_paths
 
 from .llm_synthesis import DEFAULT_LLM_CONTEXT, LLMRequestProgress
 from .phrase_service import PhraseTranslationService
+from .progress import TranslationPhaseReporter
 from .service import InterpretationService, SingleWordTranslationService
 
 INTERPRET_COMMAND = "interpret-text"
@@ -34,13 +35,42 @@ COMMAND_ALIASES = {
 }
 
 
-class TranslationCLIProgressRenderer:
-    """Render translation LLM status updates as plain CLI lines."""
+class TranslationCLIProgressRenderer(TranslationPhaseReporter):
+    """Render generic translation phases and legacy LLM status updates."""
 
     def __init__(self, stream = None) -> None:
         self.stream = stream or sys.stderr
         self._is_tty = bool(getattr(self.stream, "isatty", lambda: False)())
         self._active = False
+        self._emitted_any = False
+
+    def begin(
+        self,
+        phase: str,
+        detail: str | None = None,
+        total: int | None = None,
+    ) -> None:
+        self._write(self._format_phase("begin", phase, detail=detail, total=total))
+
+    def advance(
+        self,
+        phase: str,
+        current: int | None = None,
+        total: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        self._write(
+            self._format_phase(
+                "advance",
+                phase,
+                detail=detail,
+                current=current,
+                total=total,
+            )
+        )
+
+    def end(self, phase: str, detail: str | None = None) -> None:
+        self._write(self._format_phase("end", phase, detail=detail))
 
     def prepare(self, progress: LLMRequestProgress) -> None:
         suffix = ""
@@ -68,7 +98,8 @@ class TranslationCLIProgressRenderer:
             self._write(f"{label} (validation {kind})")
 
     def done(self) -> None:
-        self._write("Done.", final=True)
+        if self._emitted_any:
+            self._write("Done.", final=True)
 
     @staticmethod
     def _phase_label(phase: str) -> str:
@@ -76,7 +107,34 @@ class TranslationCLIProgressRenderer:
             return "Building consensus..."
         return "Synthesizing top candidates..."
 
+    @staticmethod
+    def _humanize_phase(phase: str) -> str:
+        return phase.replace("_", " ").replace(".", " / ")
+
+    def _format_phase(
+        self,
+        kind: str,
+        phase: str,
+        *,
+        detail: str | None = None,
+        current: int | None = None,
+        total: int | None = None,
+    ) -> str:
+        label = self._humanize_phase(phase)
+        parts = [label]
+        if detail:
+            parts.append(detail)
+        if current is not None and total is not None and total > 0:
+            parts.append(f"({current}/{total})")
+        prefix = {
+            "begin": "Starting",
+            "advance": "Progress",
+            "end": "Finished",
+        }.get(kind, "Status")
+        return f"{prefix}: " + " — ".join(parts)
+
     def _write(self, message: str, *, final: bool = False) -> None:
+        self._emitted_any = True
         if self._is_tty:
             self.stream.write(f"\r\033[2K{message}")
             if final:
@@ -264,6 +322,12 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
             "(e.g., A, I)."
         ),
     )
+    parser.add_argument(
+        "--progress",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="Progress rendering mode (default: auto).",
+    )
 
 
 def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
@@ -376,6 +440,12 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
         dest="allow_whole_word",
         action="store_false",
         help="Disallow whole-word token analyses when decomposition is available.",
+    )
+    parser.add_argument(
+        "--progress",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="Progress rendering mode (default: auto).",
     )
 
 
@@ -542,7 +612,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
         else 5
     )
 
-    progress_renderer = TranslationCLIProgressRenderer() if llm_enabled else None
+    progress_renderer = _build_progress_renderer(args.progress)
 
     try:
         with SingleWordTranslationService.from_config(
@@ -574,6 +644,9 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
     except ValueError as exc:
         _emit_error(str(exc))
         return 2
+    finally:
+        if progress_renderer is not None:
+            progress_renderer.done()
 
     payload: dict[str, object] | list[dict[str, object]]
     if args.variant == "both":
@@ -624,6 +697,7 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
 
     top_k = max(1, int(args.top_k)) if args.top_k is not None else 3
 
+    progress_renderer = _build_progress_renderer(args.progress)
     try:
         with PhraseTranslationService.from_config(
             variants=variants,
@@ -644,6 +718,7 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
                     allow_whole_word=bool(args.allow_whole_word),
+                    progress_reporter=progress_renderer,
                 )
                 outputs.append(
                     _build_phrase_output_payload(
@@ -658,6 +733,9 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
     except ValueError as exc:
         _emit_error(str(exc))
         return 2
+    finally:
+        if progress_renderer is not None:
+            progress_renderer.done()
 
     payload: dict[str, object] | list[dict[str, object]]
     if args.variant == "both":
@@ -710,6 +788,16 @@ def _parse_bool(value: str) -> bool:
     if raw in {"0", "false", "no", "n", "off"}:
         return False
     raise argparse.ArgumentTypeError("Expected a boolean value (true/false).")
+
+
+def _build_progress_renderer(mode: str) -> TranslationCLIProgressRenderer | None:
+    if mode == "off":
+        return None
+    if mode == "on":
+        return TranslationCLIProgressRenderer()
+    if bool(getattr(sys.stderr, "isatty", lambda: False)()):
+        return TranslationCLIProgressRenderer()
+    return None
 
 
 def _configure_llm_env(llm_mode: str) -> None:
