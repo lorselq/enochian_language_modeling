@@ -43,6 +43,7 @@ from .llm_synthesis import (
 )
 from .placeholder_glosses import (
     candidate_has_placeholder_gloss,
+    candidate_is_placeholder_anchor,
     candidate_is_residual_placeholder_anchor,
 )
 from .repository import (
@@ -1133,6 +1134,11 @@ class SingleWordTranslationService:
                 warnings.append(
                     "Residual-only whole-word placeholder anchor has reduced confidence."
                 )
+            elif candidate_is_placeholder_anchor(base):
+                base["confidence"] = min(float(base.get("confidence") or 0.0), 0.25)
+                warnings.append(
+                    "Opaque whole-word placeholder anchor has reduced confidence."
+                )
             elif candidate_has_placeholder_gloss(base):
                 base["confidence"] = min(float(base.get("confidence") or 0.0), 0.45)
                 warnings.append(
@@ -1485,19 +1491,24 @@ class SingleWordTranslationService:
         if grounded_full_cover:
             floor = min(float(candidate.get("score") or 0.0) for candidate in grounded_full_cover)
             for candidate in candidates:
-                if not candidate_is_residual_placeholder_anchor(candidate):
+                if not candidate_is_placeholder_anchor(candidate):
                     continue
                 candidate["score"] = min(float(candidate.get("score") or 0.0), floor - 0.01)
                 warnings = list(candidate.get("warnings", []))
-                warnings.append(
-                    "Residual-only whole-word placeholder anchor demoted below grounded compositional readings."
-                )
+                if candidate_is_residual_placeholder_anchor(candidate):
+                    warnings.append(
+                        "Residual-only whole-word placeholder anchor demoted below grounded compositional readings."
+                    )
+                else:
+                    warnings.append(
+                        "Opaque whole-word placeholder anchor demoted below grounded compositional readings."
+                    )
                 candidate["warnings"] = warnings
 
         for candidate in candidates:
             if not candidate_has_placeholder_gloss(candidate):
                 continue
-            if candidate_is_residual_placeholder_anchor(candidate):
+            if candidate_is_placeholder_anchor(candidate):
                 continue
             candidate["score"] = float(candidate.get("score") or 0.0) - 0.75
             warnings = list(candidate.get("warnings", []))

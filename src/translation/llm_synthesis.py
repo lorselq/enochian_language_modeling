@@ -16,6 +16,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal, Protocol
 import json
 import logging
+import re
 
 from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 
@@ -428,6 +429,21 @@ def _repair_progress_message(
         )
         return ""
     return progress.validation_retry(label, kind="repair")
+
+
+def _report_render_detail(context: dict[str, object], detail: str) -> None:
+    """Expose long render sub-phases through the shared CLI progress reporter.
+
+    Phrase rendering can spend noticeable time waiting on a model response and
+    then validating the structured JSON payload. Surfacing those sub-steps keeps
+    long-running `translate-phrase` invocations from looking frozen.
+    """
+
+    reporter = _get_progress_reporter(context)
+    if reporter is None:
+        return
+    label = str(context.get("progress_label") or "Rendering phrase")
+    reporter.stage(f"{label}... {detail}")
 
 
 def _build_prompt(
@@ -891,7 +907,14 @@ def render_phrase_translation(
         progress_style="silent",
     )
     try:
+        _report_render_detail(
+            context,
+            "waiting for remote model response"
+            if use_remote
+            else "running local renderer",
+        )
         response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+        _report_render_detail(context, "validating renderer response")
         parsed = _parse_phrase_render_response(
             response.get("response_text", ""),
             fallback=skeleton,
@@ -903,6 +926,7 @@ def render_phrase_translation(
             raw_response=response.get("response_text"),
         )
     except Exception as exc:
+        _report_render_detail(context, "falling back to deterministic skeleton")
         return PhraseRenderResult(
             rendered_translation=skeleton,
             confidence=_safe_float(context.get("confidence"), default=0.5),
@@ -940,7 +964,14 @@ def render_phrase_lay_translation(
         progress_style="silent",
     )
     try:
+        _report_render_detail(
+            context,
+            "waiting for remote model response"
+            if use_remote
+            else "running local renderer",
+        )
         response = tool._run(prompt=prompt, print_chunks=False, stream_callback=None)
+        _report_render_detail(context, "validating renderer response")
         parsed = _parse_phrase_lay_render_response(
             response.get("response_text", ""),
             fallback=skeleton,
@@ -955,6 +986,7 @@ def render_phrase_lay_translation(
             raw_response=response.get("response_text"),
         )
     except Exception as exc:
+        _report_render_detail(context, "falling back to deterministic skeleton")
         fallback_footnoted, fallback_notes = _build_phrase_footnote_fallback(
             parse_payload
         )
@@ -1017,13 +1049,13 @@ def _build_phrase_lay_render_prompt(
     llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
     schema = json.dumps(
         {
-            "rendered_translation": "<plain-English paraphrase>",
-            "footnoted_translation": "<same translation with [^1] style markers>",
+            "rendered_translation": "<short plain-English gist, ideally 3-10 words>",
+            "footnoted_translation": "<same short translation with [^1] style markers>",
             "translation_footnotes": [
                 {
                     "index": 1,
                     "source_token": "<original token>",
-                    "rendered_text": "<English chunk contributed by this token>",
+                    "rendered_text": "<compact 1-3 word English chunk>",
                     "explanation": "<brief grounded explanation for this choice>",
                 }
             ],
@@ -1032,18 +1064,53 @@ def _build_phrase_lay_render_prompt(
         },
         ensure_ascii=False,
     )
+    example = json.dumps(
+        {
+            "rendered_translation": "holy rule endures",
+            "footnoted_translation": "holy [^1] rule [^2] endures [^3]",
+            "translation_footnotes": [
+                {
+                    "index": 1,
+                    "source_token": "MAD",
+                    "rendered_text": "holy",
+                    "explanation": "Compresses the selected sacred gloss into one everyday adjective.",
+                },
+                {
+                    "index": 2,
+                    "source_token": "CAF",
+                    "rendered_text": "rule",
+                    "explanation": "Uses the core governing action instead of restating the full gloss.",
+                },
+                {
+                    "index": 3,
+                    "source_token": "PRAC",
+                    "rendered_text": "endures",
+                    "explanation": "Picks a short everyday verb for continued abiding.",
+                },
+            ],
+            "confidence": 0.72,
+            "reasoning": "Compresses each token to a short everyday concept while preserving the chosen parse.",
+        },
+        ensure_ascii=False,
+    )
     payload = json.dumps(parse_payload, ensure_ascii=False, indent=2)
     return "\n".join(
         [
             "ROLE: You are a plain-English Enochian phrase explainer.",
-            "TASK: Rewrite the supplied translation skeleton so a lay reader can understand it immediately.",
+            "TASK: Rewrite the supplied translation skeleton so a lay reader can understand the core idea immediately.",
             f"HISTORICAL CONTEXT: {llm_context}",
             "CONSTRAINTS:",
             "- Use ONLY the supplied token choices, relations, and skeleton.",
-            "- Keep the same core meaning, but you may replace technical or archaic phrasing with everyday English.",
+            "- Keep the same core meaning, but replace technical or archaic phrasing with sane everyday English.",
             "- Do not add any new actors, actions, objects, or claims.",
+            "- Your job is gist, not exhaustiveness.",
+            "- `rendered_translation` must be a short natural English clause or sentence, ideally 3-10 words.",
+            "- Prefer a clear core idea over a token-by-token comma list or definition dump.",
+            "- Never restate full token definitions, example sentences, or long alternation chains in `rendered_translation`.",
             "- Return exactly one footnote entry per token choice, in source order.",
-            "- Each rendered_text value may contain multiple English words when grammar requires it.",
+            "- Each `rendered_text` should usually be 1-3 words. Use extra filler words only when grammar truly requires them.",
+            "- If a chosen gloss is verbose, compress it to the smallest everyday concept supported by that gloss.",
+            "- Do not repeat the raw source token in English unless the token remains unresolved; in that case use `[TOKEN]` and explain why.",
             "- Explanations must stay grounded in the selected token glosses, alternates, and relations.",
             "- If you add helper words for readable English, explain that smoothing in the relevant footnote.",
             "- Return STRICT JSON only.",
@@ -1051,6 +1118,8 @@ def _build_phrase_lay_render_prompt(
             payload,
             "SCHEMA:",
             schema,
+            "EXAMPLE (format and brevity only; do not copy wording):",
+            example,
         ]
     )
 
@@ -1113,6 +1182,11 @@ def _parse_phrase_lay_render_response(
     normalized_markers = [f"[^{index}]" for index in range(1, len(notes) + 1)]
     if any(marker not in footnoted for marker in normalized_markers):
         footnoted = _build_footnoted_translation(notes)
+    footnoted = _build_footnoted_translation(notes)
+    base["rendered_translation"] = _normalize_lay_translation(
+        str(base.get("rendered_translation") or ""),
+        footnoted,
+    )
 
     return {
         **base,
@@ -1142,8 +1216,11 @@ def _coerce_phrase_footnotes(
         if not isinstance(entry, Mapping) or not isinstance(token_choice, Mapping):
             return _build_phrase_footnote_fallback(parse_payload)[1]
         source_token = str(token_choice.get("token") or f"TOKEN_{index}").upper()
-        rendered_text_raw = entry.get("rendered_text")
-        rendered_text = sanitize_human_gloss(rendered_text_raw, token=source_token)
+        rendered_text = _normalize_rendered_text(
+            entry.get("rendered_text"),
+            token_choice,
+            source_token,
+        )
         if rendered_text is None:
             rendered_text = _fallback_rendered_text(token_choice, source_token)
         explanation = entry.get("explanation")
@@ -1217,13 +1294,132 @@ def _fallback_rendered_text(token_choice: Mapping[str, object], token: str) -> s
     still respecting the chosen parse and the placeholder-cleanup rules.
     """
 
-    definition = sanitize_human_gloss(token_choice.get("definition"), token=token)
+    alternates = token_choice.get("alternates")
+    alternate_values = (
+        alternates
+        if isinstance(alternates, Sequence) and not isinstance(alternates, (str, bytes))
+        else []
+    )
+    compact_alternates = [
+        compacted
+        for alternate in alternate_values
+        for compacted in [_compact_lay_gloss(alternate, token=token)]
+        if compacted is not None
+    ]
+    if compact_alternates:
+        return min(
+            compact_alternates,
+            key=lambda item: (len(item.split()), len(item)),
+        )
+    definition = _compact_lay_gloss(token_choice.get("definition"), token=token)
     if definition is not None:
         return definition
-    raw_definition = sanitize_human_gloss(token_choice.get("raw_definition"), token=token)
+    raw_definition = _compact_lay_gloss(token_choice.get("raw_definition"), token=token)
     if raw_definition is not None:
         return raw_definition
     return unresolved_token_gloss(token)
+
+
+def _normalize_rendered_text(
+    rendered_text: object,
+    token_choice: Mapping[str, object],
+    token: str,
+) -> str | None:
+    """Coerce footnote chunks toward short lay-readable concepts.
+
+    The lay renderer now aims for compact token-level chunks, but remote models
+    sometimes drift back into whole-definition paraphrases. This helper keeps
+    those chunks concise before the CLI turns them into the final footnoted
+    translation line.
+    """
+
+    compact = _compact_lay_gloss(rendered_text, token=token)
+    if compact is not None:
+        return compact
+    return _compact_lay_gloss(token_choice.get("definition"), token=token)
+
+
+def _compact_lay_gloss(text: object, *, token: str) -> str | None:
+    """Compress a token gloss into a short lay-readable chunk when possible.
+
+    Phrase footnotes are most helpful when each token contributes a small,
+    memorable concept rather than an entire dictionary paragraph. This helper
+    applies conservative heuristics so fallback and post-processing stay brief
+    without inventing new semantics.
+    """
+
+    sanitized = sanitize_human_gloss(text, token=token)
+    if sanitized is None:
+        return None
+    normalized = " ".join(sanitized.split())
+    lowered = normalized.lower()
+    if lowered.startswith("that which is not"):
+        return "not"
+    if lowered.startswith("to "):
+        normalized = normalized[3:].strip()
+    if lowered.startswith("being "):
+        normalized = normalized[6:].strip()
+    chunk = re.split(r"[,:;.]|\(|\)", normalized, maxsplit=1)[0].strip()
+    lowered_chunk = chunk.lower()
+    for marker in (" that ", " which ", " including ", " especially ", " often "):
+        if marker in lowered_chunk and len(chunk.split()) > 4:
+            split_index = lowered_chunk.index(marker)
+            chunk = chunk[:split_index].strip()
+            lowered_chunk = chunk.lower()
+            break
+    for marker in (" of ", " in "):
+        if marker in lowered_chunk and len(chunk.split()) > 4:
+            split_index = lowered_chunk.index(marker)
+            chunk = chunk[:split_index].strip()
+            lowered_chunk = chunk.lower()
+            break
+    if " or " in lowered_chunk and len(chunk.split()) > 4:
+        options = [
+            segment.strip()
+            for segment in re.split(r"\bor\b", chunk, maxsplit=1)
+            if segment.strip()
+        ]
+        if options:
+            chunk = options[0]
+    words = [word for word in chunk.split() if word]
+    if words and words[0].lower() in {"a", "an", "the"} and len(words) > 1:
+        words = words[1:]
+    if len(words) > 3:
+        words = words[:3]
+    compact = " ".join(words).strip()
+    return compact or normalized
+
+
+def _normalize_lay_translation(rendered_translation: str, footnoted_translation: str) -> str:
+    """Prefer the compact footnoted line when the lay sentence becomes bloated.
+
+    The lay translation should communicate the idea quickly. When the raw
+    `rendered_translation` balloons into a glossary dump, the marker-stripped
+    footnoted line is usually the shorter and more faithful lay summary.
+    """
+
+    cleaned = " ".join(rendered_translation.split())
+    if not cleaned:
+        return _strip_footnote_markers(footnoted_translation)
+    if not _looks_overexpanded_lay_translation(cleaned):
+        return cleaned
+    compact = _strip_footnote_markers(footnoted_translation)
+    return compact or cleaned
+
+
+def _looks_overexpanded_lay_translation(text: str) -> bool:
+    """Detect when a lay translation has drifted into glossary-like prose."""
+
+    if len(text.split()) > 12:
+        return True
+    return sum(text.count(marker) for marker in ",;:") >= 2
+
+
+def _strip_footnote_markers(text: str) -> str:
+    """Remove markdown footnote markers while keeping the translation wording."""
+
+    without_markers = re.sub(r"\s*\[\^\d+\]", "", text)
+    return " ".join(without_markers.split()).strip()
 
 
 def _fallback_footnote_explanation(

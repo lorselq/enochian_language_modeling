@@ -175,138 +175,138 @@ class PhraseTranslationService:
         translation_footnotes: list[dict[str, object]] = []
 
         self._report_progress(progress_reporter, "Preparing phrase translation...")
-        try:
-            for index, token in enumerate(tokens, start=1):
-                self._report_progress(
-                    progress_reporter,
-                    f"Analyzing token {index}/{len(tokens)}: {token.upper()}",
-                )
-                word_result = self.word_service.translate_word(
-                    token,
-                    variants=active_variants,
-                    strategy=strategy,
-                    top_k=top_k,
-                    llm=False,
-                    llm_context=llm_context,
-                    evidence_mode=evidence_mode,
-                    weight_enabled=weight_enabled,
-                    allow_whole_word=allow_whole_word,
-                )
-                token_candidates = self._token_candidates_from_word_result(
-                    token,
-                    word_result,
-                    top_k=top_k,
-                )
-                if not token_candidates:
-                    token_candidates = self._fallback_token_candidates(token)
-                candidate_matrix.append(token_candidates)
-                token_payloads.append(
-                    {
-                        "token": token,
-                        "candidates": [asdict(candidate) for candidate in token_candidates],
-                        "word_result": word_result,
-                    }
-                )
-
+        for index, token in enumerate(tokens, start=1):
             self._report_progress(
                 progress_reporter,
-                "Building and scoring parse candidates...",
+                f"Analyzing token {index}/{len(tokens)}: {token.upper()}",
             )
-            parse_candidates = self._build_parse_candidates(
-                tokens,
-                candidate_matrix,
-                top_k=max(3, top_k),
+            word_result = self.word_service.translate_word(
+                token,
+                variants=active_variants,
+                strategy=strategy,
+                top_k=top_k,
+                llm=False,
+                llm_context=llm_context,
+                evidence_mode=evidence_mode,
+                weight_enabled=weight_enabled,
+                allow_whole_word=allow_whole_word,
             )
-            chosen_parse = parse_candidates[0] if parse_candidates else None
-
-            rendered_translation = chosen_parse.translation_skeleton if chosen_parse else ""
-            render_reasoning = "Algorithmic phrase rendering only."
-            render_confidence = 0.0
-            render_warnings: list[str] = []
-            lay_translation = rendered_translation
-            lay_reasoning = "Lay translation fell back to the algorithmic phrase skeleton."
-            lay_confidence = 0.0
-            lay_warnings: list[str] = []
-            if chosen_parse is not None:
-                render_confidence = self._parse_confidence(chosen_parse)
-                lay_confidence = render_confidence
-            render_payload = (
-                self._phrase_render_payload(normalized_phrase, chosen_parse)
-                if chosen_parse is not None
-                else None
+            token_candidates = self._token_candidates_from_word_result(
+                token,
+                word_result,
+                top_k=top_k,
             )
-            if llm_enabled and chosen_parse is not None:
-                self._report_progress(
-                    progress_reporter,
-                    "Rendering technical translation...",
-                )
-                render_context = {
-                    "phrase": normalized_phrase,
-                    "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
-                    "use_remote": self.word_service.llm_use_remote,
-                    "confidence": render_confidence,
+            if not token_candidates:
+                token_candidates = self._fallback_token_candidates(token)
+            candidate_matrix.append(token_candidates)
+            token_payloads.append(
+                {
+                    "token": token,
+                    "candidates": [asdict(candidate) for candidate in token_candidates],
+                    "word_result": word_result,
                 }
-                rendered = self.llm_renderer(
-                    render_payload,
-                    render_context,
-                )
-                rendered_translation = rendered.rendered_translation or rendered_translation
-                render_reasoning = rendered.reasoning
-                render_confidence = rendered.confidence
-                render_warnings = list(rendered.warnings)
-            if render_payload is not None:
-                self._report_progress(
-                    progress_reporter,
-                    "Rendering lay translation and footnotes...",
-                )
-                lay_context = {
-                    "phrase": normalized_phrase,
-                    "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
-                    "use_remote": self.word_service.llm_use_remote,
-                    "confidence": render_confidence,
-                }
-                lay_rendered = self.lay_renderer(
-                    render_payload,
-                    lay_context,
-                )
-                lay_translation = lay_rendered.rendered_translation or rendered_translation
-                lay_reasoning = lay_rendered.reasoning
-                lay_confidence = lay_rendered.confidence
-                lay_warnings = list(lay_rendered.warnings)
-                footnoted_translation = lay_rendered.footnoted_translation or ""
-                raw_footnotes = lay_rendered.translation_footnotes
-                translation_footnotes = (
-                    list(raw_footnotes)
-                    if isinstance(raw_footnotes, list)
-                    else []
-                )
+            )
 
-            memory_updates: list[dict[str, object]] = []
-            if memory_update and chosen_parse is not None:
-                self._report_progress(
-                    progress_reporter,
-                    "Recording provisional memory updates...",
+        self._report_progress(
+            progress_reporter,
+            "Building and scoring parse candidates...",
+        )
+        parse_candidates = self._build_parse_candidates(
+            tokens,
+            candidate_matrix,
+            top_k=max(3, top_k),
+        )
+        chosen_parse = parse_candidates[0] if parse_candidates else None
+
+        rendered_translation = chosen_parse.translation_skeleton if chosen_parse else ""
+        render_reasoning = "Algorithmic phrase rendering only."
+        render_confidence = 0.0
+        render_warnings: list[str] = []
+        lay_translation = rendered_translation
+        lay_reasoning = "Lay translation fell back to the algorithmic phrase skeleton."
+        lay_confidence = 0.0
+        lay_warnings: list[str] = []
+        if chosen_parse is not None:
+            render_confidence = self._parse_confidence(chosen_parse)
+            lay_confidence = render_confidence
+        render_payload = (
+            self._phrase_render_payload(normalized_phrase, chosen_parse)
+            if chosen_parse is not None
+            else None
+        )
+        if llm_enabled and chosen_parse is not None:
+            self._report_progress(
+                progress_reporter,
+                "Rendering technical translation...",
+            )
+            render_context = {
+                "phrase": normalized_phrase,
+                "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+                "use_remote": self.word_service.llm_use_remote,
+                "confidence": render_confidence,
+                "progress_reporter": progress_reporter,
+                "progress_label": "Rendering technical translation",
+            }
+            rendered = self.llm_renderer(
+                render_payload,
+                render_context,
+            )
+            rendered_translation = rendered.rendered_translation or rendered_translation
+            render_reasoning = rendered.reasoning
+            render_confidence = rendered.confidence
+            render_warnings = list(rendered.warnings)
+        if render_payload is not None:
+            self._report_progress(
+                progress_reporter,
+                "Rendering lay translation and footnotes...",
+            )
+            lay_context = {
+                "phrase": normalized_phrase,
+                "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+                "use_remote": self.word_service.llm_use_remote,
+                "confidence": render_confidence,
+                "progress_reporter": progress_reporter,
+                "progress_label": "Rendering lay translation and footnotes",
+            }
+            lay_rendered = self.lay_renderer(
+                render_payload,
+                lay_context,
+            )
+            lay_translation = lay_rendered.rendered_translation or rendered_translation
+            lay_reasoning = lay_rendered.reasoning
+            lay_confidence = lay_rendered.confidence
+            lay_warnings = list(lay_rendered.warnings)
+            footnoted_translation = lay_rendered.footnoted_translation or ""
+            raw_footnotes = lay_rendered.translation_footnotes
+            translation_footnotes = (
+                list(raw_footnotes)
+                if isinstance(raw_footnotes, list)
+                else []
+            )
+
+        memory_updates: list[dict[str, object]] = []
+        if memory_update and chosen_parse is not None:
+            self._report_progress(
+                progress_reporter,
+                "Recording provisional memory updates...",
+            )
+            for index, candidate in enumerate(chosen_parse.token_choices):
+                if candidate.analysis_type != "provisional":
+                    continue
+                glosses = [
+                    gloss for gloss in [candidate.definition, *candidate.alternates]
+                    if isinstance(gloss, str) and gloss.strip()
+                ]
+                update = self.memory_repository.record_observation(
+                    word=candidate.token,
+                    phrase=normalized_phrase,
+                    role_hint=candidate.role_hint,
+                    glosses=glosses,
+                    confidence=candidate.confidence,
+                    left_neighbor=tokens[index - 1] if index > 0 else None,
+                    right_neighbor=tokens[index + 1] if index + 1 < len(tokens) else None,
                 )
-                for index, candidate in enumerate(chosen_parse.token_choices):
-                    if candidate.analysis_type != "provisional":
-                        continue
-                    glosses = [
-                        gloss for gloss in [candidate.definition, *candidate.alternates]
-                        if isinstance(gloss, str) and gloss.strip()
-                    ]
-                    update = self.memory_repository.record_observation(
-                        word=candidate.token,
-                        phrase=normalized_phrase,
-                        role_hint=candidate.role_hint,
-                        glosses=glosses,
-                        confidence=candidate.confidence,
-                        left_neighbor=tokens[index - 1] if index > 0 else None,
-                        right_neighbor=tokens[index + 1] if index + 1 < len(tokens) else None,
-                    )
-                    memory_updates.append(update)
-        finally:
-            if progress_reporter is not None:
-                progress_reporter.done()
+                memory_updates.append(update)
 
         return {
             "phrase": normalized_phrase,
