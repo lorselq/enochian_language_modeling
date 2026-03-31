@@ -451,12 +451,11 @@ class SingleWordTranslationService:
             self.repository.require_variants(active_variants)
 
         dictionary_snapshot = self.candidate_finder.dictionary
-        self.candidate_finder.dictionary = {}
         try:
             evidence = self.repository.fetch_word_evidence(
                 normalized,
                 variants=active_variants,
-                dictionary_entries=None,
+                dictionary_entries=dictionary_snapshot,
                 min_n=self.candidate_finder.min_n,
                 max_n=self.candidate_finder.max_n,
             )
@@ -537,6 +536,11 @@ class SingleWordTranslationService:
                         support_residuals,
                         support_hypotheses,
                     )
+                evidence.rejected_morphs.update(
+                    self.repository.fetch_rejected_morphs(
+                        substrings, variants=active_variants
+                    )
+                )
 
             # Apply evidence mode EARLY so that decomposition generation, morph_support
             # labeling, and hard filtering all respect the mode.
@@ -568,6 +572,10 @@ class SingleWordTranslationService:
 
             evidence.definition_counts = definition_counts
             evidence.definition_glosses = definition_glosses
+            exact_candidates = self._collect_exact_word_candidates(
+                normalized,
+                evidence,
+            )
 
             attested_pieces = _collect_attested_pieces(
                 evidence, evidence_mode=evidence_mode.value
@@ -888,6 +896,17 @@ class SingleWordTranslationService:
                             weighted=False,
                         )
                         decomp.score_breakdown = breakdown
+                rejected_morphs = [
+                    morph for morph in decomp.morphs
+                    if morph.upper() in evidence.rejected_morphs
+                ]
+                if rejected_morphs:
+                    score -= 2.5 * len(rejected_morphs)
+                    decomp.score_breakdown = dict(decomp.score_breakdown)
+                    decomp.score_breakdown["rejected_morphs"] = rejected_morphs
+                    decomp.score_breakdown["rejected_morph_penalty"] = (
+                        2.5 * len(rejected_morphs)
+                    )
 
                 ranked.append((decomp, score))
 
@@ -909,20 +928,42 @@ class SingleWordTranslationService:
                 k=top_k,
                 evidence=evidence,
             )
+            for candidate in selected:
+                self._annotate_candidate(
+                    candidate,
+                    evidence=evidence,
+                    analysis_type="compositional",
+                )
 
-            fallback_morphs: list[dict[str, object]] = []
+            provisional_candidates, fallback_morphs = (
+                self._build_provisional_candidates(
+                    normalized,
+                    evidence=evidence,
+                    top_n=fallback_top_n,
+                    existing_candidates=exact_candidates + selected,
+                )
+            )
+            if provisional_candidates and not selected:
+                fallback_used = True
+                fallback_mode = fallback_mode or "provisional_candidates"
+            candidate_pool = self._merge_candidate_pool(
+                exact_candidates,
+                selected,
+                provisional_candidates,
+                top_k=top_k,
+            )
 
             llm_enabled = self.llm_enabled if llm is None else bool(llm)
             llm_progress = self._build_llm_progress_plan(
-                candidate_count=len(selected),
-                include_consensus=llm_enabled and len(selected) > 1,
+                candidate_count=len(candidate_pool),
+                include_consensus=llm_enabled and len(candidate_pool) > 1,
                 include_validation_repairs=llm_enabled,
             )
             if llm_enabled and llm_progress is not None and progress_reporter is not None:
                 progress_reporter.prepare(llm_progress)
             try:
                 enriched = self._enrich_candidates(
-                    selected,
+                    candidate_pool,
                     evidence=evidence,
                     strategy=strategy,
                     llm_enabled=llm_enabled,
@@ -983,8 +1024,8 @@ class SingleWordTranslationService:
                     "decomposition": {
                         "generated": len(decompositions),
                         "filtered": len(filtered),
-                        "selected": len(selected),
-                        "fallback_generated": len(fallback_decompositions),
+                        "selected": len(candidate_pool),
+                        "fallback_generated": len(provisional_candidates),
                         "fallback_used": fallback_used,
                         "fallback_mode": fallback_mode,
                         "fallback_min_coverage_ratio": fallback_min_coverage,
@@ -1066,9 +1107,18 @@ class SingleWordTranslationService:
                 base["best_estimations"] = synthesis.best_estimations
             else:
                 base["synthesized_definition"] = None
-                base["confidence"] = self._coverage_confidence(
+                base_confidence = self._coverage_confidence(
                     coverage_ratio=coverage_ratio, residual_ratio=residual_ratio
                 )
+                analysis_type = str(base.get("analysis_type") or "")
+                if analysis_type == "dictionary_exact":
+                    base["confidence"] = max(base_confidence, 0.98)
+                elif analysis_type == "whole_word_anchor":
+                    base["confidence"] = max(base_confidence, 0.92)
+                elif analysis_type == "provisional":
+                    base["confidence"] = min(base_confidence, 0.55)
+                else:
+                    base["confidence"] = base_confidence
                 base["reasoning"] = (
                     "LLM disabled; using concatenated morph meanings."
                 )
@@ -1149,6 +1199,263 @@ class SingleWordTranslationService:
             "possible_total_requests": (
                 progress.total_primary_requests + progress.validation_repair_budget
             ),
+        }
+
+    def _collect_exact_word_candidates(
+        self,
+        word: str,
+        evidence: WordEvidence,
+    ) -> list[dict[str, object]]:
+        """Build exact-word anchor candidates before decomposition ranking.
+
+        Single-word translation needs exact lexical anchors and whole-word
+        accepted roots to compete directly with decomposed analyses. This keeps
+        canonical dictionary items definitive while still allowing a strong
+        whole-word database anchor to beat an over-eager split.
+        """
+        candidates: list[dict[str, object]] = []
+
+        dictionary_exact = evidence.dictionary_morphs.get(word)
+        if dictionary_exact and (dictionary_exact.definition or dictionary_exact.senses):
+            definitions = [
+                text
+                for text in [dictionary_exact.definition, *dictionary_exact.senses]
+                if isinstance(text, str) and text.strip()
+            ]
+            if definitions:
+                candidates.append(
+                    self._build_single_morph_candidate(
+                        word,
+                        definition=definitions[0],
+                        definitions=definitions,
+                        provenance="dictionary",
+                        score=200.0,
+                        analysis_type="dictionary_exact",
+                        warnings=[],
+                    )
+                )
+
+        exact_definition_candidates = extract_definition_candidates(
+            [word],
+            evidence,
+            max_per_morph=4,
+        ).get(word, [])
+        anchor_candidates = [
+            entry
+            for entry in exact_definition_candidates
+            if entry.get("source") in {"cluster", "residual"}
+        ]
+        if anchor_candidates:
+            selected = anchor_candidates[0]
+            selected_definition = selected.get("definition")
+            if isinstance(selected_definition, str) and selected_definition.strip():
+                candidates.append(
+                    self._build_single_morph_candidate(
+                        word,
+                        definition=selected_definition,
+                        definitions=[
+                            str(entry.get("definition")).strip()
+                            for entry in anchor_candidates
+                            if isinstance(entry.get("definition"), str)
+                            and str(entry.get("definition")).strip()
+                        ],
+                        provenance=str(selected.get("source") or "cluster"),
+                        score=150.0 + float(selected.get("quality") or 0.0),
+                        analysis_type="whole_word_anchor",
+                        warnings=[],
+                    )
+                )
+
+        return candidates
+
+    def _build_provisional_candidates(
+        self,
+        word: str,
+        *,
+        evidence: WordEvidence,
+        top_n: int,
+        existing_candidates: Sequence[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        """Return provisional whole-word candidates plus human-readable hints.
+
+        The current pipeline should not fail silently when support is weak but
+        there is still corpus or dictionary context worth surfacing. Provisional
+        candidates make that uncertainty explicit while preserving useful
+        building blocks for later phrase-level or corpus-level disambiguation.
+        """
+        fallback_morphs = self._fallback_morph_hints(word)[:top_n]
+        existing_types = {
+            (
+                tuple(str(morph) for morph in candidate.get("morphs", [])),
+                str(candidate.get("analysis_type") or ""),
+            )
+            for candidate in existing_candidates
+            if isinstance(candidate, dict)
+        }
+        has_exact_word_candidate = any(
+            tuple(str(morph) for morph in candidate.get("morphs", [])) == (word,)
+            and str(candidate.get("analysis_type") or "") != "provisional"
+            for candidate in existing_candidates
+            if isinstance(candidate, dict)
+        )
+
+        provisional: list[dict[str, object]] = []
+        attested_definitions = sorted(
+            {
+                att.definition.strip()
+                for att in evidence.attested_definitions
+                if att.source_word.upper() == word
+                and isinstance(att.definition, str)
+                and att.definition.strip()
+            }
+        )
+        if (
+            attested_definitions
+            and not has_exact_word_candidate
+            and ((word,), "provisional") not in existing_types
+        ):
+            provisional.append(
+                self._build_single_morph_candidate(
+                    word,
+                    definition=attested_definitions[0],
+                    definitions=attested_definitions,
+                    provenance="attested",
+                    score=40.0 + min(len(attested_definitions), 5),
+                    analysis_type="provisional",
+                    warnings=[
+                        "Provisional whole-word reading from raw attestation only.",
+                    ],
+                )
+            )
+
+        return provisional, fallback_morphs
+
+    def _build_single_morph_candidate(
+        self,
+        word: str,
+        *,
+        definition: str,
+        definitions: Sequence[str],
+        provenance: str,
+        score: float,
+        analysis_type: str,
+        warnings: Sequence[str],
+    ) -> dict[str, object]:
+        """Create a normalized single-morph candidate payload.
+
+        Exact-word anchors, whole-word database matches, and provisional raw
+        attestations all share the same result schema as compositional
+        candidates. Building them through one helper keeps output stable across
+        `translate-word` and the upcoming phrase-level parser.
+        """
+        unique_definitions = [
+            text
+            for idx, text in enumerate(definitions)
+            if text and text not in definitions[:idx]
+        ]
+        return {
+            "rank": 1,
+            "morphs": [word],
+            "canonicals": [word],
+            "score": float(score),
+            "breakdown": self._full_word_breakdown(word),
+            "score_breakdown": None,
+            "meanings": [
+                {
+                    "morph": word,
+                    "canonical": word,
+                    "definition": definition,
+                    "definitions": unique_definitions,
+                    "provenance": provenance,
+                    "anchor_strength": 1.0,
+                }
+            ],
+            "warnings": list(warnings),
+            "analysis_type": analysis_type,
+        }
+
+    def _annotate_candidate(
+        self,
+        candidate: dict[str, object],
+        *,
+        evidence: WordEvidence,
+        analysis_type: str,
+    ) -> None:
+        """Apply analysis metadata and explicit warnings to a candidate."""
+        candidate["analysis_type"] = analysis_type
+        warnings = list(candidate.get("warnings", []))
+        rejected = sorted(
+            {
+                morph
+                for morph in candidate.get("morphs", [])
+                if isinstance(morph, str) and morph.upper() in evidence.rejected_morphs
+            }
+        )
+        if rejected:
+            warnings.append(
+                "Contains explicitly rejected morph evidence: " + ", ".join(rejected)
+            )
+        if warnings:
+            candidate["warnings"] = warnings
+
+    def _merge_candidate_pool(
+        self,
+        *candidate_groups: Sequence[dict[str, object]],
+        top_k: int,
+    ) -> list[dict[str, object]]:
+        """Merge exact, compositional, and provisional candidates into one pool."""
+        merged: list[dict[str, object]] = []
+        seen: set[tuple[object, ...]] = set()
+
+        for group in candidate_groups:
+            for candidate in group:
+                if not isinstance(candidate, dict):
+                    continue
+                meanings = candidate.get("meanings", [])
+                meaning_key = tuple(
+                    (
+                        entry.get("morph"),
+                        entry.get("definition"),
+                        entry.get("provenance"),
+                    )
+                    for entry in meanings
+                    if isinstance(entry, dict)
+                )
+                key = (
+                    candidate.get("analysis_type"),
+                    tuple(candidate.get("morphs", [])),
+                    meaning_key,
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(dict(candidate))
+
+        merged.sort(
+            key=lambda item: float(item.get("score") or 0.0),
+            reverse=True,
+        )
+        if top_k > 0:
+            merged = merged[:top_k]
+        for idx, candidate in enumerate(merged, start=1):
+            candidate["rank"] = idx
+        return merged
+
+    @staticmethod
+    def _full_word_breakdown(word: str) -> dict[str, object]:
+        """Return a normalized full-coverage breakdown for whole-word anchors."""
+        return {
+            "segments": [
+                {
+                    "start": 0,
+                    "end": len(word),
+                    "ngram": word,
+                    "canonical": word,
+                }
+            ],
+            "uncovered": [],
+            "coverage_ratio": 1.0,
+            "residual_ratio": 0.0,
         }
 
 
@@ -1366,17 +1673,11 @@ class SingleWordTranslationService:
         if mode == SingleWordTranslationService.EvidenceMode.CLUSTERS_ONLY:
             evidence.residual_semantics = []
             evidence.morph_hypotheses = []
-            evidence.attested_definitions = []
-            empty_morphs: dict[str, DictionaryMorph] = {}
-            evidence.dictionary_morphs = empty_morphs
             evidence.fasttext_neighbors = []
             return
         if mode == SingleWordTranslationService.EvidenceMode.RESIDUALS_ONLY:
             evidence.direct_clusters = []
             evidence.morph_hypotheses = []
-            evidence.attested_definitions = []
-            empty_morphs: dict[str, DictionaryMorph] = {}
-            evidence.dictionary_morphs = empty_morphs
             evidence.fasttext_neighbors = []
             return
 
@@ -1390,6 +1691,7 @@ class SingleWordTranslationService:
             "attested_definitions": len(evidence.attested_definitions),
             "dictionary_morphs": len(evidence.dictionary_morphs),
             "fasttext_neighbors": [asdict(neighbor) for neighbor in evidence.fasttext_neighbors],
+            "rejected_morphs": sorted(evidence.rejected_morphs),
         }
 
 
