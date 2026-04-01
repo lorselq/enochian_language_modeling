@@ -483,7 +483,11 @@ def _word_candidate(
     }
 
 
-def _word_result(word: str, *candidates: dict[str, object]) -> dict[str, object]:
+def _word_result(
+    word: str,
+    *candidates: dict[str, object],
+    fallback_morphs: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     """Wrap candidate payloads in the single-word result schema."""
     return {
         "word": word,
@@ -497,7 +501,7 @@ def _word_result(word: str, *candidates: dict[str, object]) -> dict[str, object]
         "timestamp": "2026-03-29T00:00:00Z",
         "candidates": list(candidates),
         "evidence": {},
-        "fallback_morphs": [],
+        "fallback_morphs": list(fallback_morphs or []),
         "diagnostics": {},
     }
 
@@ -3575,12 +3579,12 @@ def test_translate_word_demotes_opaque_placeholder_anchor_below_composition() ->
 def test_phrase_translation_hides_placeholder_leftovers_when_no_clean_gloss_exists(
     tmp_path: Path,
 ) -> None:
-    """Render unresolved tokens cleanly instead of echoing residual dump text.
+    """Preserve opaque placeholder evidence without falling back to `[TOKEN]`.
 
     Even after ranking demotion, some phrases will still contain tokens whose
     only surviving evidence is a placeholder residual headline. The phrase layer
-    should mark those tokens as unresolved in human-facing output while keeping
-    the raw single-word diagnostics intact.
+    should preserve the opaque token form as an explicit best-effort fallback
+    while keeping the raw single-word diagnostics intact.
     """
 
     word_service = FakeWordService(
@@ -3607,13 +3611,201 @@ def test_phrase_translation_hides_placeholder_leftovers_when_no_clean_gloss_exis
 
     result = service.translate_phrase("nacro", top_k=1, llm=False)
 
-    assert result["rendered_translation"] == "[NACRO]"
-    assert result["lay_translation"] == "[NACRO]"
-    assert result["footnoted_translation"] == "[NACRO] [^1]"
+    assert result["rendered_translation"] == "nacro"
+    assert result["lay_translation"] == "nacro"
+    assert result["footnoted_translation"] == "nacro [^1]"
     assert result["translation_footnotes"][0]["source_token"] == "NACRO"
+    assert result["translation_footnotes"][0]["rendered_text"] == "nacro"
+    assert result["translation_footnotes"][0]["explanation"] == (
+        "Weak or placeholder evidence survived for this token, so the opaque "
+        "token form was preserved as a last-resort best-effort gloss."
+    )
     assert "Top residuals:" not in result["footnoted_translation"]
     assert result["token_analyses"][0]["word_result"]["candidates"][0]["meanings"][0]["definition"] == (
         "Top residuals: nacro:1.00"
+    )
+
+
+def test_phrase_translation_uses_substring_hint_when_no_candidate_gloss_survives(
+    tmp_path: Path,
+) -> None:
+    """Lift substring hints into phrase output when fallback memory stays empty.
+
+    The phrase layer sometimes lands on a provisional memory fallback because
+    word analysis produced no phrase-usable candidates. When the single-word
+    result still carries substring hints, the final phrase should surface that
+    weak gloss with an explicit caution instead of echoing a raw placeholder.
+    """
+
+    word_service = FakeWordService(
+        results_by_word={
+            "DODRMNI": _word_result(
+                "DODRMNI",
+                fallback_morphs=[
+                    {
+                        "morph": "RMNI",
+                        "definition": "extension",
+                        "coverage_ratio": 0.571,
+                        "fasttext_similarity": 0.31,
+                        "source": "dictionary_substring",
+                    }
+                ],
+            ),
+        }
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-substring-fallback.sqlite3")
+    memory.record_observation(
+        word="DODRMNI",
+        phrase="seed phrase",
+        role_hint="unknown",
+        glosses=[],
+        confidence=0.1,
+        left_neighbor=None,
+        right_neighbor=None,
+    )
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase("dodrmni", top_k=1, llm=False)
+
+    assert result["rendered_translation"] == "extension"
+    assert result["lay_translation"] == "extension"
+    assert result["footnoted_translation"] == "extension [^1]"
+    assert result["translation_footnotes"][0]["rendered_text"] == "extension"
+    assert result["translation_footnotes"][0]["explanation"] == (
+        "Weak or placeholder evidence survived for this token, so this "
+        "best-effort gloss comes from a surviving substring hint."
+    )
+    chosen = result["chosen_parse"]["token_choices"][0]
+    assert chosen["definition"] is None
+    assert chosen["weak_fallback_gloss"] == "extension"
+    assert chosen["weak_fallback_note"] == (
+        "Weak or placeholder evidence survived for this token, so this "
+        "best-effort gloss comes from a surviving substring hint."
+    )
+    assert result["memory_updates"][0]["best_gloss"] is None
+    assert result["memory_updates"][0]["display_gloss"] == "extension"
+
+
+def test_phrase_translation_uses_supported_decomposition_when_no_gloss_survives(
+    tmp_path: Path,
+) -> None:
+    """Lift supported decomposition pieces into the weak fallback path.
+
+    Some unresolved phrase tokens still have real morph support from the
+    single-word analyzer even though none of the composed candidates survive as
+    phrase-facing glosses. The weak fallback should reuse that decomposition
+    support before collapsing to the opaque token form.
+    """
+
+    word_service = FakeWordService(
+        results_by_word={
+            "DODRMNI": _word_result("DODRMNI"),
+        }
+    )
+    word_service._results_by_word["DODRMNI"]["diagnostics"] = {
+        "substring_support": ["DO", "D", "R", "M", "NI"]
+    }
+    word_service.repository = types.SimpleNamespace(
+        variants=["solo"],
+        fetch_morph_support=lambda morphs, variants=None: (
+            [
+                _cluster_record(
+                    "DO",
+                    "disturbance",
+                    semantic_core=["disturbance"],
+                ),
+                _cluster_record(
+                    "NI",
+                    "presence",
+                    cluster_id=2,
+                    semantic_core=["presence"],
+                ),
+            ],
+            [],
+            [],
+        ),
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-decomposition-fallback.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase("dodrmni", top_k=1, llm=False)
+
+    assert result["rendered_translation"] == "disturbance"
+    assert result["lay_translation"] == "disturbance"
+    assert result["footnoted_translation"] == "disturbance [^1]"
+    assert result["translation_footnotes"][0]["rendered_text"] == "disturbance"
+    assert result["translation_footnotes"][0]["explanation"] == (
+        "Weak or placeholder evidence survived for this token, so this "
+        "best-effort gloss comes from the supported decomposition "
+        "DO + D + R + M + NI."
+    )
+    chosen = result["chosen_parse"]["token_choices"][0]
+    assert chosen["weak_fallback_gloss"] == "disturbance"
+    assert chosen["weak_fallback_note"] == (
+        "Weak or placeholder evidence survived for this token, so this "
+        "best-effort gloss comes from the supported decomposition "
+        "DO + D + R + M + NI."
+    )
+
+
+def test_phrase_translation_uses_dictionary_rescue_when_no_word_candidates_survive(
+    tmp_path: Path,
+) -> None:
+    """Use the blind-mode exact dictionary rescue in the no-candidate fallback.
+
+    Some tokens never produce a phrase-usable word candidate at all, but blind
+    mode may still have an exact dictionary entry that is honest enough to show
+    as a labeled rescue. The provisional fallback path should surface that
+    rescue instead of dropping straight to weaker decomposition or opaque-token
+    output.
+    """
+
+    word_service = FakeWordService(
+        results_by_word={
+            "DODRMNI": _word_result("DODRMNI"),
+        },
+        dictionary={
+            "dodrmni": {
+                "canonical": "DODRMNI",
+                "definition": "vexed",
+                "senses": [{"definition": "vexed"}],
+                "pos": "adjective",
+            }
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-dictionary-fallback.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase(
+        "dodrmni",
+        top_k=1,
+        llm=False,
+        allow_whole_word=False,
+    )
+
+    assert result["rendered_translation"] == "vexed"
+    assert result["lay_translation"] == "vexed"
+    assert result["footnoted_translation"] == "vexed [^1]"
+    assert result["translation_footnotes"][0]["rendered_text"] == "vexed"
+    assert result["translation_footnotes"][0]["explanation"] == (
+        "Blind mode dictionary rescue used the exact dictionary entry because "
+        "decomposition-level evidence stayed unresolved."
+    )
+    chosen = result["chosen_parse"]["token_choices"][0]
+    assert chosen["definition"] is None
+    assert chosen["dictionary_rescue_gloss"] == "vexed"
+    assert chosen["dictionary_rescue_note"] == (
+        "Blind mode dictionary rescue used the exact dictionary entry because "
+        "decomposition-level evidence stayed unresolved."
     )
 
 

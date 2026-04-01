@@ -22,9 +22,9 @@ from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 
 from .placeholder_glosses import (
     clean_lexical_gloss,
+    opaque_token_fallback_gloss,
     sanitize_human_gloss,
     semantic_core_gloss,
-    unresolved_token_gloss,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -1644,7 +1644,10 @@ def _fallback_rendered_text(token_choice: Mapping[str, object], token: str) -> s
     dictionary_rescue_gloss = _dictionary_rescue_gloss(token_choice, token)
     if dictionary_rescue_gloss is not None:
         return dictionary_rescue_gloss
-    return unresolved_token_gloss(token)
+    weak_fallback_gloss = _weak_fallback_gloss(token_choice, token)
+    if weak_fallback_gloss is not None:
+        return weak_fallback_gloss
+    return opaque_token_fallback_gloss(token)
 
 
 def _normalize_rendered_text(
@@ -1746,8 +1749,19 @@ def _fallback_footnote_explanation(
         and dictionary_rescue_note
     ):
         return dictionary_rescue_note
-    if rendered_text == unresolved_token_gloss(token):
-        return "Only weak or placeholder evidence survived for this token."
+    weak_fallback_gloss = _weak_fallback_gloss(token_choice, token)
+    weak_fallback_note = _weak_fallback_note(token_choice)
+    if (
+        weak_fallback_gloss is not None
+        and rendered_text == weak_fallback_gloss
+        and weak_fallback_note
+    ):
+        return weak_fallback_note
+    if rendered_text == opaque_token_fallback_gloss(token):
+        return (
+            "Weak or placeholder evidence survived for this token, so the opaque "
+            "token form was preserved as a last-resort best-effort gloss."
+        )
     if trace.get("blind_dictionary_fallback"):
         return (
             "No non-dictionary definition survived in blind mode, so the fallback "
@@ -1917,6 +1931,30 @@ def _dictionary_rescue_gloss(token_choice: Mapping[str, object], token: str) -> 
 
     raw_rescue = token_choice.get("dictionary_rescue_gloss")
     return _compact_lay_gloss(raw_rescue, token=token)
+
+
+def _weak_fallback_gloss(token_choice: Mapping[str, object], token: str) -> str | None:
+    """Return the phrase-layer weak fallback gloss when one was serialized.
+
+    Phrase rendering now preserves a dedicated weak-evidence gloss so the
+    final translation can stay readable without upgrading that gloss into the
+    candidate's primary definition. This helper keeps the footnote fallback
+    path aligned with that serialized phrase-layer decision.
+    """
+
+    raw_fallback = token_choice.get("weak_fallback_gloss")
+    return _compact_lay_gloss(raw_fallback, token=token)
+
+
+def _weak_fallback_note(token_choice: Mapping[str, object]) -> str:
+    """Return the serialized weak-fallback explanation when available."""
+
+    trace = _definition_trace_for_token_choice(token_choice)
+    return str(
+        token_choice.get("weak_fallback_note")
+        or trace.get("weak_fallback_note")
+        or ""
+    ).strip()
 
 
 def _definition_trace_for_token_choice(token_choice: Mapping[str, object]) -> Mapping[str, object]:

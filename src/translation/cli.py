@@ -2065,11 +2065,19 @@ def _format_phrase_report(
         for update in memory_updates:
             if not isinstance(update, dict):
                 continue
+            display_gloss = (
+                update.get("best_gloss")
+                or update.get("display_gloss")
+                or "[unresolved]"
+            )
             label = (
-                f"{update.get('word')}: {update.get('best_gloss') or '[unresolved]'} "
+                f"{update.get('word')}: {display_gloss} "
                 f"(confidence {float(update.get('confidence') or 0.0):.2f}, "
                 f"evidence {int(update.get('evidence_count') or 0)})"
             )
+            display_note = str(update.get("display_note") or "").strip()
+            if display_note:
+                label += f" [{display_note}]"
             lines.append(_wrap_text(label, indent=2, bullet=True))
 
     warnings = payload.get("render_warnings")
