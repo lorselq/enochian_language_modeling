@@ -3617,6 +3617,87 @@ def test_phrase_translation_hides_placeholder_leftovers_when_no_clean_gloss_exis
     )
 
 
+def test_phrase_translation_uses_exact_dictionary_rescue_for_unresolved_blind_mode_token(
+    tmp_path: Path,
+) -> None:
+    """Use the exact dictionary entry as an explicit render-only blind-mode rescue.
+
+    Phrase translation should stay decomposition-led, but when the chosen token
+    still collapses into a placeholder it is more honest to surface the exact
+    dictionary gloss as a labeled rescue than to pretend no best-effort gloss
+    exists at all. This regression keeps the final phrase text readable while
+    preserving the weak underlying token analysis.
+    """
+
+    word_service = FakeWordService(
+        results_by_word={
+            "TIOBL": _word_result(
+                "TIOBL",
+                _word_candidate(
+                    "Top residuals: tiobl:1.00",
+                    analysis_type="compositional",
+                    score=9.5,
+                    confidence=0.42,
+                    morphs=["TI", "OBL"],
+                    warnings=["Raw residual placeholder surfaced."],
+                    definition_trace={
+                        "selected_definition": None,
+                        "raw_selected_definition": "Top residuals: tiobl:1.00",
+                        "selected_source": "cluster",
+                        "selected_quality": 0.2,
+                        "selected_semantic_core": [],
+                        "selected_negative_contrast": [],
+                        "surface_gloss": None,
+                        "surface_gloss_strategy": "unresolved",
+                        "runner_ups": [],
+                        "suppressed": [],
+                        "blind_dictionary_fallback": False,
+                        "negative_contrast_penalties": [],
+                        "meta_linguistic_rejections": [],
+                    },
+                ),
+            ),
+        },
+        dictionary={
+            "tiobl": {
+                "canonical": "TIOBL",
+                "definition": "(within) her",
+                "senses": [{"definition": "(within) her"}],
+                "pos": "pronoun",
+            }
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-dictionary-rescue.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase(
+        "tiobl",
+        top_k=1,
+        llm=False,
+        allow_whole_word=False,
+    )
+
+    assert result["rendered_translation"] == "within her"
+    assert result["lay_translation"] == "within her"
+    assert result["footnoted_translation"] == "within her [^1]"
+    assert result["translation_footnotes"][0]["source_token"] == "TIOBL"
+    assert result["translation_footnotes"][0]["rendered_text"] == "within her"
+    assert result["translation_footnotes"][0]["explanation"] == (
+        "Blind mode dictionary rescue used the exact dictionary entry because "
+        "decomposition-level evidence stayed unresolved."
+    )
+    chosen = result["chosen_parse"]["token_choices"][0]
+    assert chosen["definition"] is None
+    assert chosen["dictionary_rescue_gloss"] == "within her"
+    assert chosen["dictionary_rescue_note"] == (
+        "Blind mode dictionary rescue used the exact dictionary entry because "
+        "decomposition-level evidence stayed unresolved."
+    )
+
+
 def test_phrase_translation_no_whole_word_inherits_blind_dictionary_suppression(
     tmp_path: Path,
 ) -> None:

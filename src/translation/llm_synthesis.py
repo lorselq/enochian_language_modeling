@@ -1641,6 +1641,9 @@ def _fallback_rendered_text(token_choice: Mapping[str, object], token: str) -> s
     alternate = _alternate_gloss_fallback(token_choice, token)
     if alternate is not None:
         return alternate
+    dictionary_rescue_gloss = _dictionary_rescue_gloss(token_choice, token)
+    if dictionary_rescue_gloss is not None:
+        return dictionary_rescue_gloss
     return unresolved_token_gloss(token)
 
 
@@ -1731,6 +1734,18 @@ def _fallback_footnote_explanation(
     rendered_text = _fallback_rendered_text(token_choice, token)
     analysis_type = str(token_choice.get("analysis_type") or "unknown")
     trace = _definition_trace_for_token_choice(token_choice)
+    dictionary_rescue_gloss = _dictionary_rescue_gloss(token_choice, token)
+    dictionary_rescue_note = str(
+        token_choice.get("dictionary_rescue_note")
+        or trace.get("dictionary_rescue_note")
+        or ""
+    ).strip()
+    if (
+        dictionary_rescue_gloss is not None
+        and rendered_text == dictionary_rescue_gloss
+        and dictionary_rescue_note
+    ):
+        return dictionary_rescue_note
     if rendered_text == unresolved_token_gloss(token):
         return "Only weak or placeholder evidence survived for this token."
     if trace.get("blind_dictionary_fallback"):
@@ -1889,6 +1904,19 @@ def _alternate_gloss_fallback(token_choice: Mapping[str, object], token: str) ->
         if compact is not None:
             return compact
     return None
+
+
+def _dictionary_rescue_gloss(token_choice: Mapping[str, object], token: str) -> str | None:
+    """Recover a render-only exact-dictionary gloss when blind mode stayed opaque.
+
+    Phrase rendering may need to explain a chosen decomposition that still has
+    no readable gloss after placeholder cleanup. When the phrase service
+    supplies an explicit exact-dictionary rescue value, this helper surfaces it
+    only after the ordinary compositional and alternate gloss paths fail.
+    """
+
+    raw_rescue = token_choice.get("dictionary_rescue_gloss")
+    return _compact_lay_gloss(raw_rescue, token=token)
 
 
 def _definition_trace_for_token_choice(token_choice: Mapping[str, object]) -> Mapping[str, object]:

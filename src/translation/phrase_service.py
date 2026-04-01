@@ -10,6 +10,7 @@ each other before any optional LLM rendering happens.
 """
 
 import copy
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,7 +30,11 @@ from .llm_synthesis import (
     render_phrase_translation,
 )
 from .memory import TranslationMemoryRepository
-from .placeholder_glosses import sanitize_human_gloss, unresolved_token_gloss
+from .placeholder_glosses import (
+    clean_lexical_gloss,
+    sanitize_human_gloss,
+    unresolved_token_gloss,
+)
 from .service import SingleWordTranslationService
 from .strategies import compose_semantic_bundle
 
@@ -75,6 +80,8 @@ class PhraseTokenCandidate:
     bundle_coherence_score: float = 0.0
     blind_mode_whole_word_rescue: bool = False
     blind_mode_rescue_note: str | None = None
+    dictionary_rescue_gloss: str | None = None
+    dictionary_rescue_note: str | None = None
 
 
 @dataclass(slots=True)
@@ -242,6 +249,7 @@ class PhraseTranslationService:
                 token,
                 word_result,
                 top_k=top_k,
+                allow_whole_word=allow_whole_word,
             )
             if not token_candidates:
                 token_candidates = self._fallback_token_candidates(token)
@@ -504,6 +512,7 @@ class PhraseTranslationService:
         result: dict[str, object],
         *,
         top_k: int,
+        allow_whole_word: bool,
     ) -> list[PhraseTokenCandidate]:
         """Convert single-word results into phrase-level candidate objects."""
         candidates_raw = result.get("candidates")
@@ -559,6 +568,24 @@ class PhraseTranslationService:
             ).strip() or None
             if blind_mode_rescue_note and blind_mode_rescue_note not in warnings:
                 warnings.append(blind_mode_rescue_note)
+            dictionary_rescue_gloss = self._dictionary_rescue_gloss(
+                token,
+                allow_whole_word=allow_whole_word,
+                primary_definition=primary_definition,
+            )
+            dictionary_rescue_note = None
+            if dictionary_rescue_gloss is not None:
+                dictionary_rescue_note = (
+                    "Blind mode dictionary rescue used the exact dictionary entry "
+                    "because decomposition-level evidence stayed unresolved."
+                )
+                if dictionary_rescue_note not in warnings:
+                    warnings.append(dictionary_rescue_note)
+                # Keep the parse honest about what actually won while still
+                # preserving the render-only dictionary fallback for reports.
+                selected_trace["dictionary_rescue_gloss"] = dictionary_rescue_gloss
+                selected_trace["dictionary_rescue_note"] = dictionary_rescue_note
+                selected_trace["blind_mode_rescue_note"] = dictionary_rescue_note
             role_hint = self._infer_role_hint(
                 token,
                 candidate,
@@ -602,9 +629,80 @@ class PhraseTranslationService:
                         candidate.get("blind_mode_whole_word_rescue")
                     ),
                     blind_mode_rescue_note=blind_mode_rescue_note,
+                    dictionary_rescue_gloss=dictionary_rescue_gloss,
+                    dictionary_rescue_note=dictionary_rescue_note,
                 )
             )
         return converted
+
+    def _dictionary_rescue_gloss(
+        self,
+        token: str,
+        *,
+        allow_whole_word: bool,
+        primary_definition: str | None,
+    ) -> str | None:
+        """Recover an exact dictionary gloss for render-only blind-mode rescue.
+
+        Blind retranslation intentionally keeps whole-word dictionary entries
+        out of candidate selection, but phrase rendering still needs an honest
+        best-effort gloss when the winning decomposition collapses into an
+        unreadable placeholder. This helper recovers the exact dictionary entry
+        without changing parse scores so reports can say, "here is the best
+        dictionary guess, and it is only a rescue."
+        """
+
+        if allow_whole_word or primary_definition is not None:
+            return None
+        dictionary = getattr(self.word_service.candidate_finder, "dictionary", {})
+        if not isinstance(dictionary, Mapping):
+            return None
+        entry = dictionary.get(token.lower())
+        if not isinstance(entry, Mapping):
+            return None
+
+        rescue_candidates: list[str] = []
+        for key in ("enhanced_definition", "definition"):
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                rescue_candidates.append(value.strip())
+        senses = entry.get("senses")
+        if isinstance(senses, Sequence) and not isinstance(senses, (str, bytes)):
+            for sense in senses:
+                if not isinstance(sense, Mapping):
+                    continue
+                definition = sense.get("definition")
+                if isinstance(definition, str) and definition.strip():
+                    rescue_candidates.append(definition.strip())
+
+        for raw_candidate in rescue_candidates:
+            cleaned = clean_lexical_gloss(raw_candidate, token=token)
+            if cleaned is not None:
+                normalized = self._normalize_dictionary_rescue_gloss(cleaned)
+                if normalized:
+                    return normalized
+        for raw_candidate in rescue_candidates:
+            sanitized = sanitize_human_gloss(raw_candidate, token=token)
+            if sanitized is None:
+                continue
+            normalized = self._normalize_dictionary_rescue_gloss(sanitized)
+            if normalized:
+                return normalized
+        return None
+
+    @staticmethod
+    def _normalize_dictionary_rescue_gloss(gloss: str) -> str:
+        """Flatten exact-dictionary gloss punctuation into readable phrase text.
+
+        Exact dictionary entries are the most honest rescue source for blind
+        mode, but some are written with editorial parentheses such as
+        ``(within) her``. Phrase output should keep that meaning while removing
+        the punctuation noise that would otherwise distract from the explicit
+        rescue note.
+        """
+
+        normalized = re.sub(r"\(([^()]*)\)", r"\1", gloss)
+        return " ".join(normalized.split()).strip(" ,;-")
 
     def _fallback_token_candidates(self, token: str) -> list[PhraseTokenCandidate]:
         """Provide an opaque fallback when no algorithmic word analysis exists."""
@@ -1343,6 +1441,11 @@ class PhraseTranslationService:
         )
         if isinstance(preferred, str) and preferred.strip():
             return preferred.strip()
+        if (
+            isinstance(candidate.dictionary_rescue_gloss, str)
+            and candidate.dictionary_rescue_gloss.strip()
+        ):
+            return candidate.dictionary_rescue_gloss.strip()
         return unresolved_token_gloss(token)
 
     @staticmethod
@@ -1379,6 +1482,8 @@ class PhraseTranslationService:
                     "bundle_function_profile": candidate.bundle_function_profile,
                     "blind_mode_whole_word_rescue": candidate.blind_mode_whole_word_rescue,
                     "blind_mode_rescue_note": candidate.blind_mode_rescue_note,
+                    "dictionary_rescue_gloss": candidate.dictionary_rescue_gloss,
+                    "dictionary_rescue_note": candidate.dictionary_rescue_note,
                     "semantic_core": list(trace.get("selected_semantic_core") or []),
                     "negative_contrast": list(trace.get("selected_negative_contrast") or []),
                     "alternates": list(candidate.alternates[:3]),
