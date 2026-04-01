@@ -147,6 +147,7 @@ from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils import candidate_finder as root_candidate_finder_module
 from translation.decomposition import Decomposition
 from translation.llm_synthesis import (
+    _build_phrase_bundle_prompt,
     PhraseRenderBundleResult,
     PhraseRenderResult,
     _build_phrase_footnote_fallback,
@@ -2669,13 +2670,92 @@ def test_parse_phrase_lay_render_response_rebuilds_missing_footnotes() -> None:
     assert "chosen parse" not in parsed["translation_footnotes"][0]["explanation"].lower()
 
 
-def test_parse_phrase_lay_render_response_compacts_overlong_lay_chunks() -> None:
-    """Collapse glossary-like lay chunks back into short token-level concepts.
+def test_parse_phrase_lay_render_response_keeps_long_grammatical_sentence() -> None:
+    """Preserve coherent lay prose even when it runs longer than twelve words.
 
-    The lay renderer should return short, sane phrasing, but remote runs can
-    drift into comma-heavy mini-definitions. This regression keeps the parser
-    from passing those long chunks straight through to the final footnoted
-    translation block.
+    Long phrases can still yield good English sentences. The lay parser should
+    not demote those sentences back into stripped footnote text just because
+    they exceed a tiny word-count budget.
+    """
+
+    parse_payload = {
+        "phrase": "ol sonf vorsg",
+        "translation_skeleton": "I reign among",
+        "token_choices": [
+            {
+                "token": "OL",
+                "definition": "I",
+                "raw_definition": "I",
+                "analysis_type": "dictionary_exact",
+                "role_hint": "pronoun",
+            },
+            {
+                "token": "SONF",
+                "definition": "to reign",
+                "raw_definition": "to reign",
+                "analysis_type": "compositional",
+                "role_hint": "verb",
+            },
+            {
+                "token": "VORSG",
+                "definition": "among them",
+                "raw_definition": "among them",
+                "analysis_type": "compositional",
+                "role_hint": "adverbial",
+            },
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+
+    parsed = _parse_phrase_lay_render_response(
+        json.dumps(
+            {
+                "rendered_translation": (
+                    "I rule among them, holding the middle place where their shared "
+                    "order is kept together"
+                ),
+                "footnoted_translation": "I [^1] rule [^2] among them [^3]",
+                "translation_footnotes": [
+                    {
+                        "index": 1,
+                        "source_token": "OL",
+                        "rendered_text": "I",
+                        "explanation": "Keeps the first-person speaker.",
+                    },
+                    {
+                        "index": 2,
+                        "source_token": "SONF",
+                        "rendered_text": "rule",
+                        "explanation": "Keeps the governing sense.",
+                    },
+                    {
+                        "index": 3,
+                        "source_token": "VORSG",
+                        "rendered_text": "among them",
+                        "explanation": "Keeps the relational setting.",
+                    },
+                ],
+                "confidence": 0.78,
+                "reasoning": "Chooses one coherent lay reading.",
+            }
+        ),
+        fallback="I reign among",
+        parse_payload=parse_payload,
+    )
+
+    assert parsed["rendered_translation"] == (
+        "I rule among them, holding the middle place where their shared order is kept together"
+    )
+    assert parsed["footnoted_translation"] == "I [^1] rule [^2] among them [^3]"
+
+
+def test_parse_phrase_lay_render_response_falls_back_to_skeleton_for_glossary_dump() -> None:
+    """Use the deterministic skeleton when the lay sentence turns into a gloss pile.
+
+    The lay translation should feel like English prose. When the model returns
+    a comma-heavy mini-glossary instead, the algorithmic skeleton is a better
+    lay fallback than the stripped footnote line.
     """
 
     parse_payload = {
@@ -2736,10 +2816,66 @@ def test_parse_phrase_lay_render_response_compacts_overlong_lay_chunks() -> None
         parse_payload=parse_payload,
     )
 
-    assert parsed["rendered_translation"] == "not rule"
+    assert parsed["rendered_translation"] == "that which is not to rule"
     assert parsed["footnoted_translation"] == "not [^1] rule [^2]"
     assert parsed["translation_footnotes"][0]["rendered_text"] == "not"
     assert parsed["translation_footnotes"][1]["rendered_text"] == "rule"
+
+
+def test_phrase_footnote_fallback_prefers_specific_supported_gloss_over_generic_core() -> None:
+    """Keep richer token-level detail when the serialized payload already supports it.
+
+    Phrase footnotes should not flatten a vivid supported gloss such as
+    `ornaments of brightness` down to a weaker abstraction like `brightness`
+    when the token record already carries the more specific phrasing.
+    """
+
+    parse_payload = {
+        "phrase": "luciftian",
+        "translation_skeleton": "brightness",
+        "token_choices": [
+            {
+                "token": "LUCIFTIAN",
+                "definition": "brightness, ornaments of brightness",
+                "raw_definition": "brightness, ornaments of brightness",
+                "semantic_core": ["brightness"],
+                "analysis_type": "compositional",
+                "role_hint": "noun",
+                "alternates": [],
+            }
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+
+    _footnoted, notes = _build_phrase_footnote_fallback(parse_payload)
+
+    assert notes[0]["rendered_text"] != "brightness"
+    assert "ornaments of brightness" in notes[0]["rendered_text"]
+
+
+def test_phrase_bundle_prompt_requests_grammatical_hypothetical_reading() -> None:
+    """Spell out the new lay-render contract in the bundled prompt itself.
+
+    The model quality here is prompt-sensitive. This regression locks in the
+    requirement that bundle rendering aim for a plausible English reading and
+    preserve semantically rich glosses instead of flattening them.
+    """
+
+    prompt = _build_phrase_bundle_prompt(
+        {
+            "phrase": "mad caf prac",
+            "translation_skeleton": "holy rule abides",
+            "token_choices": [],
+            "relations": [],
+            "score": 1.0,
+        },
+        {},
+    )
+
+    assert "plausible hypothetical interpretation" in prompt.lower()
+    assert "not like a bag of glosses" in prompt.lower()
+    assert "ornaments of brightness" in prompt.lower()
 
 
 def test_phrase_report_includes_technical_and_lay_translations() -> None:
@@ -3289,6 +3425,7 @@ def test_render_phrase_bundle_returns_both_outputs_from_one_model_call(monkeypat
     assert init_kwargs[0]["remote_attempts"] == 2
     assert init_kwargs[0]["read_timeout_seconds"] == 45.0
     assert init_kwargs[0]["local_fallback_enabled"] is False
+    assert init_kwargs[0]["stream_response"] is False
 
 
 def test_translate_phrase_uses_bundle_renderer_once_when_llm_enabled(

@@ -60,6 +60,7 @@ class QueryModelTool(BaseTool):
     _remote_attempts: int = PrivateAttr(default=REMOTE_ATTEMPTS)
     _read_timeout_seconds: float = PrivateAttr(default=120.0)
     _local_fallback_enabled: bool = PrivateAttr(default=True)
+    _stream_response: bool = PrivateAttr(default=True)
 
     def __init__(
         self,
@@ -72,6 +73,7 @@ class QueryModelTool(BaseTool):
         remote_attempts: int | None = None,
         read_timeout_seconds: float | None = None,
         local_fallback_enabled: bool = True,
+        stream_response: bool = True,
     ):
         super().__init__(
             name=name or self.default_name,
@@ -84,6 +86,7 @@ class QueryModelTool(BaseTool):
         self._remote_attempts = max(1, int(remote_attempts or self.REMOTE_ATTEMPTS))
         self._read_timeout_seconds = max(5.0, float(read_timeout_seconds or 120.0))
         self._local_fallback_enabled = bool(local_fallback_enabled)
+        self._stream_response = bool(stream_response)
 
     @staticmethod
     def _progress_style_from_retry_state(retry_state: RetryCallState) -> str:
@@ -490,7 +493,7 @@ class QueryModelTool(BaseTool):
                         self._db, run_id=self._run_id, prompt_hash=phash, role=role,
                         model=model, base_url=base_url, temperature=temperature,
                         system_prompt=self.system_prompt, user_prompt=prompt,
-                        request_json={"model": model, "messages": [{"role":"system","content": self.system_prompt},{"role":"user","content": prompt}], "temperature": temperature, "stream": True}
+                        request_json={"model": model, "messages": [{"role":"system","content": self.system_prompt},{"role":"user","content": prompt}], "temperature": temperature, "stream": self._stream_response}
                     )
                     llm_job_finish(self._db, job_id, response_text=cached["response_text"], status="cached")
                 except Exception:
@@ -513,7 +516,7 @@ class QueryModelTool(BaseTool):
                     self._db, run_id=self._run_id, prompt_hash=phash, role=role,
                     model=model, base_url=base_url, temperature=temperature,
                     system_prompt=self.system_prompt, user_prompt=prompt,
-                    request_json={"model": model, "messages": [{"role":"system","content": self.system_prompt},{"role":"user","content": prompt}], "temperature": temperature, "stream": True}
+                    request_json={"model": model, "messages": [{"role":"system","content": self.system_prompt},{"role":"user","content": prompt}], "temperature": temperature, "stream": self._stream_response}
                 )
             except Exception:
                 job_id = None  # proceed without logging
@@ -528,67 +531,89 @@ class QueryModelTool(BaseTool):
                 model_env, "([Error] Not able to retrieve the model!)"
             )
 
-        try:
-            progress_state["state"] = "queued request with provider"
-            self._emit_progress_event(_snapshot())
-            completion = client.chat.completions.create(
-            model=os.getenv(model_env, ""),
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
-            stream=True,
-            seed=93,
-        )
-            progress_state["state"] = "waiting for first token"
-            self._emit_progress_event(_snapshot())
-        except Exception as exc:
-            self._debug(f"stream create failed for role={role!r}: {type(exc).__name__}: {exc}")
-            failure_state = _snapshot()
-            failure_state["state"] = "provider connection failed"
-            failure_state["warning"] = f"{type(exc).__name__}: {exc}"
-            self._emit_progress_event(failure_state)
-            self._stop_heartbeat()
-            raise
+        if self._stream_response:
+            try:
+                progress_state["state"] = "queued request with provider"
+                self._emit_progress_event(_snapshot())
+                completion = client.chat.completions.create(
+                    model=os.getenv(model_env, ""),
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.2,
+                    stream=True,
+                    seed=93,
+                )
+                progress_state["state"] = "waiting for first token"
+                self._emit_progress_event(_snapshot())
+            except Exception as exc:
+                self._debug(f"stream create failed for role={role!r}: {type(exc).__name__}: {exc}")
+                failure_state = _snapshot()
+                failure_state["state"] = "provider connection failed"
+                failure_state["warning"] = f"{type(exc).__name__}: {exc}"
+                self._emit_progress_event(failure_state)
+                self._stop_heartbeat()
+                raise
 
-        if self.progress_style == "verbose":
-            print(
-                f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next, you might ask? We wait...\n"
-            )
+            if self.progress_style == "verbose":
+                print(
+                    f"{GREEN}🤝 Connection successful! 🥰{RESET}\n\nWhat next, you might ask? We wait...\n"
+                )
 
-        response_text = ""
+            response_text = ""
 
-        # 4) Wait for the first real chunk. Verbose mode shows the playful spinner;
-        # compact/silent modes stay quiet apart from an optional single progress line.
-        if self.progress_style == "verbose":
-            with self._get_random_spinner() as sp:
+            # Streaming is best when callers surface incremental text. For
+            # short JSON-only jobs, callers can disable it and use the
+            # non-stream branch below to avoid long first-token stalls.
+            if self.progress_style == "verbose":
+                with self._get_random_spinner() as sp:
+                    while True:
+                        try:
+                            chunk = next(completion)
+                        except StopIteration:
+                            break
+
+                        content = self._extract_chunk_text(chunk)
+                        if not content:
+                            continue
+
+                        sp.hide()
+                        sys.stdout.write("\r\033[2K")
+                        sys.stdout.write(RESET)
+                        sys.stdout.flush()
+                        print(
+                            f"{GREEN}Waiting complete! 😊 Let's see what they have to say!{RESET}\n"
+                        )
+                        if role_name:
+                            role_label = f">>>{role_name}"
+                        if role_name != "TLDR":
+                            role_label += " speaking"
+                            print(f"{WHITE}{role_label}:{RESET}")
+
+                        response_text += content
+                        progress_state["state"] = "streaming response"
+                        progress_state["chunk_count"] = int(progress_state.get("chunk_count") or 0) + 1
+                        progress_state["char_count"] = int(progress_state.get("char_count") or 0) + len(content)
+                        self._emit_progress_event(_snapshot())
+                        self._emit(
+                            print_chunks,
+                            stream_callback,
+                            role_name or self.name,
+                            f"{GRAY}{content}{RESET}",
+                        )
+                        break
+            else:
                 while True:
                     try:
                         chunk = next(completion)
                     except StopIteration:
-                        # no data at all
                         break
 
                     content = self._extract_chunk_text(chunk)
                     if not content:
                         continue
 
-                    # first real token → clear spinner and print header
-                    sp.hide()
-                    sys.stdout.write("\r\033[2K")  # Erase line
-                    sys.stdout.write(RESET)  # Reset styling
-                    sys.stdout.flush()
-                    print(
-                        f"{GREEN}Waiting complete! 😊 Let's see what they have to say!{RESET}\n"
-                    )
-                    if role_name:
-                        role_label = f">>>{role_name}"
-                    if role_name != "TLDR":
-                        role_label += " speaking"
-                        print(f"{WHITE}{role_label}:{RESET}")
-
-                    # emit that first bit
                     response_text += content
                     progress_state["state"] = "streaming response"
                     progress_state["chunk_count"] = int(progress_state.get("chunk_count") or 0) + 1
@@ -601,51 +626,62 @@ class QueryModelTool(BaseTool):
                         f"{GRAY}{content}{RESET}",
                     )
                     break
-        else:
-            while True:
-                try:
-                    chunk = next(completion)
-                except StopIteration:
-                    # no data at all
-                    break
 
+            for chunk in completion:
                 content = self._extract_chunk_text(chunk)
                 if not content:
                     continue
-
                 response_text += content
                 progress_state["state"] = "streaming response"
                 progress_state["chunk_count"] = int(progress_state.get("chunk_count") or 0) + 1
                 progress_state["char_count"] = int(progress_state.get("char_count") or 0) + len(content)
-                self._emit_progress_event(_snapshot())
                 self._emit(
                     print_chunks,
                     stream_callback,
                     role_name or self.name,
                     f"{GRAY}{content}{RESET}",
                 )
-                break
+                if chunk.choices[0].finish_reason is not None:
+                    break
+        else:
+            try:
+                progress_state["state"] = "waiting for non-stream response"
+                self._emit_progress_event(_snapshot())
+                non_stream = client.chat.completions.create(
+                    model=os.getenv(model_env, ""),
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.2,
+                    stream=False,
+                    seed=93,
+                )
+            except Exception as exc:
+                self._debug(
+                    f"non-stream create failed for role={role!r}: {type(exc).__name__}: {exc}"
+                )
+                failure_state = _snapshot()
+                failure_state["state"] = "provider connection failed"
+                failure_state["warning"] = f"{type(exc).__name__}: {exc}"
+                self._emit_progress_event(failure_state)
+                self._stop_heartbeat()
+                raise
 
-        # 5) Consume the rest of the stream
-        for chunk in completion:
-            content = self._extract_chunk_text(chunk)
-            if not content:
-                continue
-            response_text += content
-            progress_state["state"] = "streaming response"
-            progress_state["chunk_count"] = int(progress_state.get("chunk_count") or 0) + 1
-            progress_state["char_count"] = int(progress_state.get("char_count") or 0) + len(content)
-            self._emit(
-                print_chunks,
-                stream_callback,
-                role_name or self.name,
-                f"{GRAY}{content}{RESET}",
-            )
-            if chunk.choices[0].finish_reason is not None:
-                break
+            response_text = (non_stream.choices[0].message.content or "").strip()
+            if response_text:
+                progress_state["state"] = "response complete"
+                progress_state["chunk_count"] = 1
+                progress_state["char_count"] = len(response_text)
+                self._emit(
+                    print_chunks,
+                    stream_callback,
+                    role_name or self.name,
+                    f"{GRAY}{response_text}{RESET}",
+                )
 
         # 6) Final fallback if nothing arrived
-        if not response_text:
+        if self._stream_response and not response_text:
             # Some providers may stream only reasoning metadata, while final text
             # remains available in a non-stream completion response.
             try:

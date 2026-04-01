@@ -22,6 +22,7 @@ from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 
 from .placeholder_glosses import (
     clean_lexical_gloss,
+    specific_gloss_from_definition_and_semantic_core,
     opaque_token_fallback_gloss,
     sanitize_human_gloss,
     semantic_core_gloss,
@@ -1127,6 +1128,7 @@ def render_phrase_bundle(
         remote_attempts=2,
         read_timeout_seconds=45.0,
         local_fallback_enabled=False,
+        stream_response=False,
     )
     _attach_query_logging(tool, context)
     progress_callback = _tool_progress_callback(context)
@@ -1201,15 +1203,15 @@ def _build_phrase_bundle_prompt(
     llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
     schema = json.dumps(
         {
-            "lay_translation": "<short plain-English gist, ideally 3-10 words>",
+            "lay_translation": "<plausible, roughly grammatical English sentence or clause that expresses one coherent reading of the phrase>",
             "lay_confidence": 0.0,
-            "lay_reasoning": "<brief note explaining the simplification>",
+            "lay_reasoning": "<brief note explaining the chosen reading>",
             "footnoted_translation": "<same short translation with [^1] style markers>",
             "translation_footnotes": [
                 {
                     "index": 1,
                     "source_token": "<original token>",
-                    "rendered_text": "<compact 1-3 word English chunk>",
+                    "rendered_text": "<specific grounded English chunk, often 1-6 words>",
                     "explanation": "<brief grounded explanation for this choice>",
                 }
             ],
@@ -1218,28 +1220,28 @@ def _build_phrase_bundle_prompt(
     )
     example = json.dumps(
         {
-            "lay_translation": "holy rule endures",
+            "lay_translation": "the holy law still stands",
             "lay_confidence": 0.72,
-            "lay_reasoning": "Compresses the parse into a short everyday clause while preserving the same idea.",
-            "footnoted_translation": "holy [^1] rule [^2] endures [^3]",
+            "lay_reasoning": "Chooses one coherent everyday reading while staying anchored to the supplied parse.",
+            "footnoted_translation": "holy [^1] law [^2] still stands [^3]",
             "translation_footnotes": [
                 {
                     "index": 1,
                     "source_token": "MAD",
                     "rendered_text": "holy",
-                    "explanation": "Compresses the selected sacred gloss into one everyday adjective.",
+                    "explanation": "Keeps the sacred quality from the selected gloss.",
                 },
                 {
                     "index": 2,
                     "source_token": "CAF",
-                    "rendered_text": "rule",
-                    "explanation": "Uses the core governing action instead of restating the full gloss.",
+                    "rendered_text": "law",
+                    "explanation": "Uses a grounded governing sense that reads naturally in English.",
                 },
                 {
                     "index": 3,
                     "source_token": "PRAC",
-                    "rendered_text": "endures",
-                    "explanation": "Picks a short everyday verb for continued abiding.",
+                    "rendered_text": "still stands",
+                    "explanation": "Keeps the abiding sense while smoothing it into idiomatic English.",
                 },
             ],
         },
@@ -1249,16 +1251,20 @@ def _build_phrase_bundle_prompt(
     return "\n".join(
         [
             "ROLE: You are a constrained Enochian lay phrase renderer.",
-            "TASK: Return a short lay translation and token footnotes for the supplied parse.",
+            "TASK: Return one plausible, approximately grammatical English interpretation of the supplied parse, plus grounded token footnotes.",
             f"HISTORICAL CONTEXT: {llm_context}",
             "CONSTRAINTS:",
             "- Use ONLY the supplied token choices, relations, and skeleton.",
             "- Do not add, remove, or replace meanings.",
-            "- `lay_translation` must be a short natural English clause or sentence, ideally 3-10 words.",
-            "- Prefer a clear core idea over a token-by-token comma list or definition dump.",
+            "- `lay_translation` must read like a normal English clause or sentence, not like a bag of glosses.",
+            "- Treat the lay translation as a plausible hypothetical interpretation of what the phrase could mean.",
+            "- You may add helper words, articles, and prepositions when they are needed to make the line feel grammatical.",
+            "- Prefer one coherent reading over mirroring the source token order mechanically.",
+            "- Do not return token-by-token comma lists, stacked prepositional fragments, or glossary dumps.",
             "- Return exactly one footnote entry per token choice, in source order.",
-            "- Each `rendered_text` should usually be 1-3 words. Use extra filler words only when grammar truly requires them.",
-            "- If a chosen gloss is verbose, compress it to the smallest everyday concept supported by that gloss.",
+            "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
+            "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
+            "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
             "- Do not repeat the raw source token in English unless the token remains unresolved; in that case use `[TOKEN]` and explain why.",
             "- Explanations must stay grounded in the selected token glosses, alternates, and relations.",
             "- Return STRICT JSON only.",
@@ -1318,47 +1324,47 @@ def _build_phrase_lay_render_prompt(
     llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
     schema = json.dumps(
         {
-            "rendered_translation": "<short plain-English gist, ideally 3-10 words>",
+            "rendered_translation": "<plausible, roughly grammatical English sentence or clause that expresses one coherent reading of the phrase>",
             "footnoted_translation": "<same short translation with [^1] style markers>",
             "translation_footnotes": [
                 {
                     "index": 1,
                     "source_token": "<original token>",
-                    "rendered_text": "<compact 1-3 word English chunk>",
+                    "rendered_text": "<specific grounded English chunk, often 1-6 words>",
                     "explanation": "<brief grounded explanation for this choice>",
                 }
             ],
             "confidence": 0.0,
-            "reasoning": "<brief note explaining the simplification>",
+            "reasoning": "<brief note explaining the chosen reading>",
         },
         ensure_ascii=False,
     )
     example = json.dumps(
         {
-            "rendered_translation": "holy rule endures",
-            "footnoted_translation": "holy [^1] rule [^2] endures [^3]",
+            "rendered_translation": "the holy law still stands",
+            "footnoted_translation": "holy [^1] law [^2] still stands [^3]",
             "translation_footnotes": [
                 {
                     "index": 1,
                     "source_token": "MAD",
                     "rendered_text": "holy",
-                    "explanation": "Compresses the selected sacred gloss into one everyday adjective.",
+                    "explanation": "Keeps the sacred quality from the selected gloss.",
                 },
                 {
                     "index": 2,
                     "source_token": "CAF",
-                    "rendered_text": "rule",
-                    "explanation": "Uses the core governing action instead of restating the full gloss.",
+                    "rendered_text": "law",
+                    "explanation": "Uses a grounded governing sense that reads naturally in English.",
                 },
                 {
                     "index": 3,
                     "source_token": "PRAC",
-                    "rendered_text": "endures",
-                    "explanation": "Picks a short everyday verb for continued abiding.",
+                    "rendered_text": "still stands",
+                    "explanation": "Keeps the abiding sense while smoothing it into idiomatic English.",
                 },
             ],
             "confidence": 0.72,
-            "reasoning": "Compresses each token to a short everyday concept while preserving the chosen parse.",
+            "reasoning": "Chooses one coherent everyday reading while staying anchored to the chosen parse.",
         },
         ensure_ascii=False,
     )
@@ -1366,19 +1372,22 @@ def _build_phrase_lay_render_prompt(
     return "\n".join(
         [
             "ROLE: You are a plain-English Enochian phrase explainer.",
-            "TASK: Rewrite the supplied translation skeleton so a lay reader can understand the core idea immediately.",
+            "TASK: Rewrite the supplied translation skeleton as one plausible, approximately grammatical English interpretation that a lay reader can immediately understand.",
             f"HISTORICAL CONTEXT: {llm_context}",
             "CONSTRAINTS:",
             "- Use ONLY the supplied token choices, relations, and skeleton.",
             "- Keep the same core meaning, but replace technical or archaic phrasing with sane everyday English.",
             "- Do not add any new actors, actions, objects, or claims.",
-            "- Your job is gist, not exhaustiveness.",
-            "- `rendered_translation` must be a short natural English clause or sentence, ideally 3-10 words.",
-            "- Prefer a clear core idea over a token-by-token comma list or definition dump.",
+            "- Your job is to choose one coherent reading, not to dump glosses.",
+            "- `rendered_translation` must read like normal English, not like token-by-token notes.",
+            "- Treat the line as a plausible hypothetical interpretation of what the sentence could mean.",
+            "- You may add helper words, articles, and prepositions when they are needed to make the reading feel grammatical.",
+            "- Prefer a clear sentence-level idea over mirroring the source token order mechanically.",
             "- Never restate full token definitions, example sentences, or long alternation chains in `rendered_translation`.",
             "- Return exactly one footnote entry per token choice, in source order.",
-            "- Each `rendered_text` should usually be 1-3 words. Use extra filler words only when grammar truly requires them.",
-            "- If a chosen gloss is verbose, compress it to the smallest everyday concept supported by that gloss.",
+            "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
+            "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
+            "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
             "- Do not repeat the raw source token in English unless the token remains unresolved; in that case use `[TOKEN]` and explain why.",
             "- Explanations must stay grounded in the selected token glosses, alternates, and relations.",
             "- If you add helper words for readable English, explain that smoothing in the relevant footnote.",
@@ -1455,6 +1464,7 @@ def _parse_phrase_lay_render_response(
     base["rendered_translation"] = _normalize_lay_translation(
         str(base.get("rendered_translation") or ""),
         footnoted,
+        fallback_translation=fallback,
     )
 
     return {
@@ -1690,29 +1700,47 @@ def _compact_lay_gloss(text: object, *, token: str) -> str | None:
     return " ".join(sanitized.split()).strip()
 
 
-def _normalize_lay_translation(rendered_translation: str, footnoted_translation: str) -> str:
-    """Prefer the compact footnoted line when the lay sentence becomes bloated.
+def _normalize_lay_translation(
+    rendered_translation: str,
+    footnoted_translation: str,
+    *,
+    fallback_translation: str = "",
+) -> str:
+    """Keep sentence-level lay prose and fall back to the skeleton when needed.
 
-    The lay translation should communicate the idea quickly. When the raw
-    `rendered_translation` balloons into a glossary dump, the marker-stripped
-    footnoted line is usually the shorter and more faithful lay summary.
+    The lay translation exists to sound like an actual sentence, not just a
+    marker-stripped footnote line. We therefore keep the model's sentence-level
+    wording unless it is empty or clearly drifts into punctuation-heavy
+    glossary prose, in which case the deterministic skeleton is a better
+    fallback than a token-by-token footnote strip.
     """
 
     cleaned = " ".join(rendered_translation.split())
+    fallback_cleaned = " ".join(fallback_translation.split())
     if not cleaned:
-        return _strip_footnote_markers(footnoted_translation)
+        return fallback_cleaned or _strip_footnote_markers(footnoted_translation)
     if not _looks_overexpanded_lay_translation(cleaned):
         return cleaned
-    compact = _strip_footnote_markers(footnoted_translation)
-    return compact or cleaned
+    return fallback_cleaned or cleaned
 
 
 def _looks_overexpanded_lay_translation(text: str) -> bool:
     """Detect when a lay translation has drifted into glossary-like prose."""
 
-    if len(text.split()) > 12:
+    if sum(text.count(marker) for marker in ";:") >= 1:
         return True
-    return sum(text.count(marker) for marker in ",;:") >= 2
+    if text.count(",") >= 3:
+        return True
+    lowered = text.lower()
+    glossary_markers = (
+        " including ",
+        " namely ",
+        " such as ",
+        " meaning ",
+        " signifying ",
+        " denoting ",
+    )
+    return any(marker in f" {lowered} " for marker in glossary_markers)
 
 
 def _strip_footnote_markers(text: str) -> str:
@@ -1840,31 +1868,43 @@ def _fallback_footnote_explanation(
 
 
 def _preferred_primary_gloss(token_choice: Mapping[str, object], token: str) -> str | None:
-    """Prefer the chosen primary definition before considering alternates."""
+    """Prefer the richest grounded serialized gloss before weaker abstractions.
+
+    Phrase lay rendering should preserve specific, human-facing lexical detail
+    when the parse payload already carries it. This helper therefore tries the
+    serialized bundle/surface definitions first, optionally mining a more
+    specific phrase from them, before collapsing all the way down to a bare
+    semantic-core label.
+    """
 
     trace = _definition_trace_for_token_choice(token_choice)
-    semantic_core_candidates = [
-        trace.get("selected_semantic_core"),
-        token_choice.get("semantic_core"),
-    ]
-    for semantic_candidate in semantic_core_candidates:
-        semantic_gloss = semantic_core_gloss(semantic_candidate)
-        if semantic_gloss is not None:
-            compact = _compact_lay_gloss(semantic_gloss, token=token)
-            if compact is not None:
-                return compact
+    semantic_core = token_choice.get("semantic_core")
+    negative_contrast = token_choice.get("negative_contrast")
     primary_candidates = [
         token_choice.get("bundle_surface_gloss"),
         token_choice.get("bundle_head_gloss"),
         trace.get("surface_gloss"),
         token_choice.get("surface_gloss"),
         trace.get("selected_definition"),
-        trace.get("raw_selected_definition"),
         token_choice.get("definition"),
+        trace.get("raw_selected_definition"),
         token_choice.get("raw_definition"),
     ]
     for candidate in primary_candidates:
+        specific = specific_gloss_from_definition_and_semantic_core(
+            semantic_core=semantic_core,
+            definition=candidate,
+            negative_contrast=negative_contrast,
+            token=token,
+        )
+        if specific is not None:
+            return specific
         compact = _compact_lay_gloss(candidate, token=token)
+        if compact is not None:
+            return compact
+    semantic_gloss = semantic_core_gloss(semantic_core)
+    if semantic_gloss is not None:
+        compact = _compact_lay_gloss(semantic_gloss, token=token)
         if compact is not None:
             return compact
     return None
@@ -1890,12 +1930,21 @@ def _preferred_runner_up_gloss(token_choice: Mapping[str, object], token: str) -
             others.append(runner_up)
     for entry in [*prioritized, *others]:
         runner_up_candidates = [
-            entry.get("semantic_core"),
             entry.get("definition"),
             entry.get("raw_definition"),
+            entry.get("semantic_core"),
         ]
         compact = None
         for runner_up_candidate in runner_up_candidates:
+            specific = specific_gloss_from_definition_and_semantic_core(
+                semantic_core=entry.get("semantic_core"),
+                definition=runner_up_candidate,
+                negative_contrast=entry.get("negative_contrast"),
+                token=token,
+            )
+            if specific is not None:
+                compact = specific
+                break
             compact = _compact_lay_gloss(runner_up_candidate, token=token)
             if compact is not None:
                 break
