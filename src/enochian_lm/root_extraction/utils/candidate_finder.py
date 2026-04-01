@@ -296,6 +296,10 @@ class MorphemeCandidateFinder:
             ngram_key = ngram.upper()
             if ngram_key in cluster_count_cache:
                 return cluster_count_cache[ngram_key]
+            if definition_counts and ngram_key in definition_counts:
+                count = max(0, int(definition_counts.get(ngram_key) or 0))
+                cluster_count_cache[ngram_key] = count
+                return count
             glosses = definition_glosses.get(ngram_key) if definition_glosses else None
             if not glosses:
                 cluster_count_cache[ngram_key] = 0

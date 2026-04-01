@@ -7,6 +7,7 @@ across modules.
 """
 from __future__ import annotations
 
+import logging
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -26,10 +27,14 @@ __all__ = [
     "cluster_definitions",
     "get_fasttext_model",
     "get_sentence_transformer",
+    "get_sentence_transformer_if_available",
     "safe_output",
     "select_definitions",
     "stream_text",
 ]
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 # --- FastText wrapper + caching -------------------------------------------------
@@ -82,6 +87,7 @@ _SENTENCE_EMBED_CACHE: dict[tuple[str, str], np.ndarray] = {}
 
 _SENTENCE_LOCK = Lock()
 _SENTENCE_MODELS: dict[str, SentenceTransformer] = {}
+_SENTENCE_MODEL_FAILURES: set[tuple[str, bool]] = set()
 
 
 def _resolve_fasttext_path(model_path: Path | str | None) -> str:
@@ -126,6 +132,58 @@ def get_sentence_transformer(
             model = SentenceTransformer(model_name)
             _SENTENCE_MODELS[model_name] = model
         return model
+
+
+def get_sentence_transformer_if_available(
+    model_name: str = "all-MiniLM-L6-v2",
+    *,
+    local_files_only: bool = False,
+) -> SentenceTransformer | None:
+    """Return a cached sentence-transformer, memoizing load failures.
+
+    Translation needs semantic helpers when they are locally available, but
+    `--no-llm` runs must never sit around repeatedly probing remote model
+    hosts. This wrapper remembers failed loads and immediately returns `None`
+    on later calls so deterministic translation can fall back to lexical
+    heuristics instead of paying the same offline penalty over and over.
+    """
+
+    cache_key = (model_name, local_files_only)
+    with _SENTENCE_LOCK:
+        if cache_key in _SENTENCE_MODEL_FAILURES:
+            return None
+        cached = _SENTENCE_MODELS.get(model_name)
+        if cached is not None:
+            return cached
+
+    try:
+        if local_files_only:
+            model = SentenceTransformer(model_name, local_files_only=True)
+        else:
+            model = SentenceTransformer(model_name)
+    except TypeError:
+        # Older sentence-transformers releases may not support
+        # `local_files_only`. In strict local-only mode we prefer an immediate
+        # deterministic fallback over risking a network probe.
+        if local_files_only:
+            with _SENTENCE_LOCK:
+                _SENTENCE_MODEL_FAILURES.add(cache_key)
+            return None
+        raise
+    except Exception as exc:  # pragma: no cover - exercised via translation fallbacks
+        LOGGER.warning(
+            "Sentence-transformer %s unavailable (local_only=%s): %s",
+            model_name,
+            local_files_only,
+            exc,
+        )
+        with _SENTENCE_LOCK:
+            _SENTENCE_MODEL_FAILURES.add(cache_key)
+        return None
+
+    with _SENTENCE_LOCK:
+        _SENTENCE_MODELS[model_name] = model
+    return model
 
 
 # --- Semantic clustering helpers ------------------------------------------------

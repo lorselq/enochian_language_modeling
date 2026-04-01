@@ -77,6 +77,8 @@ class ClusterRecord:
     cohesion: float | None
     semantic_cohesion: float | None
     best_config: str | None
+    semantic_core: list[str] = field(default_factory=list)
+    negative_contrast: list[str] = field(default_factory=list)
     residual_details: list[ResidualDetail] = field(default_factory=list)
     raw_definitions: list[RawDefinition] = field(default_factory=list)
 
@@ -101,6 +103,8 @@ class ResidualSemanticRecord:
     derivational_validity: float | None
     rebuttal_resilience: float | None
     created_at: str | None
+    semantic_core: list[str] = field(default_factory=list)
+    negative_contrast: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -201,10 +205,51 @@ class InsightsRepository:
 
         self._fasttext_model_path = fasttext_model_path
         self._fasttext_model = None
+        self._cluster_cache: dict[tuple[str, str], tuple[ClusterRecord, ...]] = {}
+        self._residual_cache: dict[tuple[str, str], tuple[ResidualSemanticRecord, ...]] = {}
+        self._hypothesis_cache: dict[tuple[str, str], tuple[MorphHypothesisRecord, ...]] = {}
+        self._attested_cache: dict[tuple[str, str], tuple[AttestedDefinition, ...]] = {}
+        self._rejected_morph_cache: dict[tuple[str, str], bool] = {}
+        self._accepted_definition_count_cache: dict[tuple[str, str], int] = {}
+        self._accepted_definition_gloss_cache: dict[
+            tuple[str, str, bool, bool],
+            dict[str, float | None],
+        ] = {}
 
     @property
     def variants(self) -> list[str]:
         return sorted(self._connections.keys())
+
+    def llm_logging_target(
+        self,
+        variant: str,
+    ) -> tuple[sqlite3.Connection | None, str | None]:
+        """Return the DB handle and a stable run id for LLM response caching.
+
+        Phrase translation now issues user-facing rendering calls through the
+        same ``QueryModelTool`` infrastructure used elsewhere in the project.
+        Reusing the variant insights database and its most recent run id lets
+        those render calls participate in existing prompt-hash caching without
+        introducing a second persistence layer.
+        """
+
+        conn = self._connections.get(variant)
+        if conn is None:
+            return None, None
+        try:
+            row = conn.execute(
+                "SELECT run_id FROM runs ORDER BY created_at DESC, rowid DESC LIMIT 1"
+            ).fetchone()
+        except sqlite3.Error:
+            try:
+                row = conn.execute(
+                    "SELECT run_id FROM runs ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()
+            except sqlite3.Error:
+                row = None
+        if row is None:
+            return conn, None
+        return conn, str(row["run_id"])
 
     def path_diagnostics(self) -> PathDiagnostics:
         """Return configured variant paths and whether they exist on disk."""
@@ -278,6 +323,13 @@ class InsightsRepository:
             conn.close()
         self._connections.clear()
         self._fasttext_model = None
+        self._cluster_cache.clear()
+        self._residual_cache.clear()
+        self._hypothesis_cache.clear()
+        self._attested_cache.clear()
+        self._rejected_morph_cache.clear()
+        self._accepted_definition_count_cache.clear()
+        self._accepted_definition_gloss_cache.clear()
 
     def fasttext_diagnostics(self, *, sample_size: int = 5) -> dict[str, object]:
         info: dict[str, object] = {
@@ -330,14 +382,62 @@ class InsightsRepository:
     ) -> list[ClusterRecord]:
         ngram_key = ngram.upper()
         selected = list(variants) if variants else self.variants
+        self._populate_cluster_cache_for_ngrams([ngram_key], variants=selected)
         clusters: list[ClusterRecord] = []
+        for variant in selected:
+            cache_key = (variant, ngram_key)
+            cached = self._cluster_cache.get(cache_key)
+            if cached is None:
+                continue
+            variant_clusters = [record for record in cached]
+            clusters.extend(variant_clusters)
+        return clusters
+
+    def _populate_cluster_cache_for_ngrams(
+        self,
+        ngrams: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> None:
+        """Batch-fill cluster caches for many ngrams at once.
+
+        Phrase translation repeatedly asks for overlapping substrings from the
+        same handful of databases. Populating the cache in one query per
+        variant removes the per-morph query storm while preserving the
+        repository's single-morph public API.
+        """
+
+        selected = list(variants) if variants else self.variants
+        unique = {str(ngram).upper() for ngram in ngrams if ngram}
+        if not unique:
+            return
+
         for variant in selected:
             conn = self._connections.get(variant)
             if conn is None:
                 continue
-            variant_clusters = self._fetch_variant_clusters(conn, ngram_key, variant)
-            clusters.extend(variant_clusters)
-        return clusters
+            missing = sorted(
+                ngram for ngram in unique if (variant, ngram) not in self._cluster_cache
+            )
+            if not missing:
+                continue
+
+            placeholders = ",".join("?" for _ in missing)
+            rows = conn.execute(
+                f"""SELECT * FROM clusters
+                    WHERE UPPER(TRIM(ngram)) IN ({placeholders})
+                      AND action = 'escalate'
+                      AND verdict = 'True'
+                    ORDER BY ngram COLLATE NOCASE ASC, cluster_index ASC;""",
+                tuple(missing),
+            ).fetchall()
+            grouped = self._build_cluster_records_by_ngram(
+                conn,
+                variant,
+                rows,
+            )
+            for ngram in missing:
+                self._cluster_cache[(variant, ngram)] = grouped.get(ngram, ())
 
     def _fetch_variant_clusters(
         self, conn: sqlite3.Connection, ngram: str, variant: str
@@ -350,21 +450,43 @@ class InsightsRepository:
              AND verdict = 'True'
            ORDER BY cluster_index ASC;"""
         cursor = conn.execute(query, (ngram,))
-        cluster_rows = cursor.fetchall()
-        if cluster_rows:
-            cluster_rows = [
-                row
-                for row in cluster_rows
-                if _glossator_definition_is_accepted(row["glossator_def"])
-            ]
-        if not cluster_rows:
-            return []
+        grouped = self._build_cluster_records_by_ngram(
+            conn,
+            variant,
+            cursor.fetchall(),
+        )
+        return list(grouped.get(ngram.upper(), ()))
+
+    def _build_cluster_records_by_ngram(
+        self,
+        conn: sqlite3.Connection,
+        variant: str,
+        cluster_rows: Iterable[sqlite3.Row],
+    ) -> dict[str, tuple[ClusterRecord, ...]]:
+        """Hydrate cluster rows into ngram-grouped records for translation.
+
+        This helper exists so both single-word lookup and phrase prewarming can
+        share the same hydration logic. Centralizing the row-to-record mapping
+        keeps the cache format stable while allowing phrase translation to load
+        many overlapping ngrams in one pass.
+        """
+
+        accepted_rows = [
+            row
+            for row in cluster_rows
+            if _glossator_definition_is_accepted(row["glossator_def"])
+        ]
+        if not accepted_rows:
+            return {}
 
         cluster_map: dict[int, ClusterRecord] = {}
-        for row in cluster_rows:
+        for row in accepted_rows:
             row_dict = {key: row[key] for key in row.keys()}
             cluster_id = int(row_dict["cluster_id"])
-            record = ClusterRecord(
+            semantic_core, negative_contrast = _parse_glossator_semantics(
+                row_dict.get("glossator_def")
+            )
+            cluster_map[cluster_id] = ClusterRecord(
                 variant=variant,
                 cluster_id=cluster_id,
                 run_id=str(row_dict.get("run_id")),
@@ -379,16 +501,18 @@ class InsightsRepository:
                 cohesion=_safe_float(row_dict.get("cohesion")),
                 semantic_cohesion=_safe_float(row_dict.get("semantic_cohesion")),
                 best_config=row_dict.get("best_config"),
+                semantic_core=semantic_core,
+                negative_contrast=negative_contrast,
             )
-            cluster_map[cluster_id] = record
 
         cluster_ids = list(cluster_map.keys())
-        placeholders = ",".join("?" for _ in cluster_ids)
-
         if cluster_ids:
+            placeholders = ",".join("?" for _ in cluster_ids)
             detail_rows = conn.execute(
-                f"SELECT * FROM residual_details WHERE cluster_id IN ({placeholders}) ORDER BY cluster_id, residual_id;",
-                cluster_ids,
+                f"""SELECT * FROM residual_details
+                    WHERE cluster_id IN ({placeholders})
+                    ORDER BY cluster_id, residual_id;""",
+                tuple(cluster_ids),
             ).fetchall()
             for row in detail_rows:
                 row_dict = {key: row[key] for key in row.keys()}
@@ -404,8 +528,10 @@ class InsightsRepository:
                 cluster_map[int(row_dict["cluster_id"])].residual_details.append(detail)
 
             raw_rows = conn.execute(
-                f"SELECT * FROM raw_defs WHERE cluster_id IN ({placeholders}) ORDER BY cluster_id, def_id;",
-                cluster_ids,
+                f"""SELECT * FROM raw_defs
+                    WHERE cluster_id IN ({placeholders})
+                    ORDER BY cluster_id, def_id;""",
+                tuple(cluster_ids),
             ).fetchall()
             for row in raw_rows:
                 row_dict = {key: row[key] for key in row.keys()}
@@ -422,7 +548,13 @@ class InsightsRepository:
                     )
                 )
 
-        return [cluster_map[cid] for cid in sorted(cluster_map)]
+        grouped: dict[str, list[ClusterRecord]] = {}
+        for record in cluster_map.values():
+            grouped.setdefault(record.ngram.upper(), []).append(record)
+        return {
+            ngram: tuple(sorted(records, key=lambda record: record.cluster_index))
+            for ngram, records in grouped.items()
+        }
 
     def fetch_word_evidence(
         self,
@@ -492,21 +624,27 @@ class InsightsRepository:
         list[ClusterRecord],
         list[ResidualSemanticRecord],
         list[MorphHypothesisRecord],
-    ]:
+        ]:
         """Fetch evidence records for a collection of morphs."""
         selected = list(variants) if variants else self.variants
         unique = {m.upper() for m in morphs if m}
+        self._populate_cluster_cache_for_ngrams(unique, variants=selected)
+        self._populate_residual_cache_for_morphs(unique, variants=selected)
+        self._populate_hypothesis_cache_for_morphs(unique, variants=selected)
         clusters: list[ClusterRecord] = []
         residuals: list[ResidualSemanticRecord] = []
         hypotheses: list[MorphHypothesisRecord] = []
         for morph in sorted(unique):
-            clusters.extend(self.fetch_clusters(morph, variants=selected))
-            residuals.extend(
-                self._fetch_residual_semantics(morph, variants=selected)
-            )
-            hypotheses.extend(
-                self._fetch_morph_hypotheses(morph, variants=selected)
-            )
+            for variant in selected:
+                clusters.extend(
+                    list(self._cluster_cache.get((variant, morph), ()))
+                )
+                residuals.extend(
+                    list(self._residual_cache.get((variant, morph), ()))
+                )
+                hypotheses.extend(
+                    list(self._hypothesis_cache.get((variant, morph), ()))
+                )
         return clusters, residuals, hypotheses
 
     def fetch_rejected_morphs(
@@ -526,27 +664,16 @@ class InsightsRepository:
         selected = list(variants) if variants else self.variants
         unique = {m.upper() for m in morphs if m}
         rejected: set[str] = set()
+        self._populate_rejected_morph_cache_for_morphs(unique, variants=selected)
 
         for morph in sorted(unique):
             for variant in selected:
-                conn = self._connections.get(variant)
-                if conn is None:
+                cache_key = (variant, morph)
+                cached = self._rejected_morph_cache.get(cache_key)
+                if cached is None:
                     continue
-                rows = conn.execute(
-                    """
-                    SELECT glossator_def
-                    FROM root_residual_semantics
-                    WHERE TRIM(residual) COLLATE NOCASE = ?
-                    ORDER BY group_idx;
-                    """,
-                    (morph,),
-                ).fetchall()
-                for row in rows:
-                    payload = row["glossator_def"] if "glossator_def" in row.keys() else row[0]
-                    definition, rejected_flag = _parse_glossator_definition(payload)
-                    if rejected_flag or not definition:
-                        rejected.add(morph)
-                        break
+                if cached:
+                    rejected.add(morph)
                 if morph in rejected:
                     break
 
@@ -566,25 +693,19 @@ class InsightsRepository:
         selected = list(variants) if variants else self.variants
         unique = {m.upper() for m in morphs if m}
         counts: dict[str, int] = {}
+        self._populate_accepted_definition_count_cache_for_morphs(
+            unique,
+            variants=selected,
+        )
 
         for morph in sorted(unique):
             total = 0
             for variant in selected:
-                conn = self._connections.get(variant)
-                if conn is None:
+                cache_key = (variant, morph)
+                cached = self._accepted_definition_count_cache.get(cache_key)
+                if cached is None:
                     continue
-                rows = conn.execute(
-                    """SELECT glossator_def FROM clusters
-                       WHERE TRIM(ngram) COLLATE NOCASE = ?
-                         AND action = 'escalate'
-                         AND verdict = 'True'""",
-                    (morph,),
-                ).fetchall()
-                total += sum(
-                    1
-                    for row in rows
-                    if _glossator_definition_is_accepted(row["glossator_def"])
-                )
+                total += cached
             counts[morph] = total
 
         return counts
@@ -601,69 +722,23 @@ class InsightsRepository:
         selected = list(variants) if variants else self.variants
         unique = {m.upper() for m in morphs if m}
         glosses: dict[str, dict[str, float | None]] = {}
+        self._populate_accepted_definition_gloss_cache_for_morphs(
+            unique,
+            variants=selected,
+            include_clusters=include_clusters,
+            include_residuals=include_residuals,
+        )
 
         for morph in sorted(unique):
             for variant in selected:
-                conn = self._connections.get(variant)
-                if conn is None:
-                    continue
-                if include_clusters:
-                    # solo variant doesn't have semantic_cohesion column
-                    if variant == "solo":
-                        cluster_sql = """SELECT glossator_def, semantic_coverage, cohesion, cohesion
-                           FROM clusters
-                           WHERE TRIM(ngram) COLLATE NOCASE = ?
-                             AND action = 'escalate'
-                             AND verdict = 'True'"""
-                    else:
-                        cluster_sql = """SELECT glossator_def, semantic_coverage, semantic_cohesion, cohesion
-                           FROM clusters
-                           WHERE TRIM(ngram) COLLATE NOCASE = ?
-                             AND action = 'escalate'
-                             AND verdict = 'True'"""
-                    rows = conn.execute(cluster_sql, (morph,)).fetchall()
-                    for row in rows:
-                        definition, rejected = _parse_glossator_definition(row[0])
-                        if rejected or not definition:
-                            continue
-                        score = _safe_float(row[1])
-                        if score is None:
-                            score = _safe_float(row[2])
-                        if score is None:
-                            score = _safe_float(row[3])
-                        normalized = str(definition).strip()
-                        gloss_bucket = glosses.setdefault(morph, {})
+                cache_key = (variant, morph, include_clusters, include_residuals)
+                cached = self._accepted_definition_gloss_cache.get(cache_key)
+                if cached:
+                    gloss_bucket = glosses.setdefault(morph, {})
+                    for normalized, score in cached.items():
                         existing = gloss_bucket.get(normalized)
                         if existing is None or (
-                            score is not None and score > existing
-                        ):
-                            gloss_bucket[normalized] = score
-                if include_residuals:
-                    residual_rows = conn.execute(
-                        """SELECT glossator_def, semantic_coverage, semantic_cohesion, cohesion,
-                                  derivational_validity, rebuttal_resilience
-                           FROM root_residual_semantics
-                           WHERE TRIM(residual) COLLATE NOCASE = ?""",
-                        (morph,),
-                    ).fetchall()
-                    for row in residual_rows:
-                        definition, rejected = _parse_glossator_definition(row[0])
-                        if rejected or not definition:
-                            continue
-                        score = _safe_float(row[1])
-                        if score is None:
-                            score = _safe_float(row[2])
-                        if score is None:
-                            score = _safe_float(row[3])
-                        if score is None:
-                            score = _safe_float(row[4])
-                        if score is None:
-                            score = _safe_float(row[5])
-                        normalized = str(definition).strip()
-                        gloss_bucket = glosses.setdefault(morph, {})
-                        existing = gloss_bucket.get(normalized)
-                        if existing is None or (
-                            score is not None and score > existing
+                            score is not None and (existing is None or score > existing)
                         ):
                             gloss_bucket[normalized] = score
 
@@ -718,28 +793,54 @@ class InsightsRepository:
 
         return accepted
 
-    def _fetch_residual_semantics(
-        self, residual: str, *, variants: Iterable[str] | None = None
-    ) -> list[ResidualSemanticRecord]:
+    def _populate_residual_cache_for_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> None:
+        """Batch-fill accepted residual semantics for many morphs.
+
+        Residual lookups are hot in blind decomposition mode because nearly
+        every substring participates in support labeling. Fetching them in one
+        query per variant keeps phrase translation from paying that cost once
+        per morph.
+        """
+
         selected = list(variants) if variants else self.variants
-        records: list[ResidualSemanticRecord] = []
+        unique = {str(morph).upper() for morph in morphs if morph}
+        if not unique:
+            return
+
         for variant in selected:
             conn = self._connections.get(variant)
             if conn is None:
                 continue
-            query = """SELECT * FROM root_residual_semantics
-                WHERE TRIM(residual) COLLATE NOCASE = ?
-                ORDER BY group_idx;"""
-            rows = conn.execute(query, (residual,)).fetchall()
-            if rows:
-                rows = [
-                    row
-                    for row in rows
-                    if _glossator_definition_is_accepted(row["glossator_def"])
-                ]
+            missing = sorted(
+                morph for morph in unique if (variant, morph) not in self._residual_cache
+            )
+            if not missing:
+                continue
+
+            placeholders = ",".join("?" for _ in missing)
+            rows = conn.execute(
+                f"""SELECT * FROM root_residual_semantics
+                    WHERE UPPER(TRIM(residual)) IN ({placeholders})
+                    ORDER BY residual COLLATE NOCASE ASC, group_idx ASC;""",
+                tuple(missing),
+            ).fetchall()
+            grouped: dict[str, list[ResidualSemanticRecord]] = {
+                morph: [] for morph in missing
+            }
             for row in rows:
+                if not _glossator_definition_is_accepted(row["glossator_def"]):
+                    continue
                 data = {key: row[key] for key in row.keys()}
-                records.append(
+                residual = str(data.get("residual", "")).upper()
+                semantic_core, negative_contrast = _parse_glossator_semantics(
+                    data.get("glossator_def")
+                )
+                grouped.setdefault(residual, []).append(
                     ResidualSemanticRecord(
                         variant=variant,
                         run_id=str(data.get("run_id")),
@@ -763,26 +864,58 @@ class InsightsRepository:
                             data.get("rebuttal_resilience")
                         ),
                         created_at=data.get("created_at"),
+                        semantic_core=semantic_core,
+                        negative_contrast=negative_contrast,
                     )
                 )
-        return records
 
-    def _fetch_morph_hypotheses(
-        self, morph: str, *, variants: Iterable[str] | None = None
-    ) -> list[MorphHypothesisRecord]:
+            for morph in missing:
+                self._residual_cache[(variant, morph)] = tuple(grouped.get(morph, ()))
+
+    def _populate_hypothesis_cache_for_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> None:
+        """Batch-fill accepted morph hypotheses used during decomposition.
+
+        Hypothesis evidence is a weaker signal than accepted clusters, but it
+        still participates in support checks and blind-mode ranking. Loading it
+        in bulk lets phrase translation reuse one database scan across many
+        overlapping substrings.
+        """
+
         selected = list(variants) if variants else self.variants
-        records: list[MorphHypothesisRecord] = []
+        unique = {str(morph).upper() for morph in morphs if morph}
+        if not unique:
+            return
+
         for variant in selected:
             conn = self._connections.get(variant)
             if conn is None:
                 continue
+            missing = sorted(
+                morph for morph in unique if (variant, morph) not in self._hypothesis_cache
+            )
+            if not missing:
+                continue
+
+            placeholders = ",".join("?" for _ in missing)
             rows = conn.execute(
-                "SELECT * FROM morph_hypotheses WHERE TRIM(morph) COLLATE NOCASE = ? AND accepted = 1 ORDER BY hyp_id;",
-                (morph,),
+                f"""SELECT * FROM morph_hypotheses
+                    WHERE UPPER(TRIM(morph)) IN ({placeholders})
+                      AND accepted = 1
+                    ORDER BY morph COLLATE NOCASE ASC, hyp_id ASC;""",
+                tuple(missing),
             ).fetchall()
+            grouped: dict[str, list[MorphHypothesisRecord]] = {
+                morph: [] for morph in missing
+            }
             for row in rows:
                 data = {key: row[key] for key in row.keys()}
-                records.append(
+                morph = str(data.get("morph", "")).upper()
+                grouped.setdefault(morph, []).append(
                     MorphHypothesisRecord(
                         variant=variant,
                         hyp_id=_safe_int(data.get("hyp_id")),
@@ -798,6 +931,247 @@ class InsightsRepository:
                         created_at=data.get("created_at"),
                     )
                 )
+
+            for morph in missing:
+                self._hypothesis_cache[(variant, morph)] = tuple(
+                    grouped.get(morph, ())
+                )
+
+    def _populate_rejected_morph_cache_for_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> None:
+        """Batch-fill rejected-morph flags from residual analysis payloads.
+
+        Rejected residuals act as negative evidence during decomposition. This
+        helper keeps that signal cheap to consult by collapsing all requested
+        morphs for a variant into one residual-table scan.
+        """
+
+        selected = list(variants) if variants else self.variants
+        unique = {str(morph).upper() for morph in morphs if morph}
+        if not unique:
+            return
+
+        for variant in selected:
+            conn = self._connections.get(variant)
+            if conn is None:
+                continue
+            missing = sorted(
+                morph
+                for morph in unique
+                if (variant, morph) not in self._rejected_morph_cache
+            )
+            if not missing:
+                continue
+
+            placeholders = ",".join("?" for _ in missing)
+            rows = conn.execute(
+                f"""SELECT residual, glossator_def
+                    FROM root_residual_semantics
+                    WHERE UPPER(TRIM(residual)) IN ({placeholders})
+                    ORDER BY residual COLLATE NOCASE ASC, group_idx ASC;""",
+                tuple(missing),
+            ).fetchall()
+            grouped: dict[str, bool] = {morph: False for morph in missing}
+            for row in rows:
+                residual = str(row["residual"]).upper()
+                definition, rejected = _parse_glossator_definition(row["glossator_def"])
+                if rejected or not definition:
+                    grouped[residual] = True
+
+            for morph in missing:
+                self._rejected_morph_cache[(variant, morph)] = grouped.get(morph, False)
+
+    def _populate_accepted_definition_count_cache_for_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> None:
+        """Batch-fill accepted-definition counts used for ambiguity penalties.
+
+        The beam-search scorer consults accepted-definition counts for many
+        overlapping substrings. Counting them in bulk keeps ambiguity scoring
+        available without turning phrase translation into hundreds of tiny
+        SQLite reads.
+        """
+
+        selected = list(variants) if variants else self.variants
+        unique = {str(morph).upper() for morph in morphs if morph}
+        if not unique:
+            return
+
+        for variant in selected:
+            conn = self._connections.get(variant)
+            if conn is None:
+                continue
+            missing = sorted(
+                morph
+                for morph in unique
+                if (variant, morph) not in self._accepted_definition_count_cache
+            )
+            if not missing:
+                continue
+
+            placeholders = ",".join("?" for _ in missing)
+            rows = conn.execute(
+                f"""SELECT ngram, glossator_def
+                    FROM clusters
+                    WHERE UPPER(TRIM(ngram)) IN ({placeholders})
+                      AND action = 'escalate'
+                      AND verdict = 'True';""",
+                tuple(missing),
+            ).fetchall()
+            grouped: dict[str, int] = {morph: 0 for morph in missing}
+            for row in rows:
+                if not _glossator_definition_is_accepted(row["glossator_def"]):
+                    continue
+                grouped[str(row["ngram"]).upper()] += 1
+
+            for morph in missing:
+                self._accepted_definition_count_cache[(variant, morph)] = grouped.get(
+                    morph,
+                    0,
+                )
+
+    def _populate_accepted_definition_gloss_cache_for_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+        include_clusters: bool = True,
+        include_residuals: bool = True,
+    ) -> None:
+        """Batch-fill accepted gloss buckets used by semantic deduplication.
+
+        Candidate scoring now depends heavily on semantic-core-aware definition
+        selection. This helper lets phrase translation reuse one bulk load per
+        variant instead of repeatedly asking SQLite for the same gloss payloads
+        one morph at a time.
+        """
+
+        selected = list(variants) if variants else self.variants
+        unique = {str(morph).upper() for morph in morphs if morph}
+        if not unique:
+            return
+
+        for variant in selected:
+            conn = self._connections.get(variant)
+            if conn is None:
+                continue
+            missing = sorted(
+                morph
+                for morph in unique
+                if (
+                    variant,
+                    morph,
+                    include_clusters,
+                    include_residuals,
+                )
+                not in self._accepted_definition_gloss_cache
+            )
+            if not missing:
+                continue
+
+            grouped: dict[str, dict[str, float | None]] = {
+                morph: {} for morph in missing
+            }
+            placeholders = ",".join("?" for _ in missing)
+
+            if include_clusters:
+                if variant == "solo":
+                    cluster_sql = f"""SELECT ngram, glossator_def, semantic_coverage, cohesion, cohesion
+                        FROM clusters
+                        WHERE UPPER(TRIM(ngram)) IN ({placeholders})
+                          AND action = 'escalate'
+                          AND verdict = 'True'"""
+                else:
+                    cluster_sql = f"""SELECT ngram, glossator_def, semantic_coverage, semantic_cohesion, cohesion
+                        FROM clusters
+                        WHERE UPPER(TRIM(ngram)) IN ({placeholders})
+                          AND action = 'escalate'
+                          AND verdict = 'True'"""
+                rows = conn.execute(cluster_sql, tuple(missing)).fetchall()
+                for row in rows:
+                    definition, rejected = _parse_glossator_definition(row[1])
+                    if rejected or not definition:
+                        continue
+                    score = _safe_float(row[2])
+                    if score is None:
+                        score = _safe_float(row[3])
+                    if score is None:
+                        score = _safe_float(row[4])
+                    morph = str(row[0]).upper()
+                    normalized = str(definition).strip()
+                    existing = grouped[morph].get(normalized)
+                    if existing is None or (
+                        score is not None and score > existing
+                    ):
+                        grouped[morph][normalized] = score
+
+            if include_residuals:
+                residual_rows = conn.execute(
+                    f"""SELECT residual, glossator_def, semantic_coverage, semantic_cohesion, cohesion,
+                               derivational_validity, rebuttal_resilience
+                        FROM root_residual_semantics
+                        WHERE UPPER(TRIM(residual)) IN ({placeholders})""",
+                    tuple(missing),
+                ).fetchall()
+                for row in residual_rows:
+                    definition, rejected = _parse_glossator_definition(row[1])
+                    if rejected or not definition:
+                        continue
+                    score = _safe_float(row[2])
+                    if score is None:
+                        score = _safe_float(row[3])
+                    if score is None:
+                        score = _safe_float(row[4])
+                    if score is None:
+                        score = _safe_float(row[5])
+                    if score is None:
+                        score = _safe_float(row[6])
+                    morph = str(row[0]).upper()
+                    normalized = str(definition).strip()
+                    existing = grouped[morph].get(normalized)
+                    if existing is None or (
+                        score is not None and score > existing
+                    ):
+                        grouped[morph][normalized] = score
+
+            for morph in missing:
+                self._accepted_definition_gloss_cache[
+                    (variant, morph, include_clusters, include_residuals)
+                ] = grouped.get(morph, {})
+
+    def _fetch_residual_semantics(
+        self, residual: str, *, variants: Iterable[str] | None = None
+    ) -> list[ResidualSemanticRecord]:
+        selected = list(variants) if variants else self.variants
+        self._populate_residual_cache_for_morphs([residual], variants=selected)
+        records: list[ResidualSemanticRecord] = []
+        for variant in selected:
+            cache_key = (variant, residual.upper())
+            cached = self._residual_cache.get(cache_key)
+            if cached is None:
+                continue
+            records.extend(list(cached))
+        return records
+
+    def _fetch_morph_hypotheses(
+        self, morph: str, *, variants: Iterable[str] | None = None
+    ) -> list[MorphHypothesisRecord]:
+        selected = list(variants) if variants else self.variants
+        self._populate_hypothesis_cache_for_morphs([morph], variants=selected)
+        records: list[MorphHypothesisRecord] = []
+        for variant in selected:
+            cache_key = (variant, morph.upper())
+            cached = self._hypothesis_cache.get(cache_key)
+            if cached is None:
+                continue
+            records.extend(list(cached))
         return records
 
     def _fetch_attested_definitions(
@@ -806,30 +1180,37 @@ class InsightsRepository:
         selected = list(variants) if variants else self.variants
         records: list[AttestedDefinition] = []
         for variant in selected:
-            conn = self._connections.get(variant)
-            if conn is None:
-                continue
-            rows = conn.execute(
-                """
-                SELECT rd.source_word, rd.definition, rd.cluster_id, c.ngram
-                FROM raw_defs rd
-                JOIN clusters c ON c.cluster_id = rd.cluster_id
-                WHERE TRIM(rd.source_word) COLLATE NOCASE = ? AND TRIM(COALESCE(rd.definition, '')) <> ''
-                ORDER BY rd.cluster_id, rd.def_id;
-                """,
-                (word,),
-            ).fetchall()
-            for row in rows:
-                data = {key: row[key] for key in row.keys()}
-                records.append(
-                    AttestedDefinition(
-                        variant=variant,
-                        source_word=str(data.get("source_word")),
-                        definition=data.get("definition"),
-                        cluster_id=_safe_int(data.get("cluster_id")),
-                        root_ngram=str(data.get("ngram")),
+            cache_key = (variant, word.upper())
+            cached = self._attested_cache.get(cache_key)
+            if cached is None:
+                conn = self._connections.get(variant)
+                if conn is None:
+                    continue
+                rows = conn.execute(
+                    """
+                    SELECT rd.source_word, rd.definition, rd.cluster_id, c.ngram
+                    FROM raw_defs rd
+                    JOIN clusters c ON c.cluster_id = rd.cluster_id
+                    WHERE TRIM(rd.source_word) COLLATE NOCASE = ? AND TRIM(COALESCE(rd.definition, '')) <> ''
+                    ORDER BY rd.cluster_id, rd.def_id;
+                    """,
+                    (word,),
+                ).fetchall()
+                variant_records: list[AttestedDefinition] = []
+                for row in rows:
+                    data = {key: row[key] for key in row.keys()}
+                    variant_records.append(
+                        AttestedDefinition(
+                            variant=variant,
+                            source_word=str(data.get("source_word")),
+                            definition=data.get("definition"),
+                            cluster_id=_safe_int(data.get("cluster_id")),
+                            root_ngram=str(data.get("ngram")),
+                        )
                     )
-                )
+                cached = tuple(variant_records)
+                self._attested_cache[cache_key] = cached
+            records.extend(list(cached))
         return records
 
     def _fasttext_neighbors(self, word: str, *, top_k: int) -> list[FasttextNeighbor]:
@@ -857,6 +1238,45 @@ class InsightsRepository:
             return None
         self._fasttext_model = get_fasttext_model(self._fasttext_model_path)
         return self._fasttext_model
+
+    def prewarm_translation_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+        include_clusters: bool = True,
+        include_residuals: bool = True,
+    ) -> None:
+        """Populate repository caches for a batch of translation morphs.
+
+        Phrase translation repeatedly asks the repository for the same support
+        and gloss metadata across many overlapping substrings. Warming those
+        caches once per phrase keeps later per-token calls cheap without
+        changing the single-word translation contract.
+        """
+
+        selected = list(variants) if variants else self.variants
+        unique = {str(morph).upper() for morph in morphs if morph}
+        if not unique or not selected:
+            return
+        # Phrase translation already knows it is entering a substring-heavy
+        # phase. Warm the internal caches directly here so later token lookups
+        # can stay cheap without materializing support records that would be
+        # immediately thrown away.
+        self._populate_cluster_cache_for_ngrams(unique, variants=selected)
+        self._populate_residual_cache_for_morphs(unique, variants=selected)
+        self._populate_hypothesis_cache_for_morphs(unique, variants=selected)
+        self._populate_rejected_morph_cache_for_morphs(unique, variants=selected)
+        self._populate_accepted_definition_count_cache_for_morphs(
+            unique,
+            variants=selected,
+        )
+        self._populate_accepted_definition_gloss_cache_for_morphs(
+            unique,
+            variants=selected,
+            include_clusters=include_clusters,
+            include_residuals=include_residuals,
+        )
 
 
 def _safe_float(value: SupportsFloat | str | bytes | bytearray | None) -> float | None:
@@ -1000,6 +1420,24 @@ def _parse_glossator_definition(payload: object) -> tuple[str | None, bool]:
         definition = data.strip()
         return definition or None, False
     return payload, False
+
+
+def _parse_glossator_semantics(payload: object) -> tuple[list[str], list[str]]:
+    if payload is None:
+        return [], []
+    if isinstance(payload, Mapping):
+        parsed = payload
+    else:
+        parsed = _parse_glossator_json(str(payload).strip())
+    if not isinstance(parsed, Mapping):
+        return [], []
+    semantic_core = _safe_json_array(
+        parsed.get("SEMANTIC_CORE", parsed.get("semantic_core"))
+    )
+    negative_contrast = _safe_json_array(
+        parsed.get("NEGATIVE_CONTRAST", parsed.get("negative_contrast"))
+    )
+    return semantic_core, negative_contrast
 
 
 def _glossator_definition_is_accepted(payload: object) -> bool:
