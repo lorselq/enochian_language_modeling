@@ -32,9 +32,10 @@ def load_trusted_ngrams(
     paths = get_config_paths()
     if path is None:
         path = paths["preanalysis_trusted"]
+    use_default_ngram_index = dictionary_path is None and ngram_index_path is None
     if dictionary_path is None:
         dictionary_path = paths["dictionary"]
-    if ngram_index_path is None:
+    if ngram_index_path is None and use_default_ngram_index:
         ngram_index_path = paths["ngram_index"]
 
     manual_tokens: list[str] = []
@@ -63,10 +64,17 @@ def load_trusted_ngrams(
         dictionary_tokens = [tok for tok in dictionary_tokens if len(tok) <= max_length]
         manual_tokens = [tok for tok in manual_tokens if len(tok) <= max_length]
 
-    ngram_path = Path(ngram_index_path)
-    ngram_filter = _load_short_ngrams(ngram_path, max_length=max_length)
-    if ngram_filter:
-        dictionary_tokens = [tok for tok in dictionary_tokens if tok.lower() in ngram_filter]
+    # Keep custom dictionary fixtures self-contained. Falling back to the repo's
+    # shared n-gram index only makes sense when callers are also using the repo's
+    # default dictionary inputs; otherwise we unexpectedly drop valid alternates
+    # that never existed in the unrelated on-disk index.
+    if ngram_index_path is not None:
+        ngram_path = Path(ngram_index_path)
+        ngram_filter = _load_short_ngrams(ngram_path, max_length=max_length)
+        if ngram_filter:
+            dictionary_tokens = [
+                tok for tok in dictionary_tokens if tok.lower() in ngram_filter
+            ]
 
     combined = manual_tokens + dictionary_tokens
     return _normalize_trusted(combined)

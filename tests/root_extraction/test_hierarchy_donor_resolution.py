@@ -44,18 +44,26 @@ if "enochian_lm.root_extraction.utils.candidate_finder" not in sys.modules:
         def __init__(self, *args, **kwargs):
             pass
 
+    candidate_stub.CoverageSegment = dict
     candidate_stub.MorphemeCandidateFinder = _DummyFinder
     sys.modules["enochian_lm.root_extraction.utils.candidate_finder"] = candidate_stub
 
 if "enochian_lm.root_extraction.utils.types_lexicon" not in sys.modules:
     lex_stub = types.ModuleType("enochian_lm.root_extraction.utils.types_lexicon")
+    lex_stub.AltRecord = dict
     lex_stub.EntryRecord = dict
+    lex_stub.SenseRecord = dict
     sys.modules["enochian_lm.root_extraction.utils.types_lexicon"] = lex_stub
 
 if "enochian_lm.root_extraction.utils.embeddings" not in sys.modules:
     embeddings_stub = types.ModuleType("enochian_lm.root_extraction.utils.embeddings")
     embeddings_stub.get_fasttext_model = lambda *a, **k: object()
     embeddings_stub.get_sentence_transformer = lambda *a, **k: object()
+    embeddings_stub.get_sentence_transformer_if_available = (
+        lambda *a, **k: object()
+    )
+    embeddings_stub.cluster_definitions = lambda *a, **k: []
+    embeddings_stub.select_definitions = lambda defs, max_words=300: defs
     embeddings_stub.stream_text = lambda *a, **k: None
     sys.modules["enochian_lm.root_extraction.utils.embeddings"] = embeddings_stub
 

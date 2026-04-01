@@ -39,13 +39,22 @@ def _import_candidate_finder_with_lightweight_stubs():
 
     if "enochian_lm.root_extraction.utils.types_lexicon" not in sys.modules:
         lex_mod = types.ModuleType("enochian_lm.root_extraction.utils.types_lexicon")
+        lex_mod.AltRecord = dict
         lex_mod.EntryRecord = dict
+        lex_mod.SenseRecord = dict
         sys.modules["enochian_lm.root_extraction.utils.types_lexicon"] = lex_mod
 
     if "enochian_lm.root_extraction.utils.embeddings" not in sys.modules:
         emb_mod = types.ModuleType("enochian_lm.root_extraction.utils.embeddings")
         emb_mod.cluster_definitions = lambda *_a, **_k: []
+        emb_mod.cluster_definition_counts = lambda *_a, **_k: {}
         emb_mod.get_fasttext_model = lambda *_a, **_k: object()
+        emb_mod.get_sentence_transformer = lambda *_a, **_k: object()
+        emb_mod.get_sentence_transformer_if_available = (
+            lambda *_a, **_k: object()
+        )
+        emb_mod.select_definitions = lambda definitions, max_words=300: definitions
+        emb_mod.stream_text = lambda *_a, **_k: None
         sys.modules["enochian_lm.root_extraction.utils.embeddings"] = emb_mod
 
     mod = importlib.import_module("enochian_lm.root_extraction.utils.candidate_finder")

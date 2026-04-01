@@ -23,12 +23,9 @@ from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 from .placeholder_glosses import (
     clean_lexical_gloss,
     specific_gloss_from_definition_and_semantic_core,
-<<<<<<< HEAD
-    opaque_token_fallback_gloss,
-=======
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     sanitize_human_gloss,
     semantic_core_gloss,
+    unresolved_token_gloss,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -1269,14 +1266,10 @@ def _build_phrase_bundle_prompt(
         {
             "lay_translation": "<plausible, roughly grammatical English sentence or clause that expresses one coherent reading of the phrase>",
             "lay_confidence": 0.0,
-<<<<<<< HEAD
-            "lay_reasoning": "<brief note explaining the chosen reading>",
-=======
             "lay_reasoning": "<brief note explaining the chosen grounded reading>",
             "poetic_translation": "<more liberal, more expressive English interpretation that stays grounded in the supplied parse but may reorder and add connective tissue freely>",
             "poetic_confidence": 0.0,
             "poetic_reasoning": "<brief note explaining the poetic choices>",
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "footnoted_translation": "<same short translation with [^1] style markers>",
             "translation_footnotes": [
                 {
@@ -1294,12 +1287,9 @@ def _build_phrase_bundle_prompt(
             "lay_translation": "the holy law still stands",
             "lay_confidence": 0.72,
             "lay_reasoning": "Chooses one coherent everyday reading while staying anchored to the supplied parse.",
-<<<<<<< HEAD
-=======
             "poetic_translation": "the sacred order still holds firm",
             "poetic_confidence": 0.80,
             "poetic_reasoning": "Leans into a more expressive paraphrase while preserving the same governing idea.",
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "footnoted_translation": "holy [^1] law [^2] still stands [^3]",
             "translation_footnotes": [
                 {
@@ -1328,18 +1318,6 @@ def _build_phrase_bundle_prompt(
     return "\n".join(
         [
             "ROLE: You are a constrained Enochian lay phrase renderer.",
-<<<<<<< HEAD
-            "TASK: Return one plausible, approximately grammatical English interpretation of the supplied parse, plus grounded token footnotes.",
-            f"HISTORICAL CONTEXT: {llm_context}",
-            "CONSTRAINTS:",
-            "- Use ONLY the supplied token choices, relations, and skeleton.",
-            "- Do not add, remove, or replace meanings.",
-            "- `lay_translation` must read like a normal English clause or sentence, not like a bag of glosses.",
-            "- Treat the lay translation as a plausible hypothetical interpretation of what the phrase could mean.",
-            "- You may add helper words, articles, and prepositions when they are needed to make the line feel grammatical.",
-            "- Prefer one coherent reading over mirroring the source token order mechanically.",
-            "- Do not return token-by-token comma lists, stacked prepositional fragments, or glossary dumps.",
-=======
             "TASK: Return one grounded lay translation, one more expressive poetic translation, and token footnotes for the supplied parse.",
             f"HISTORICAL CONTEXT: {llm_context}",
             "CONSTRAINTS:",
@@ -1355,17 +1333,12 @@ def _build_phrase_bundle_prompt(
             "- `poetic_translation` may choose among the supplied supported senses and alternates to produce the most plausible coherent sentence.",
             "- `poetic_translation` may absorb weak tokens into stronger surrounding phrasing instead of forcing a choppy token-by-token mirror.",
             "- `poetic_translation` does NOT need to differ from `lay_translation` if the grounded lay sentence is already coherent and expressive.",
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "- Return exactly one footnote entry per token choice, in source order.",
             "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
             "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
             "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
-<<<<<<< HEAD
-            "- Do not repeat the raw source token in English unless the token remains unresolved; in that case use `[TOKEN]` and explain why.",
-=======
             "- Never emit raw source tokens or bracket placeholders such as `[TOKEN]` in the English output.",
             "- Do not emit `unresolved term`; use the best grounded gloss available from the payload and smooth around weak tokens.",
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "- Explanations must stay grounded in the selected token glosses, alternates, and relations.",
             "- Return STRICT JSON only.",
             "PARSE PAYLOAD:",
@@ -1485,17 +1458,11 @@ def _build_phrase_lay_render_prompt(
             "- Prefer a clear sentence-level idea over mirroring the source token order mechanically.",
             "- Never restate full token definitions, example sentences, or long alternation chains in `rendered_translation`.",
             "- Return exactly one footnote entry per token choice, in source order.",
-<<<<<<< HEAD
             "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
             "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
             "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
-            "- Do not repeat the raw source token in English unless the token remains unresolved; in that case use `[TOKEN]` and explain why.",
-=======
-            "- Each `rendered_text` should usually be 1-3 words. Use extra filler words only when grammar truly requires them.",
-            "- If a chosen gloss is verbose, compress it to the smallest everyday concept supported by that gloss.",
             "- Never emit raw source tokens or bracket placeholders such as `[TOKEN]` in the English output.",
-            "- If a token remains weakly supported, use the best grounded gloss available from the payload; if nothing usable survives, say `unresolved term` rather than echoing the source token.",
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
+            "- If a token remains weakly supported, use the best grounded gloss available from the payload and smooth around it instead of echoing the source token.",
             "- Explanations must stay grounded in the selected token glosses, alternates, and relations.",
             "- If you add helper words for readable English, explain that smoothing in the relevant footnote.",
             "- Return STRICT JSON only.",
@@ -1572,13 +1539,10 @@ def _parse_phrase_lay_render_response(
         str(base.get("rendered_translation") or ""),
         footnoted,
         fallback_translation=fallback,
-<<<<<<< HEAD
-=======
     )
     base["rendered_translation"] = _replace_token_placeholders_in_translation(
         str(base.get("rendered_translation") or ""),
         parse_payload=parse_payload,
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     )
 
     return {
@@ -1871,8 +1835,6 @@ def _normalize_lay_translation(
     if not _looks_overexpanded_lay_translation(cleaned):
         return cleaned
     return fallback_cleaned or cleaned
-<<<<<<< HEAD
-=======
 
 
 def _normalize_poetic_translation(
@@ -1928,7 +1890,6 @@ def _replace_token_placeholders_in_translation(
         return _fallback_rendered_text(token_choice, token)
 
     return " ".join(_RAW_TOKEN_PLACEHOLDER_RE.sub(_replacement, cleaned).split())
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
 
 
 def _looks_overexpanded_lay_translation(text: str) -> bool:
@@ -2068,11 +2029,7 @@ def _preferred_primary_gloss(token_choice: Mapping[str, object], token: str) -> 
 
     Phrase lay rendering should preserve specific, human-facing lexical detail
     when the parse payload already carries it. This helper therefore tries the
-<<<<<<< HEAD
-    serialized bundle/surface definitions first, optionally mining a more
-=======
     serialized bundle and surface definitions first, optionally mining a more
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     specific phrase from them, before collapsing all the way down to a bare
     semantic-core label.
     """
@@ -2080,22 +2037,16 @@ def _preferred_primary_gloss(token_choice: Mapping[str, object], token: str) -> 
     trace = _definition_trace_for_token_choice(token_choice)
     semantic_core = token_choice.get("semantic_core")
     negative_contrast = token_choice.get("negative_contrast")
-<<<<<<< HEAD
-=======
     dictionary_rescue = _dictionary_rescue_gloss(token_choice, token)
     if dictionary_rescue is not None:
         return dictionary_rescue
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     primary_candidates = [
         trace.get("surface_gloss"),
         token_choice.get("surface_gloss"),
         trace.get("selected_definition"),
         token_choice.get("definition"),
-<<<<<<< HEAD
-=======
         token_choice.get("bundle_surface_gloss"),
         token_choice.get("bundle_head_gloss"),
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
         trace.get("raw_selected_definition"),
         token_choice.get("raw_definition"),
     ]

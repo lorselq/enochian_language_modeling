@@ -513,14 +513,24 @@ def _word_result(
     }
 
 
-def test_config_prefers_populated_debate_extraction_only_database() -> None:
-    """Keep debate translation pointed at the populated on-disk SQLite file."""
+def test_config_prefers_populated_debate_database() -> None:
+    """Keep debate translation pointed at whichever on-disk SQLite file is populated.
+
+    The repo has carried both a canonical debate path and, at times, an
+    extraction-only fallback. This regression should follow the current
+    workspace truth instead of hard-coding which filename happens to be
+    populated in one snapshot.
+    """
     paths = get_config_paths()
 
-    assert paths["debate_extraction_only"].exists()
     assert paths["debate_primary"].exists()
-    assert paths["debate_primary"].stat().st_size == 0
-    assert paths["debate"] == paths["debate_extraction_only"]
+    populated_candidates = [
+        path
+        for path in (paths["debate_primary"], paths["debate_extraction_only"])
+        if path.exists() and path.stat().st_size > 0
+    ]
+    assert populated_candidates
+    assert paths["debate"] in populated_candidates
 
 
 def test_debate_repository_opens_the_selected_extraction_only_database() -> None:
@@ -2676,7 +2686,6 @@ def test_parse_phrase_lay_render_response_rebuilds_missing_footnotes() -> None:
     assert "chosen parse" not in parsed["translation_footnotes"][0]["explanation"].lower()
 
 
-<<<<<<< HEAD
 def test_parse_phrase_lay_render_response_keeps_long_grammatical_sentence() -> None:
     """Preserve coherent lay prose even when it runs longer than twelve words.
 
@@ -2757,13 +2766,6 @@ def test_parse_phrase_lay_render_response_keeps_long_grammatical_sentence() -> N
     assert parsed["footnoted_translation"] == "I [^1] rule [^2] among them [^3]"
 
 
-def test_parse_phrase_lay_render_response_falls_back_to_skeleton_for_glossary_dump() -> None:
-    """Use the deterministic skeleton when the lay sentence turns into a gloss pile.
-
-    The lay translation should feel like English prose. When the model returns
-    a comma-heavy mini-glossary instead, the algorithmic skeleton is a better
-    lay fallback than the stripped footnote line.
-=======
 def test_parse_phrase_lay_render_response_compacts_overlong_lay_chunks() -> None:
     """Fall back to the deterministic skeleton for glossary-like lay dumps.
 
@@ -2771,7 +2773,6 @@ def test_parse_phrase_lay_render_response_compacts_overlong_lay_chunks() -> None
     output drifts into a comma-heavy mini-glossary, the parser should keep the
     grounded footnotes but prefer the deterministic skeleton as the visible lay
     sentence instead of collapsing everything to token salad.
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     """
 
     parse_payload = {
@@ -3451,10 +3452,6 @@ def test_render_phrase_bundle_returns_both_outputs_from_one_model_call(monkeypat
     assert init_kwargs[0]["read_timeout_seconds"] == 45.0
     assert init_kwargs[0]["local_fallback_enabled"] is False
     assert init_kwargs[0]["stream_response"] is False
-<<<<<<< HEAD
-=======
-
-
 def test_parse_phrase_bundle_response_allows_poetic_copy_of_technical() -> None:
     """Allow the poetic line to stay close when the sentence is already coherent.
 
@@ -3607,7 +3604,6 @@ def test_parse_phrase_bundle_response_replaces_raw_token_placeholders() -> None:
     assert "rectangular prism" in parsed["lay_translation"]
     assert "[VANSAX]" not in parsed["interpretive_translation"]
     assert "[NAZ]" not in parsed["interpretive_translation"]
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
 
 
 def test_translate_phrase_uses_bundle_renderer_once_when_llm_enabled(

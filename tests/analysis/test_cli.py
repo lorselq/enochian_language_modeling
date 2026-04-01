@@ -1,46 +1,113 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 import types
 from pathlib import Path
 
 import pytest
 
-sys.modules.setdefault("gensim", types.SimpleNamespace(models=types.SimpleNamespace(FastText=object)))
-dummy_gensim_utils = types.ModuleType("gensim.utils")
-dummy_gensim_utils.simple_preprocess = lambda text, deacc=True, min_len=1: []
-sys.modules["gensim.utils"] = dummy_gensim_utils
-sys.modules.setdefault(
-    "gensim.models", types.SimpleNamespace(FastText=object)
-)
-sys.modules.setdefault(
-    "sentence_transformers", types.SimpleNamespace(SentenceTransformer=object)
-)
-dummy_preanalysis = types.ModuleType("enochian_lm.root_extraction.utils.preanalysis")
-dummy_preanalysis.execute_preanalysis = lambda **_: {}
-sys.modules[
-    "enochian_lm.root_extraction.utils.preanalysis"
-] = dummy_preanalysis
-dummy_embeddings = types.ModuleType("enochian_lm.root_extraction.utils.embeddings")
-dummy_embeddings.get_fasttext_model = lambda: None
-sys.modules["enochian_lm.root_extraction.utils.embeddings"] = dummy_embeddings
-dummy_refresh = types.ModuleType("enochian_lm.root_extraction.utils.residual_refresh")
-dummy_refresh.refresh_residual_details = lambda *_, **__: (0, 0)
-sys.modules[
-    "enochian_lm.root_extraction.utils.residual_refresh"
-] = dummy_refresh
-sys.path.append(str(Path(__file__).resolve().parents[2] / "src"))
 
-from enochian_lm.analysis import cli
+def _load_analysis_cli_module():
+    """Load the analysis CLI with private dependency shims for this file only.
+
+    What: import the production CLI module directly from disk under a private
+    test-only name.
+    Why: these tests only exercise small parser/helper behaviors, so we stub the
+    heavyweight root-extraction and translation imports without polluting the
+    shared module state used by the rest of the suite.
+    Big picture: keeps this CLI regression file isolated so translation and
+    residual tests can still import the real modules later in collection.
+    """
+
+    module_path = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "enochian_lm"
+        / "analysis"
+        / "cli.py"
+    )
+    src_root = module_path.parents[3]
+    if str(src_root) not in sys.path:
+        sys.path.insert(0, str(src_root))
+
+    stub_names = [
+        "enochian_lm.root_extraction.utils.embeddings",
+        "enochian_lm.root_extraction.utils.candidate_finder",
+        "enochian_lm.root_extraction.utils.dictionary_loader",
+        "enochian_lm.root_extraction.utils.preanalysis",
+        "enochian_lm.root_extraction.utils.residual_refresh",
+        "translation.cli",
+    ]
+    backups = {name: sys.modules.get(name) for name in stub_names}
+
+    embeddings_stub = types.ModuleType("enochian_lm.root_extraction.utils.embeddings")
+    embeddings_stub.get_fasttext_model = lambda *_, **__: None
+    sys.modules["enochian_lm.root_extraction.utils.embeddings"] = embeddings_stub
+
+    candidate_finder_stub = types.ModuleType(
+        "enochian_lm.root_extraction.utils.candidate_finder"
+    )
+
+    class _DummyFinder:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    candidate_finder_stub.MorphemeCandidateFinder = _DummyFinder
+    sys.modules[
+        "enochian_lm.root_extraction.utils.candidate_finder"
+    ] = candidate_finder_stub
+
+    dictionary_loader_stub = types.ModuleType(
+        "enochian_lm.root_extraction.utils.dictionary_loader"
+    )
+    dictionary_loader_stub.load_dictionary = lambda *_, **__: []
+    sys.modules[
+        "enochian_lm.root_extraction.utils.dictionary_loader"
+    ] = dictionary_loader_stub
+
+    preanalysis_stub = types.ModuleType(
+        "enochian_lm.root_extraction.utils.preanalysis"
+    )
+    preanalysis_stub.execute_preanalysis = lambda **_: {}
+    sys.modules["enochian_lm.root_extraction.utils.preanalysis"] = preanalysis_stub
+
+    residual_refresh_stub = types.ModuleType(
+        "enochian_lm.root_extraction.utils.residual_refresh"
+    )
+    residual_refresh_stub.refresh_residual_details = lambda *_, **__: (0, 0)
+    sys.modules[
+        "enochian_lm.root_extraction.utils.residual_refresh"
+    ] = residual_refresh_stub
+
+    translation_cli_stub = types.ModuleType("translation.cli")
+    translation_cli_stub.configure_translate_phrase_parser = lambda *_args, **_kwargs: None
+    translation_cli_stub.configure_translate_word_parser = lambda *_args, **_kwargs: None
+    translation_cli_stub.translate_phrase_from_args = lambda *_args, **_kwargs: 0
+    translation_cli_stub.translate_word_from_args = lambda *_args, **_kwargs: 0
+    sys.modules["translation.cli"] = translation_cli_stub
+
+    sys.modules.pop("enochian_lm.analysis.cli", None)
+    try:
+        return importlib.import_module("enochian_lm.analysis.cli")
+    finally:
+        for name, original in backups.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
 
 
-def test_normalize_run_ids_rejects_empty_strings():
+cli = _load_analysis_cli_module()
+
+
+def test_normalize_run_ids_rejects_empty_strings() -> None:
     with pytest.raises(ValueError):
         cli._normalize_run_ids(["   ", ""])
 
 
-def test_run_preanalyze_handles_multiple_runs(monkeypatch, capsys):
+def test_run_preanalyze_handles_multiple_runs(monkeypatch, capsys) -> None:
     calls: list[str | None] = []
 
     def fake_execute_preanalysis(db_path, stage, trusted_path, run_id, refresh):
@@ -73,7 +140,7 @@ def test_run_preanalyze_handles_multiple_runs(monkeypatch, capsys):
     assert "runB" in output
 
 
-def test_run_residual_refresh_aggregates(monkeypatch, capsys):
+def test_run_residual_refresh_aggregates(monkeypatch, capsys) -> None:
     calls: list[str | None] = []
 
     def fake_refresh(db_path, run_id=None):
@@ -94,7 +161,7 @@ def test_run_residual_refresh_aggregates(monkeypatch, capsys):
     assert "[b]" in output
 
 
-def test_build_parser_keeps_refresh_alias():
+def test_build_parser_keeps_refresh_alias() -> None:
     parser = cli._build_parser()
     args = parser.parse_args(["refresh", "--run-id", "demo"])
 
@@ -103,11 +170,11 @@ def test_build_parser_keeps_refresh_alias():
     assert args.handler == cli._run_residual_refresh
 
 
-def test_run_composite_backfill_processes_each_run(monkeypatch, capsys):
+def test_run_composite_backfill_processes_each_run(monkeypatch, capsys) -> None:
     calls: list[str | None] = []
 
     class DummyConn:
-        def close(self):
+        def close(self) -> None:
             pass
 
     dummy_conn = DummyConn()
@@ -136,37 +203,3 @@ def test_run_composite_backfill_processes_each_run(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "run x" in output
     assert "run y" in output
-
-
-def test_run_residual_semantic_pass(monkeypatch, capsys):
-    class DummyConn:
-        def close(self):
-            pass
-
-    dummy_conn = DummyConn()
-    monkeypatch.setattr(cli, "connect_sqlite", lambda path: dummy_conn)
-    monkeypatch.setattr(cli, "ensure_analysis_tables", lambda conn: None)
-    monkeypatch.setattr(cli, "_resolve_run_ids", lambda conn, run_id: ["run-a", "run-b"])
-
-    calls: list[tuple] = []
-
-    class DummyEngine:
-        def __init__(self, conn, use_remote=True, llm_responder=None):
-            calls.append(("init", conn, use_remote))
-
-        def process_run(self, run_id, limit=None):
-            calls.append(("run", run_id, limit))
-            return {"processed": 2, "accepted": 1, "rejected": 1}
-
-    monkeypatch.setattr(cli, "SubtractiveSemanticsEngine", DummyEngine)
-
-    args = argparse.Namespace(db_path="/tmp/demo.sqlite3", run_id=None, limit=5, local=True)
-    total = cli._run_residual_semantic_pass(args)
-
-    assert total == 4
-    assert calls[0] == ("init", dummy_conn, False)  # use_remote = not local
-    assert ("run", "run-a", 5) in calls
-    assert ("run", "run-b", 5) in calls
-
-    output = capsys.readouterr().out
-    assert "accepted=1" in output

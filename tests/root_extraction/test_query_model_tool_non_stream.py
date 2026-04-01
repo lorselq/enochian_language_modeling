@@ -1,10 +1,9 @@
-<<<<<<< HEAD
 """Regression coverage for QueryModelTool transport selection.
 
-These tests protect the phrase-translation fix for remote bundle rendering.
-That path now prefers a plain completion over streaming because the bundle
-request only needs one short JSON blob, and streaming could sit for minutes
-waiting on the first visible content chunk.
+These tests protect the non-stream completion path used by short JSON-only
+jobs. They intentionally load the real module under a private name so other
+test files can keep their lightweight dependency stubs without hiding the
+transport logic we want to exercise here.
 """
 
 from __future__ import annotations
@@ -17,77 +16,38 @@ from types import SimpleNamespace
 
 
 def _load_query_model_tool_module():
-    """Load the real query-model module even if other tests install shims.
+    """Load the real query-model module with tiny import-time stubs.
 
-    The large translation regression file installs lightweight dependency
-    shims into ``sys.modules`` during import. Loading the module directly from
-    disk under a private test-only name keeps this regression focused on the
-    actual implementation we want to verify.
+    What: import the production module directly from disk.
+    Why: other translation tests intentionally register lightweight shims in
+    ``sys.modules`` and this regression needs the real transport code instead.
+    Big picture: protects the phrase-render transport contract from being
+    masked by collection-time test scaffolding elsewhere in the suite.
     """
 
     module_path = (
         Path(__file__).resolve().parents[2]
         / "src"
-=======
-from __future__ import annotations
-
-import importlib.util
-import pathlib
-import sys
-import types
-
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
-SRC_ROOT = PROJECT_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
-
-if "crewai.tools" not in sys.modules:
-    crewai_stub = types.ModuleType("crewai")
-    crewai_tools_stub = types.ModuleType("crewai.tools")
-
-    class _BaseTool:
-        """Provide the tiny BaseTool surface QueryModelTool needs in tests.
-
-        The production class inherits from CrewAI's tool base, but this
-        regression only needs constructor storage so the real transport logic
-        can be exercised without pulling in the whole optional dependency.
-        """
-
-        def __init__(self, *args, **kwargs) -> None:
-            self.name = kwargs.get("name")
-            self.description = kwargs.get("description")
-
-    crewai_tools_stub.BaseTool = _BaseTool
-    crewai_stub.tools = crewai_tools_stub
-    sys.modules["crewai"] = crewai_stub
-    sys.modules["crewai.tools"] = crewai_tools_stub
-
-from enochian_lm.root_extraction.tools import query_model_tool as query_model_tool_module
-
-if not hasattr(query_model_tool_module, "OpenAI"):
-    real_module_path = (
-        SRC_ROOT
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
         / "enochian_lm"
         / "root_extraction"
         / "tools"
         / "query_model_tool.py"
     )
     spec = importlib.util.spec_from_file_location(
-<<<<<<< HEAD
         "query_model_tool_non_stream_actual",
         module_path,
     )
     assert spec is not None and spec.loader is not None
 
-    openai_module = types.ModuleType("openai")
-    openai_module.OpenAI = object  # type: ignore[attr-defined]
-    sys.modules["openai"] = openai_module
+    openai_module = sys.modules.setdefault("openai", types.ModuleType("openai"))
+    openai_module.OpenAI = getattr(openai_module, "OpenAI", object)  # type: ignore[attr-defined]
 
     crewai_module = sys.modules.setdefault("crewai", types.ModuleType("crewai"))
     crewai_tools_module = types.ModuleType("crewai.tools")
 
     class _BaseTool:
+        """Provide the tiny BaseTool surface QueryModelTool needs in tests."""
+
         def __init__(self, *args, **kwargs) -> None:
             self.name = kwargs.get("name", "Query LLM")
             self.description = kwargs.get("description", "")
@@ -97,7 +57,7 @@ if not hasattr(query_model_tool_module, "OpenAI"):
     sys.modules["crewai.tools"] = crewai_tools_module
 
     pydantic_module = sys.modules.setdefault("pydantic", types.ModuleType("pydantic"))
-    pydantic_module.PrivateAttr = lambda default=None, **kwargs: default  # type: ignore[attr-defined]
+    pydantic_module.PrivateAttr = lambda default=None, **_kwargs: default  # type: ignore[attr-defined]
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -107,12 +67,12 @@ if not hasattr(query_model_tool_module, "OpenAI"):
 def test_query_model_tool_uses_non_stream_completion_when_requested(
     monkeypatch,
 ) -> None:
-    """Use a plain completion when callers opt out of streaming.
+    """Use a plain completion when local callers explicitly opt out of streaming.
 
     Phrase bundle rendering only needs the final JSON payload, not token-by-
     token output. This regression proves the tool sends ``stream=False``,
-    returns the final content, and reports non-stream progress states instead
-    of hanging on ``waiting for first token``.
+    returns the final content, and avoids the first-token wait states used by
+    the streaming transport.
     """
 
     calls: list[dict[str, object]] = []
@@ -153,28 +113,17 @@ def test_query_model_tool_uses_non_stream_completion_when_requested(
 
     assert response["response_text"] == '{"answer":"ok"}'
     assert calls[0]["stream"] is False
-    assert any(
-        event.get("state") == "waiting for non-stream response" for event in events
-    )
+    assert any(event.get("state") == "waiting for full response" for event in events)
     assert not any(event.get("state") == "waiting for first token" for event in events)
-=======
-        "real_query_model_tool_for_tests",
-        real_module_path,
-    )
-    assert spec is not None and spec.loader is not None
-    real_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(real_module)
-    query_model_tool_module = real_module
 
 
 def test_query_model_tool_non_stream_returns_full_response(monkeypatch) -> None:
-    """Allow phrase rendering to skip first-token waits with a true non-stream call.
+    """Allow remote phrase rendering to skip first-token waits with one call.
 
-    Phrase bundle rendering uses `stream_response=False` so short JSON payloads
-    do not sit around waiting for the first streamed content delta. This
-    regression exercises the real transport class and proves it accepts that
-    mode, sends `stream=False` to the provider, and returns the full message
-    body without trying to iterate a streaming object.
+    Phrase bundle rendering uses ``stream_response=False`` so short JSON
+    payloads do not sit around waiting for the first streamed content delta.
+    This regression proves the transport sends ``stream=False`` and returns the
+    full message body without trying to iterate a streaming object.
     """
 
     client_inits: list[dict[str, object]] = []
@@ -187,21 +136,22 @@ def test_query_model_tool_non_stream_returns_full_response(monkeypatch) -> None:
 
             def _create(**request_kwargs):
                 request_calls.append(dict(request_kwargs))
-                return types.SimpleNamespace(
+                return SimpleNamespace(
                     choices=[
-                        types.SimpleNamespace(
-                            message=types.SimpleNamespace(
+                        SimpleNamespace(
+                            message=SimpleNamespace(
                                 content='{"lay_translation":"plain english"}'
                             )
                         )
                     ]
                 )
 
-            self.chat = types.SimpleNamespace(
-                completions=types.SimpleNamespace(create=_create)
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(create=_create)
             )
 
-    monkeypatch.setattr(query_model_tool_module, "OpenAI", _FakeOpenAI, raising=False)
+    query_model_tool_module = _load_query_model_tool_module()
+    monkeypatch.setattr(query_model_tool_module, "OpenAI", _FakeOpenAI)
     monkeypatch.setenv("REMOTE_OPENAI_API_BASE", "https://example.test")
     monkeypatch.setenv("REMOTE_OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("REMOTE_MODEL_NAME", "test-model")
@@ -238,4 +188,3 @@ def test_query_model_tool_non_stream_returns_full_response(monkeypatch) -> None:
         "received full response",
         "response complete",
     ]
->>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6

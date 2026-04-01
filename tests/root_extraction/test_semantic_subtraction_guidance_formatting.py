@@ -48,7 +48,9 @@ if "enochian_lm.root_extraction.tools.query_model_tool" not in sys.modules:
 
 if "enochian_lm.root_extraction.utils.types_lexicon" not in sys.modules:
     lex_stub = types.ModuleType("enochian_lm.root_extraction.utils.types_lexicon")
+    lex_stub.AltRecord = dict
     lex_stub.EntryRecord = dict
+    lex_stub.SenseRecord = dict
     sys.modules["enochian_lm.root_extraction.utils.types_lexicon"] = lex_stub
 
 embeddings_stub = sys.modules.get("enochian_lm.root_extraction.utils.embeddings")
@@ -61,6 +63,15 @@ embeddings_stub.get_fasttext_model = getattr(
 )
 embeddings_stub.get_sentence_transformer = getattr(
     embeddings_stub, "get_sentence_transformer", lambda *a, **k: object()
+)
+embeddings_stub.get_sentence_transformer_if_available = getattr(
+    embeddings_stub, "get_sentence_transformer_if_available", lambda *a, **k: object()
+)
+embeddings_stub.cluster_definitions = getattr(
+    embeddings_stub, "cluster_definitions", lambda *a, **k: []
+)
+embeddings_stub.cluster_definition_counts = getattr(
+    embeddings_stub, "cluster_definition_counts", lambda *a, **k: {}
 )
 embeddings_stub.select_definitions = getattr(
     embeddings_stub, "select_definitions", lambda defs, max_words=300: defs
