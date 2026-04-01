@@ -531,6 +531,7 @@ class QueryModelTool(BaseTool):
                 model_env, "([Error] Not able to retrieve the model!)"
             )
 
+<<<<<<< HEAD
         if self._stream_response:
             try:
                 progress_state["state"] = "queued request with provider"
@@ -555,6 +556,35 @@ class QueryModelTool(BaseTool):
                 self._emit_progress_event(failure_state)
                 self._stop_heartbeat()
                 raise
+=======
+        try:
+            progress_state["state"] = "queued request with provider"
+            self._emit_progress_event(_snapshot())
+            completion = client.chat.completions.create(
+                model=os.getenv(model_env, ""),
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                stream=self._stream_response,
+                seed=93,
+            )
+            progress_state["state"] = (
+                "waiting for first token"
+                if self._stream_response
+                else "waiting for full response"
+            )
+            self._emit_progress_event(_snapshot())
+        except Exception as exc:
+            self._debug(f"stream create failed for role={role!r}: {type(exc).__name__}: {exc}")
+            failure_state = _snapshot()
+            failure_state["state"] = "provider connection failed"
+            failure_state["warning"] = f"{type(exc).__name__}: {exc}"
+            self._emit_progress_event(failure_state)
+            self._stop_heartbeat()
+            raise
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
 
             if self.progress_style == "verbose":
                 print(
@@ -563,6 +593,7 @@ class QueryModelTool(BaseTool):
 
             response_text = ""
 
+<<<<<<< HEAD
             # Streaming is best when callers surface incremental text. For
             # short JSON-only jobs, callers can disable it and use the
             # non-stream branch below to avoid long first-token stalls.
@@ -604,6 +635,26 @@ class QueryModelTool(BaseTool):
                         )
                         break
             else:
+=======
+        if not self._stream_response:
+            response_text = (completion.choices[0].message.content or "").strip()
+            if response_text:
+                progress_state["state"] = "received full response"
+                progress_state["chunk_count"] = 1
+                progress_state["char_count"] = len(response_text)
+                self._emit_progress_event(_snapshot())
+                self._emit(
+                    print_chunks,
+                    stream_callback,
+                    role_name or self.name,
+                    f"{GRAY}{response_text}{RESET}",
+                )
+
+        # 4) Wait for the first real chunk. Verbose mode shows the playful spinner;
+        # compact/silent modes stay quiet apart from an optional single progress line.
+        elif self.progress_style == "verbose":
+            with self._get_random_spinner() as sp:
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
                 while True:
                     try:
                         chunk = next(completion)
@@ -626,6 +677,16 @@ class QueryModelTool(BaseTool):
                         f"{GRAY}{content}{RESET}",
                     )
                     break
+<<<<<<< HEAD
+=======
+        elif self._stream_response:
+            while True:
+                try:
+                    chunk = next(completion)
+                except StopIteration:
+                    # no data at all
+                    break
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
 
             for chunk in completion:
                 content = self._extract_chunk_text(chunk)
@@ -668,17 +729,37 @@ class QueryModelTool(BaseTool):
                 self._stop_heartbeat()
                 raise
 
+<<<<<<< HEAD
             response_text = (non_stream.choices[0].message.content or "").strip()
             if response_text:
                 progress_state["state"] = "response complete"
                 progress_state["chunk_count"] = 1
                 progress_state["char_count"] = len(response_text)
+=======
+        # 5) Consume the rest of the stream
+        if self._stream_response:
+            for chunk in completion:
+                content = self._extract_chunk_text(chunk)
+                if not content:
+                    continue
+                response_text += content
+                progress_state["state"] = "streaming response"
+                progress_state["chunk_count"] = int(progress_state.get("chunk_count") or 0) + 1
+                progress_state["char_count"] = int(progress_state.get("char_count") or 0) + len(content)
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
                 self._emit(
                     print_chunks,
                     stream_callback,
                     role_name or self.name,
+<<<<<<< HEAD
                     f"{GRAY}{response_text}{RESET}",
                 )
+=======
+                    f"{GRAY}{content}{RESET}",
+                )
+                if chunk.choices[0].finish_reason is not None:
+                    break
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
 
         # 6) Final fallback if nothing arrived
         if self._stream_response and not response_text:

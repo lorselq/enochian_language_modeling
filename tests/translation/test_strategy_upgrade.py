@@ -21,6 +21,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 def _install_dependency_shims() -> None:
     """Install lightweight import shims for optional heavy dependencies.
@@ -150,10 +152,12 @@ from translation.llm_synthesis import (
     _build_phrase_bundle_prompt,
     PhraseRenderBundleResult,
     PhraseRenderResult,
+    _build_phrase_bundle_prompt,
     _build_phrase_footnote_fallback,
     _build_phrase_lay_render_prompt,
     _build_phrase_render_prompt,
     _compact_lay_gloss,
+    _parse_phrase_bundle_response,
     _parse_phrase_lay_render_response,
     render_phrase_bundle,
     render_phrase_lay_translation,
@@ -424,6 +428,7 @@ def _word_candidate(
     bundle_coherence_score: float | None = None,
     blind_mode_whole_word_rescue: bool = False,
     blind_mode_rescue_note: str | None = None,
+    concatenated_meanings: str | None = None,
 ) -> dict[str, object]:
     """Build a translation candidate payload in the service's public schema."""
     surface = morphs or ["TOKEN"]
@@ -481,6 +486,7 @@ def _word_candidate(
         "bundle_coherence_score": bundle_coherence_score,
         "blind_mode_whole_word_rescue": blind_mode_whole_word_rescue,
         "blind_mode_rescue_note": blind_mode_rescue_note,
+        "concatenated_meanings": concatenated_meanings,
     }
 
 
@@ -1462,12 +1468,13 @@ def test_translate_word_blind_mode_reserves_whole_word_reads_when_bundle_is_usab
     )
 
 
-def test_translate_word_blind_mode_marks_whole_word_rescue_when_bundle_fails() -> None:
-    """Reintroduce whole-word evidence only as explicit blind-mode rescue.
+def test_translate_word_blind_mode_keeps_whole_word_rescue_suppressed_when_bundle_fails() -> None:
+    """Keep blind mode decomposition-only even when the first bundle is weak.
 
-    When decomposition still collapses into non-lexical bundle output, blind
-    mode should be honest about reusing a whole-word attestation instead of
-    pretending the decomposition carried the final wording.
+    The updated blind-mode contract no longer reintroduces whole-word rescue
+    once decomposition has been attempted. If the surviving compositional read
+    is still weak, the word result should report that bug diagnostically rather
+    than sneaking an exact whole-word reading back into the user-facing pool.
     """
 
     placeholder_cluster = ClusterRecord(
@@ -1555,15 +1562,14 @@ def test_translate_word_blind_mode_marks_whole_word_rescue_when_bundle_fails() -
         use_beam_search=True,
     )
 
-    rescue_candidates = [
-        candidate
+    assert not any(
+        candidate.get("blind_mode_whole_word_rescue")
         for candidate in result["candidates"]
-        if candidate.get("blind_mode_whole_word_rescue")
-    ]
-    assert rescue_candidates
-    rescue_trace = rescue_candidates[0]["meanings"][0]["definition_trace"]
-    assert "blind_mode_rescue_note" in rescue_trace
-    assert "whole-word rescue activated" in rescue_trace["blind_mode_rescue_note"]
+    )
+    assert any(
+        "kept whole-word readings suppressed for ZILNA" in note
+        for note in result["diagnostics"]["blind_retranslation"]["suppressed"]
+    )
 
 
 def test_translate_word_whole_word_enabled_still_allows_whole_word_candidates() -> None:
@@ -2670,6 +2676,7 @@ def test_parse_phrase_lay_render_response_rebuilds_missing_footnotes() -> None:
     assert "chosen parse" not in parsed["translation_footnotes"][0]["explanation"].lower()
 
 
+<<<<<<< HEAD
 def test_parse_phrase_lay_render_response_keeps_long_grammatical_sentence() -> None:
     """Preserve coherent lay prose even when it runs longer than twelve words.
 
@@ -2756,6 +2763,15 @@ def test_parse_phrase_lay_render_response_falls_back_to_skeleton_for_glossary_du
     The lay translation should feel like English prose. When the model returns
     a comma-heavy mini-glossary instead, the algorithmic skeleton is a better
     lay fallback than the stripped footnote line.
+=======
+def test_parse_phrase_lay_render_response_compacts_overlong_lay_chunks() -> None:
+    """Fall back to the deterministic skeleton for glossary-like lay dumps.
+
+    The lay renderer should return actual sentence-level prose. When remote
+    output drifts into a comma-heavy mini-glossary, the parser should keep the
+    grounded footnotes but prefer the deterministic skeleton as the visible lay
+    sentence instead of collapsing everything to token salad.
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     """
 
     parse_payload = {
@@ -2893,11 +2909,15 @@ def test_phrase_report_includes_technical_and_lay_translations() -> None:
             "lay_translation": "I rule in the middle of them",
             "lay_confidence": 0.88,
             "lay_reasoning": "Simplified the phrasing for a modern reader.",
+            "interpretive_translation": "I hold the center of their order.",
+            "interpretive_confidence": 0.81,
+            "interpretive_reasoning": "Pushes the line into a more expressive idiom.",
         }
     )
 
     assert "Technical translation: I reign among" in report
     assert "Lay translation: I rule in the middle of them" in report
+    assert "Poetic translation: I hold the center of their order." in report
     assert "Constrained render enabled: False" in report
     assert "Lay translation mode: remote" in report
 
@@ -3346,6 +3366,9 @@ def test_render_phrase_bundle_returns_both_outputs_from_one_model_call(monkeypat
                         "lay_translation": "holy rule endures",
                         "lay_confidence": 0.72,
                         "lay_reasoning": "Compact everyday phrasing.",
+                        "poetic_translation": "the sacred law holds firm",
+                        "poetic_confidence": 0.8,
+                        "poetic_reasoning": "More expressive paraphrase.",
                         "footnoted_translation": "holy [^1] rule [^2] endures [^3]",
                         "translation_footnotes": [
                             {
@@ -3418,6 +3441,8 @@ def test_render_phrase_bundle_returns_both_outputs_from_one_model_call(monkeypat
     assert bundled.technical_translation == "holy rule abides"
     assert bundled.technical_reasoning == "Technical translation kept deterministic from the chosen parse."
     assert bundled.lay_translation == "holy rule endures"
+    assert bundled.poetic_translation == "the sacred law holds firm"
+    assert bundled.interpretive_translation == "the sacred law holds firm"
     assert bundled.footnoted_translation == "holy [^1] rule [^2] endures [^3]"
     assert len(calls) == 2
     assert calls[0]["attached"] is True
@@ -3426,6 +3451,163 @@ def test_render_phrase_bundle_returns_both_outputs_from_one_model_call(monkeypat
     assert init_kwargs[0]["read_timeout_seconds"] == 45.0
     assert init_kwargs[0]["local_fallback_enabled"] is False
     assert init_kwargs[0]["stream_response"] is False
+<<<<<<< HEAD
+=======
+
+
+def test_parse_phrase_bundle_response_allows_poetic_copy_of_technical() -> None:
+    """Allow the poetic line to stay close when the sentence is already coherent.
+
+    The redesigned poetic track is free to diverge, but it is not required to
+    invent a second phrasing when the grounded or technical line already reads
+    well. The parser should therefore preserve a valid poetic line even when it
+    matches the technical sentence exactly.
+    """
+
+    parse_payload = {
+        "phrase": "mad caf prac",
+        "translation_skeleton": "holy rule abides",
+        "token_choices": [
+            {
+                "token": "MAD",
+                "definition": "holy",
+                "raw_definition": "holy",
+                "analysis_type": "dictionary_exact",
+                "role_hint": "modifier",
+                "alternates": [],
+            },
+            {
+                "token": "CAF",
+                "definition": "to rule",
+                "raw_definition": "to rule",
+                "analysis_type": "compositional",
+                "role_hint": "verb",
+                "alternates": [],
+            },
+            {
+                "token": "PRAC",
+                "definition": "to abide",
+                "raw_definition": "to abide",
+                "analysis_type": "compositional",
+                "role_hint": "verb",
+                "alternates": [],
+            },
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+
+    parsed = _parse_phrase_bundle_response(
+        json.dumps(
+            {
+                "lay_translation": "the holy law still stands",
+                "lay_confidence": 0.74,
+                "lay_reasoning": "Keeps a grounded English reading.",
+                "interpretive_translation": "holy rule abides",
+                "interpretive_confidence": 0.71,
+                "interpretive_reasoning": "Copied the technical skeleton.",
+                "footnoted_translation": "holy [^1] law [^2] still stands [^3]",
+                "translation_footnotes": [
+                    {
+                        "index": 1,
+                        "source_token": "MAD",
+                        "rendered_text": "holy",
+                        "explanation": "Sacred quality.",
+                    },
+                    {
+                        "index": 2,
+                        "source_token": "CAF",
+                        "rendered_text": "law",
+                        "explanation": "Grounded governing sense.",
+                    },
+                    {
+                        "index": 3,
+                        "source_token": "PRAC",
+                        "rendered_text": "still stands",
+                        "explanation": "Abiding sense in plain English.",
+                    },
+                ],
+            }
+        ),
+        fallback="holy rule abides",
+        parse_payload=parse_payload,
+    )
+
+    assert parsed["lay_translation"] == "the holy law still stands"
+    assert parsed["poetic_translation"] == "holy rule abides"
+    assert parsed["interpretive_translation"] == "holy rule abides"
+
+
+def test_parse_phrase_bundle_response_replaces_raw_token_placeholders() -> None:
+    """Strip raw `[TOKEN]` placeholders back to grounded glosses.
+
+    Even if the remote renderer misbehaves and echoes source tokens in bracket
+    form, the phrase parser should replace them with the best grounded glosses
+    already present in the parse payload before the CLI prints the line.
+    """
+
+    parse_payload = {
+        "phrase": "vansax naz",
+        "translation_skeleton": "circle of stars and rectangular prism",
+        "token_choices": [
+            {
+                "token": "VANSAX",
+                "definition": "power",
+                "dictionary_rescue_gloss": "circle of stars",
+                "alternates": ["circle of stars"],
+                "analysis_type": "compositional",
+                "role_hint": "noun",
+            },
+            {
+                "token": "NAZ",
+                "definition": "shape",
+                "dictionary_rescue_gloss": "rectangular prism",
+                "alternates": ["rectangular prism"],
+                "analysis_type": "compositional",
+                "role_hint": "noun",
+            },
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+
+    parsed = _parse_phrase_bundle_response(
+        json.dumps(
+            {
+                "lay_translation": "In [VANSAX] and in [NAZ].",
+                "lay_confidence": 0.8,
+                "lay_reasoning": "Remote renderer left raw tokens in place.",
+                "interpretive_translation": "Within [VANSAX] and [NAZ], the image abides.",
+                "interpretive_confidence": 0.77,
+                "interpretive_reasoning": "Remote renderer left raw tokens in place.",
+                "footnoted_translation": "circle of stars [^1] rectangular prism [^2]",
+                "translation_footnotes": [
+                    {
+                        "index": 1,
+                        "source_token": "VANSAX",
+                        "rendered_text": "circle of stars",
+                        "explanation": "Exact dictionary rescue keeps the stellar sense.",
+                    },
+                    {
+                        "index": 2,
+                        "source_token": "NAZ",
+                        "rendered_text": "rectangular prism",
+                        "explanation": "Exact dictionary rescue keeps the geometric sense.",
+                    },
+                ],
+            }
+        ),
+        fallback="circle of stars and rectangular prism",
+        parse_payload=parse_payload,
+    )
+
+    assert "[VANSAX]" not in parsed["lay_translation"]
+    assert "[NAZ]" not in parsed["lay_translation"]
+    assert "circle of stars" in parsed["lay_translation"]
+    assert "rectangular prism" in parsed["lay_translation"]
+    assert "[VANSAX]" not in parsed["interpretive_translation"]
+    assert "[NAZ]" not in parsed["interpretive_translation"]
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
 
 
 def test_translate_phrase_uses_bundle_renderer_once_when_llm_enabled(
@@ -3486,6 +3668,12 @@ def test_translate_phrase_uses_bundle_renderer_once_when_llm_enabled(
             lay_translation="holy rule",
             lay_confidence=0.78,
             lay_reasoning="Compact render.",
+            poetic_translation="the sacred order stands firm",
+            poetic_confidence=0.83,
+            poetic_reasoning="Expressive render.",
+            interpretive_translation="the sacred order stands firm",
+            interpretive_confidence=0.83,
+            interpretive_reasoning="Expressive render.",
             footnoted_translation="holy [^1] rule [^2]",
             translation_footnotes=[
                 {
@@ -3521,7 +3709,33 @@ def test_translate_phrase_uses_bundle_renderer_once_when_llm_enabled(
     assert len(bundle_calls) == 1
     assert result["rendered_translation"] == "holy rule"
     assert result["lay_translation"] == "holy rule"
+    assert result["poetic_translation"] == "the sacred order stands firm"
+    assert result["interpretive_translation"] == "the sacred order stands firm"
     assert result["footnoted_translation"] == "holy [^1] rule [^2]"
+
+
+def test_phrase_bundle_prompt_requests_grounded_and_poetic_renders() -> None:
+    """Spell out the grounded-plus-poetic contract in the bundle prompt."""
+
+    prompt = _build_phrase_bundle_prompt(
+        {
+            "phrase": "mad caf prac",
+            "translation_skeleton": "holy rule abides",
+            "token_choices": [],
+            "relations": [],
+            "score": 1.0,
+        },
+        {},
+    )
+
+    lowered = prompt.lower()
+    assert "poetic_translation" in prompt
+    assert "lay_translation` should not simply copy the technical skeleton" in prompt
+    assert "never emit raw source tokens or bracket placeholders" in lowered
+    assert "do not emit `unresolved term`" in lowered
+    assert "repair awkward fragment chains" in lowered
+    assert "reorder aggressively" in lowered
+    assert "does not need to differ" in lowered
 
 
 def test_translate_word_demotes_residual_placeholder_anchor_below_composition() -> None:
@@ -3716,13 +3930,7 @@ def test_translate_word_demotes_opaque_placeholder_anchor_below_composition() ->
 def test_phrase_translation_hides_placeholder_leftovers_when_no_clean_gloss_exists(
     tmp_path: Path,
 ) -> None:
-    """Preserve opaque placeholder evidence without falling back to `[TOKEN]`.
-
-    Even after ranking demotion, some phrases will still contain tokens whose
-    only surviving evidence is a placeholder residual headline. The phrase layer
-    should preserve the opaque token form as an explicit best-effort fallback
-    while keeping the raw single-word diagnostics intact.
-    """
+    """Treat placeholder-only phrase output as a bug instead of faking a gloss."""
 
     word_service = FakeWordService(
         results_by_word={
@@ -3746,217 +3954,17 @@ def test_phrase_translation_hides_placeholder_leftovers_when_no_clean_gloss_exis
         memory_repository=memory,
     )
 
-    result = service.translate_phrase("nacro", top_k=1, llm=False)
-
-    assert result["rendered_translation"] == "nacro"
-    assert result["lay_translation"] == "nacro"
-    assert result["footnoted_translation"] == "nacro [^1]"
-    assert result["translation_footnotes"][0]["source_token"] == "NACRO"
-    assert result["translation_footnotes"][0]["rendered_text"] == "nacro"
-    assert result["translation_footnotes"][0]["explanation"] == (
-        "Weak or placeholder evidence survived for this token, so the opaque "
-        "token form was preserved as a last-resort best-effort gloss."
-    )
-    assert "Top residuals:" not in result["footnoted_translation"]
-    assert result["token_analyses"][0]["word_result"]["candidates"][0]["meanings"][0]["definition"] == (
-        "Top residuals: nacro:1.00"
-    )
+    with pytest.raises(
+        RuntimeError,
+        match="reached clause rendering without a grounded gloss",
+    ):
+        service.translate_phrase("nacro", top_k=1, llm=False)
 
 
-def test_phrase_translation_uses_substring_hint_when_no_candidate_gloss_survives(
+def test_phrase_translation_raises_for_unresolved_blind_mode_token(
     tmp_path: Path,
 ) -> None:
-    """Lift substring hints into phrase output when fallback memory stays empty.
-
-    The phrase layer sometimes lands on a provisional memory fallback because
-    word analysis produced no phrase-usable candidates. When the single-word
-    result still carries substring hints, the final phrase should surface that
-    weak gloss with an explicit caution instead of echoing a raw placeholder.
-    """
-
-    word_service = FakeWordService(
-        results_by_word={
-            "DODRMNI": _word_result(
-                "DODRMNI",
-                fallback_morphs=[
-                    {
-                        "morph": "RMNI",
-                        "definition": "extension",
-                        "coverage_ratio": 0.571,
-                        "fasttext_similarity": 0.31,
-                        "source": "dictionary_substring",
-                    }
-                ],
-            ),
-        }
-    )
-    memory = TranslationMemoryRepository(tmp_path / "phrase-substring-fallback.sqlite3")
-    memory.record_observation(
-        word="DODRMNI",
-        phrase="seed phrase",
-        role_hint="unknown",
-        glosses=[],
-        confidence=0.1,
-        left_neighbor=None,
-        right_neighbor=None,
-    )
-    service = PhraseTranslationService(
-        word_service=word_service,
-        memory_repository=memory,
-    )
-
-    result = service.translate_phrase("dodrmni", top_k=1, llm=False)
-
-    assert result["rendered_translation"] == "extension"
-    assert result["lay_translation"] == "extension"
-    assert result["footnoted_translation"] == "extension [^1]"
-    assert result["translation_footnotes"][0]["rendered_text"] == "extension"
-    assert result["translation_footnotes"][0]["explanation"] == (
-        "Weak or placeholder evidence survived for this token, so this "
-        "best-effort gloss comes from a surviving substring hint."
-    )
-    chosen = result["chosen_parse"]["token_choices"][0]
-    assert chosen["definition"] is None
-    assert chosen["weak_fallback_gloss"] == "extension"
-    assert chosen["weak_fallback_note"] == (
-        "Weak or placeholder evidence survived for this token, so this "
-        "best-effort gloss comes from a surviving substring hint."
-    )
-    assert result["memory_updates"][0]["best_gloss"] is None
-    assert result["memory_updates"][0]["display_gloss"] == "extension"
-
-
-def test_phrase_translation_uses_supported_decomposition_when_no_gloss_survives(
-    tmp_path: Path,
-) -> None:
-    """Lift supported decomposition pieces into the weak fallback path.
-
-    Some unresolved phrase tokens still have real morph support from the
-    single-word analyzer even though none of the composed candidates survive as
-    phrase-facing glosses. The weak fallback should reuse that decomposition
-    support before collapsing to the opaque token form.
-    """
-
-    word_service = FakeWordService(
-        results_by_word={
-            "DODRMNI": _word_result("DODRMNI"),
-        }
-    )
-    word_service._results_by_word["DODRMNI"]["diagnostics"] = {
-        "substring_support": ["DO", "D", "R", "M", "NI"]
-    }
-    word_service.repository = types.SimpleNamespace(
-        variants=["solo"],
-        fetch_morph_support=lambda morphs, variants=None: (
-            [
-                _cluster_record(
-                    "DO",
-                    "disturbance",
-                    semantic_core=["disturbance"],
-                ),
-                _cluster_record(
-                    "NI",
-                    "presence",
-                    cluster_id=2,
-                    semantic_core=["presence"],
-                ),
-            ],
-            [],
-            [],
-        ),
-    )
-    memory = TranslationMemoryRepository(tmp_path / "phrase-decomposition-fallback.sqlite3")
-    service = PhraseTranslationService(
-        word_service=word_service,
-        memory_repository=memory,
-    )
-
-    result = service.translate_phrase("dodrmni", top_k=1, llm=False)
-
-    assert result["rendered_translation"] == "disturbance"
-    assert result["lay_translation"] == "disturbance"
-    assert result["footnoted_translation"] == "disturbance [^1]"
-    assert result["translation_footnotes"][0]["rendered_text"] == "disturbance"
-    assert result["translation_footnotes"][0]["explanation"] == (
-        "Weak or placeholder evidence survived for this token, so this "
-        "best-effort gloss comes from the supported decomposition "
-        "DO + D + R + M + NI."
-    )
-    chosen = result["chosen_parse"]["token_choices"][0]
-    assert chosen["weak_fallback_gloss"] == "disturbance"
-    assert chosen["weak_fallback_note"] == (
-        "Weak or placeholder evidence survived for this token, so this "
-        "best-effort gloss comes from the supported decomposition "
-        "DO + D + R + M + NI."
-    )
-
-
-def test_phrase_translation_uses_dictionary_rescue_when_no_word_candidates_survive(
-    tmp_path: Path,
-) -> None:
-    """Use the blind-mode exact dictionary rescue in the no-candidate fallback.
-
-    Some tokens never produce a phrase-usable word candidate at all, but blind
-    mode may still have an exact dictionary entry that is honest enough to show
-    as a labeled rescue. The provisional fallback path should surface that
-    rescue instead of dropping straight to weaker decomposition or opaque-token
-    output.
-    """
-
-    word_service = FakeWordService(
-        results_by_word={
-            "DODRMNI": _word_result("DODRMNI"),
-        },
-        dictionary={
-            "dodrmni": {
-                "canonical": "DODRMNI",
-                "definition": "vexed",
-                "senses": [{"definition": "vexed"}],
-                "pos": "adjective",
-            }
-        },
-    )
-    memory = TranslationMemoryRepository(tmp_path / "phrase-dictionary-fallback.sqlite3")
-    service = PhraseTranslationService(
-        word_service=word_service,
-        memory_repository=memory,
-    )
-
-    result = service.translate_phrase(
-        "dodrmni",
-        top_k=1,
-        llm=False,
-        allow_whole_word=False,
-    )
-
-    assert result["rendered_translation"] == "vexed"
-    assert result["lay_translation"] == "vexed"
-    assert result["footnoted_translation"] == "vexed [^1]"
-    assert result["translation_footnotes"][0]["rendered_text"] == "vexed"
-    assert result["translation_footnotes"][0]["explanation"] == (
-        "Blind mode dictionary rescue used the exact dictionary entry because "
-        "decomposition-level evidence stayed unresolved."
-    )
-    chosen = result["chosen_parse"]["token_choices"][0]
-    assert chosen["definition"] is None
-    assert chosen["dictionary_rescue_gloss"] == "vexed"
-    assert chosen["dictionary_rescue_note"] == (
-        "Blind mode dictionary rescue used the exact dictionary entry because "
-        "decomposition-level evidence stayed unresolved."
-    )
-
-
-def test_phrase_translation_uses_exact_dictionary_rescue_for_unresolved_blind_mode_token(
-    tmp_path: Path,
-) -> None:
-    """Use the exact dictionary entry as an explicit render-only blind-mode rescue.
-
-    Phrase translation should stay decomposition-led, but when the chosen token
-    still collapses into a placeholder it is more honest to surface the exact
-    dictionary gloss as a labeled rescue than to pretend no best-effort gloss
-    exists at all. This regression keeps the final phrase text readable while
-    preserving the weak underlying token analysis.
-    """
+    """Raise a blind-mode bug when decomposition still cannot resolve a token."""
 
     word_service = FakeWordService(
         results_by_word={
@@ -4002,29 +4010,387 @@ def test_phrase_translation_uses_exact_dictionary_rescue_for_unresolved_blind_mo
         memory_repository=memory,
     )
 
+    with pytest.raises(
+        RuntimeError,
+        match="could not resolve token TIOBL through decomposition",
+    ):
+        service.translate_phrase(
+            "tiobl",
+            top_k=1,
+            llm=False,
+            allow_whole_word=False,
+        )
+
+
+def test_phrase_translation_uses_stronger_lexical_gloss_for_weak_function_bundle_in_blind_mode(
+    tmp_path: Path,
+) -> None:
+    """Prefer the lexical meaning over a generic bundle-profile shorthand."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "ZIRDO": _word_result(
+                "ZIRDO",
+                _word_candidate(
+                    "I am",
+                    analysis_type="compositional",
+                    score=9.5,
+                    confidence=0.56,
+                    morphs=["ZIR", "DO"],
+                    semantic_core=["being", "existence"],
+                    provenance="cluster",
+                    semantic_bundle=[
+                        {
+                            "morph": "ZIR",
+                            "surface_gloss": None,
+                            "semantic_core_terms": ["being", "existence", "identity"],
+                            "negative_contrast": [],
+                            "provenance": "cluster",
+                            "kind": "function",
+                            "function_profile": "locative",
+                            "head_gloss": "in",
+                            "quality": 0.2,
+                        }
+                    ],
+                    bundle_surface_gloss=None,
+                    bundle_head_gloss="in",
+                    bundle_function_profile="locative",
+                    bundle_coherence_score=0.22,
+                ),
+            ),
+        },
+        dictionary={
+            "zirdo": {
+                "canonical": "ZIRDO",
+                "definition": "I am",
+                "senses": [{"definition": "I am"}],
+                "pos": "verb",
+            }
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-zirdo-rescue.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
     result = service.translate_phrase(
-        "tiobl",
+        "zirdo",
         top_k=1,
         llm=False,
         allow_whole_word=False,
     )
 
-    assert result["rendered_translation"] == "within her"
-    assert result["lay_translation"] == "within her"
-    assert result["footnoted_translation"] == "within her [^1]"
-    assert result["translation_footnotes"][0]["source_token"] == "TIOBL"
-    assert result["translation_footnotes"][0]["rendered_text"] == "within her"
-    assert result["translation_footnotes"][0]["explanation"] == (
-        "Blind mode dictionary rescue used the exact dictionary entry because "
-        "decomposition-level evidence stayed unresolved."
+    assert result["rendered_translation"] == "I am"
+    assert result["lay_translation"] == "I am"
+    assert result["translation_footnotes"][0]["rendered_text"] == "I am"
+    assert result["chosen_parse"]["token_choices"][0]["dictionary_rescue_gloss"] is None
+
+
+def test_phrase_translation_uses_specific_lexical_gloss_when_semantic_core_beats_generic_gloss(
+    tmp_path: Path,
+) -> None:
+    """Prefer a specific lexical gloss over a generic abstraction in blind mode."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "PIRIPSOL": _word_result(
+                "PIRIPSOL",
+                _word_candidate(
+                    "heavens",
+                    analysis_type="compositional",
+                    score=9.4,
+                    confidence=0.58,
+                    morphs=["PIRI", "PSOL"],
+                    semantic_core=["heavens", "celestial tiers", "stratification"],
+                    provenance="cluster",
+                    semantic_bundle=[
+                        {
+                            "morph": "PIRI",
+                            "surface_gloss": "heavens",
+                            "semantic_core_terms": [
+                                "heavens",
+                                "celestial tiers",
+                                "stratification",
+                            ],
+                            "negative_contrast": [],
+                            "provenance": "cluster",
+                            "kind": "content",
+                            "head_gloss": "heavens",
+                            "quality": 0.9,
+                        }
+                    ],
+                    bundle_surface_gloss="heavens",
+                    bundle_head_gloss="heavens",
+                    bundle_function_profile="content",
+                    bundle_coherence_score=0.91,
+                ),
+            ),
+        },
+        dictionary={
+            "piripsol": {
+                "canonical": "PIRIPSOL",
+                "definition": "heavens",
+                "senses": [{"definition": "heavens"}],
+                "pos": "noun",
+            }
+        },
     )
-    chosen = result["chosen_parse"]["token_choices"][0]
-    assert chosen["definition"] is None
-    assert chosen["dictionary_rescue_gloss"] == "within her"
-    assert chosen["dictionary_rescue_note"] == (
-        "Blind mode dictionary rescue used the exact dictionary entry because "
-        "decomposition-level evidence stayed unresolved."
+    memory = TranslationMemoryRepository(tmp_path / "phrase-piripsol-rescue.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
     )
+
+    result = service.translate_phrase(
+        "piripsol",
+        top_k=1,
+        llm=False,
+        allow_whole_word=False,
+    )
+
+    assert result["rendered_translation"] == "heavens"
+    assert result["lay_translation"] == "heavens"
+    assert result["translation_footnotes"][0]["rendered_text"] == "heavens"
+    assert result["chosen_parse"]["token_choices"][0]["dictionary_rescue_gloss"] is None
+
+
+def test_phrase_translation_prefers_definition_when_bundle_head_is_misleading(
+    tmp_path: Path,
+) -> None:
+    """Prefer the candidate's lexical definition over a misleading bundle head."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "VANSAX": _word_result(
+                "VANSAX",
+                _word_candidate(
+                    "the circle of stars",
+                    analysis_type="compositional",
+                    score=9.8,
+                    confidence=0.72,
+                    morphs=["VA", "NS", "AX"],
+                    semantic_core=["circle", "stars", "celestial ring"],
+                    provenance="cluster",
+                    semantic_bundle=[
+                        {
+                            "morph": "VA",
+                            "surface_gloss": None,
+                            "semantic_core_terms": ["circle", "stars", "celestial ring"],
+                            "negative_contrast": ["non-descriptive", "non-ordinary noun"],
+                            "provenance": "cluster",
+                            "kind": "function",
+                            "function_profile": "locative",
+                            "head_gloss": "angel",
+                            "quality": 0.98,
+                        },
+                        {
+                            "morph": "NS",
+                            "surface_gloss": "holy pentagram",
+                            "semantic_core_terms": ["pentagram", "holy symbol", "divine emblem"],
+                            "negative_contrast": [],
+                            "provenance": "cluster",
+                            "kind": "function",
+                            "function_profile": "locative",
+                            "head_gloss": "holy pentagram",
+                            "quality": 1.04,
+                        },
+                        {
+                            "morph": "AX",
+                            "surface_gloss": "surround",
+                            "semantic_core_terms": ["surround", "encircle", "enclose"],
+                            "negative_contrast": [
+                                "non-penetrative",
+                                "non-dispersive",
+                                "non-internal",
+                            ],
+                            "provenance": "cluster",
+                            "kind": "function",
+                            "function_profile": "locative",
+                            "head_gloss": "surround",
+                            "quality": 0.85,
+                        },
+                    ],
+                    bundle_surface_gloss=None,
+                    bundle_head_gloss="angel",
+                    bundle_function_profile="locative",
+                    bundle_coherence_score=1.0,
+                    definition_trace={
+                        "selected_definition": "the circle of stars",
+                        "raw_selected_definition": "the circle of stars",
+                        "selected_source": "cluster",
+                        "selected_quality": 0.98,
+                        "selected_semantic_core": ["circle", "stars", "celestial ring"],
+                        "selected_negative_contrast": [],
+                        "surface_gloss": None,
+                        "surface_gloss_strategy": "cleaned_definition",
+                        "runner_ups": [],
+                        "suppressed": [],
+                        "blind_dictionary_fallback": False,
+                        "negative_contrast_penalties": [],
+                        "meta_linguistic_rejections": [],
+                        "bundle_selection_reason": (
+                            'Ordered bundle normalized 3 morph reading(s) into the '
+                            'function gloss "angel".'
+                        ),
+                    },
+                ),
+            ),
+        },
+        dictionary={
+            "vansax": {
+                "canonical": "VANSAX",
+                "definition": "the circle of stars",
+                "senses": [{"definition": "the circle of stars"}],
+                "pos": "noun",
+            }
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-vansax-rescue.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase(
+        "vansax",
+        top_k=1,
+        llm=False,
+        allow_whole_word=False,
+    )
+
+    assert result["rendered_translation"] == "circle of stars"
+    assert result["lay_translation"] == "circle of stars"
+    assert result["translation_footnotes"][0]["rendered_text"] == "circle of stars"
+    assert result["chosen_parse"]["token_choices"][0]["dictionary_rescue_gloss"] is None
+
+
+def test_phrase_translation_uses_semantic_bundle_fallback_before_unresolved_term(
+    tmp_path: Path,
+) -> None:
+    """Build a weak gloss from surviving bundle evidence before giving up.
+
+    Some blind decompositions do not have an exact dictionary rescue, but they
+    still preserve enough semantic-bundle detail to say something better than
+    `unresolved term`. This keeps the phrase layer grounded in surviving morph
+    evidence even when no single clean head gloss survives.
+    """
+
+    word_service = FakeWordService(
+        results_by_word={
+            "QVX": _word_result(
+                "QVX",
+                _word_candidate(
+                    None,
+                    analysis_type="compositional",
+                    score=7.2,
+                    confidence=0.44,
+                    morphs=["QV", "X"],
+                    meanings=[
+                        {
+                            "morph": "QV",
+                            "canonical": "QV",
+                            "definition": None,
+                            "definitions": [],
+                            "provenance": "cluster",
+                            "anchor_strength": 0.7,
+                            "semantic_core": ["throne"],
+                            "semantic_core_terms": ["throne"],
+                            "negative_contrast": [],
+                            "surface_gloss": None,
+                            "surface_gloss_strategy": "semantic_core",
+                            "definition_trace": {
+                                "selected_definition": None,
+                                "raw_selected_definition": None,
+                                "selected_source": "cluster",
+                                "selected_quality": 0.7,
+                                "selected_semantic_core": ["throne"],
+                                "selected_negative_contrast": [],
+                                "surface_gloss": None,
+                                "surface_gloss_strategy": "semantic_core",
+                                "runner_ups": [],
+                                "suppressed": [],
+                                "blind_dictionary_fallback": False,
+                                "negative_contrast_penalties": [],
+                                "meta_linguistic_rejections": [],
+                            },
+                        },
+                        {
+                            "morph": "X",
+                            "canonical": "X",
+                            "definition": None,
+                            "definitions": [],
+                            "provenance": "cluster",
+                            "anchor_strength": 0.66,
+                            "semantic_core": ["flame"],
+                            "semantic_core_terms": ["flame"],
+                            "negative_contrast": [],
+                            "surface_gloss": None,
+                            "surface_gloss_strategy": "semantic_core",
+                            "definition_trace": {
+                                "selected_definition": None,
+                                "raw_selected_definition": None,
+                                "selected_source": "cluster",
+                                "selected_quality": 0.66,
+                                "selected_semantic_core": ["flame"],
+                                "selected_negative_contrast": [],
+                                "surface_gloss": None,
+                                "surface_gloss_strategy": "semantic_core",
+                                "runner_ups": [],
+                                "suppressed": [],
+                                "blind_dictionary_fallback": False,
+                                "negative_contrast_penalties": [],
+                                "meta_linguistic_rejections": [],
+                            },
+                        },
+                    ],
+                    semantic_bundle=[
+                        {
+                            "morph": "QV",
+                            "surface_gloss": "throne",
+                            "semantic_core_terms": ["throne"],
+                            "negative_contrast": [],
+                            "provenance": "cluster",
+                            "kind": "content",
+                            "head_gloss": "throne",
+                            "quality": 0.7,
+                        },
+                        {
+                            "morph": "X",
+                            "surface_gloss": "flame",
+                            "semantic_core_terms": ["flame"],
+                            "negative_contrast": [],
+                            "provenance": "cluster",
+                            "kind": "content",
+                            "head_gloss": "flame",
+                            "quality": 0.66,
+                        },
+                    ],
+                    bundle_surface_gloss=None,
+                    bundle_head_gloss=None,
+                    bundle_function_profile="content",
+                    bundle_coherence_score=0.31,
+                ),
+            ),
+        },
+        dictionary={},
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-semantic-bundle-fallback.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase(
+        "qvx",
+        top_k=1,
+        llm=False,
+        allow_whole_word=False,
+    )
+
+    assert result["rendered_translation"] == "throne flame"
+    assert result["lay_translation"] == "throne flame"
+    assert result["translation_footnotes"][0]["rendered_text"] == "throne flame"
 
 
 def test_phrase_translation_no_whole_word_inherits_blind_dictionary_suppression(

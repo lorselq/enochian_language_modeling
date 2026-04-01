@@ -32,13 +32,73 @@ from .llm_synthesis import (
 from .memory import TranslationMemoryRepository
 from .placeholder_glosses import (
     clean_lexical_gloss,
-    opaque_token_fallback_gloss,
+    is_meta_linguistic_gloss,
+    normalize_semantic_terms,
     sanitize_human_gloss,
-    semantic_core_gloss,
+    specific_gloss_from_definition_and_semantic_core,
 )
 from .repository import WordEvidence
 from .service import SingleWordTranslationService
 from .strategies import compose_semantic_bundle, extract_definition_candidates
+
+
+_BLIND_DICTIONARY_RESCUE_NOTE = (
+    "Blind mode dictionary rescue used the exact dictionary entry because the "
+    "surviving decomposition gloss stayed too weak for human-facing output."
+)
+
+_FUNCTION_PROFILE_CANONICAL_GLOSSES: dict[str, str] = {
+    "conjunction": "and",
+    "relative": "that",
+    "within_self": "within itself",
+    "locative": "in",
+    "imperative_existential": "let there be",
+    "feminine_locative_possessive": "her",
+}
+
+_GLOSS_ALIGNMENT_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "their",
+    "there",
+    "to",
+    "upon",
+    "with",
+}
+
+_WEAK_PRIMARY_RESCUE_GLOSSES = {
+    "and",
+    "being",
+    "brightness",
+    "entity",
+    "existence",
+    "her",
+    "identity",
+    "in",
+    "light",
+    "position",
+    "power",
+    "source",
+    "state",
+    "that",
+    "thing",
+    "transformation",
+}
 
 
 class PhraseProgressReporter(Protocol):
@@ -256,11 +316,13 @@ class PhraseTranslationService:
                 allow_whole_word=allow_whole_word,
             )
             if not token_candidates:
-                token_candidates = self._fallback_token_candidates(
-                    token,
-                    word_result=word_result,
-                    allow_whole_word=allow_whole_word,
-                )
+                if not allow_whole_word:
+                    diagnostics = word_result.get("diagnostics")
+                    raise RuntimeError(
+                        "Blind phrase translation could not resolve token "
+                        f"{token.upper()} through decomposition. Diagnostics: {diagnostics!r}"
+                    )
+                token_candidates = self._fallback_token_candidates(token)
             candidate_matrix.append(token_candidates)
             token_payloads.append(
                 {
@@ -295,6 +357,12 @@ class PhraseTranslationService:
         lay_translation = rendered_translation
         lay_reasoning = "Lay translation fell back to the algorithmic phrase skeleton."
         lay_confidence = 0.0
+        poetic_translation = ""
+        poetic_reasoning = ""
+        poetic_confidence: float | None = None
+        interpretive_translation = ""
+        interpretive_reasoning = ""
+        interpretive_confidence: float | None = None
         lay_warnings: list[str] = []
         if chosen_parse is not None:
             render_confidence = self._parse_confidence(chosen_parse)
@@ -331,6 +399,12 @@ class PhraseTranslationService:
             lay_translation = bundled.lay_translation or rendered_translation
             lay_reasoning = bundled.lay_reasoning
             lay_confidence = bundled.lay_confidence
+            poetic_translation = bundled.poetic_translation or bundled.interpretive_translation or ""
+            poetic_reasoning = bundled.poetic_reasoning or bundled.interpretive_reasoning
+            poetic_confidence = bundled.poetic_confidence or bundled.interpretive_confidence
+            interpretive_translation = bundled.interpretive_translation or poetic_translation
+            interpretive_reasoning = bundled.interpretive_reasoning or poetic_reasoning
+            interpretive_confidence = bundled.interpretive_confidence or poetic_confidence
             lay_warnings = list(bundled.warnings)
             footnoted_translation = bundled.footnoted_translation or ""
             raw_footnotes = bundled.translation_footnotes
@@ -470,6 +544,12 @@ class PhraseTranslationService:
             "lay_translation": lay_translation,
             "lay_reasoning": lay_reasoning,
             "lay_confidence": lay_confidence,
+            "poetic_translation": poetic_translation,
+            "poetic_reasoning": poetic_reasoning,
+            "poetic_confidence": poetic_confidence,
+            "interpretive_translation": interpretive_translation,
+            "interpretive_reasoning": interpretive_reasoning,
+            "interpretive_confidence": interpretive_confidence,
             "lay_warnings": lay_warnings,
             "footnoted_translation": footnoted_translation,
             "translation_footnotes": translation_footnotes,
@@ -560,7 +640,9 @@ class PhraseTranslationService:
                     bundle.get("bundle_surface_candidates") or []
                 ),
                 "bundle_selection_reason": str(
-                    bundle.get("bundle_selection_reason") or ""
+                    bundle.get("bundle_selection_reason")
+                    or selected_trace.get("bundle_selection_reason")
+                    or ""
                 ).strip(),
             }
             primary_definition = self._candidate_definition(
@@ -588,35 +670,13 @@ class PhraseTranslationService:
             if blind_mode_rescue_note and blind_mode_rescue_note not in warnings:
                 warnings.append(blind_mode_rescue_note)
             dictionary_rescue_gloss = self._dictionary_rescue_gloss(
-                token,
-                allow_whole_word=allow_whole_word,
-                primary_definition=primary_definition,
+                candidate,
             )
-            dictionary_rescue_note = None
-            if dictionary_rescue_gloss is not None:
-                dictionary_rescue_note = (
-                    "Blind mode dictionary rescue used the exact dictionary entry "
-                    "because decomposition-level evidence stayed unresolved."
-                )
-                if dictionary_rescue_note not in warnings:
-                    warnings.append(dictionary_rescue_note)
-                # Keep the parse honest about what actually won while still
-                # preserving the render-only dictionary fallback for reports.
-                selected_trace["dictionary_rescue_gloss"] = dictionary_rescue_gloss
-                selected_trace["dictionary_rescue_note"] = dictionary_rescue_note
-                selected_trace["blind_mode_rescue_note"] = dictionary_rescue_note
-            weak_fallback_gloss, weak_fallback_note = self._weak_fallback_from_word_result(
-                token,
-                result=result,
-                candidate=candidate,
-                selected_trace=selected_trace,
-                bundle=bundle,
-                primary_definition=primary_definition,
-            )
-            if weak_fallback_gloss is not None:
-                selected_trace["weak_fallback_gloss"] = weak_fallback_gloss
-            if weak_fallback_note is not None:
-                selected_trace["weak_fallback_note"] = weak_fallback_note
+            dictionary_rescue_note = str(
+                candidate.get("dictionary_rescue_note")
+                or selected_trace.get("dictionary_rescue_note")
+                or ""
+            ).strip() or None
             role_hint = self._infer_role_hint(
                 token,
                 candidate,
@@ -624,104 +684,237 @@ class PhraseTranslationService:
                 bundle=bundle,
                 meanings=meaning_list,
             )
-            converted.append(
-                PhraseTokenCandidate(
-                    token=token,
-                    rank=int(candidate.get("rank") or 0),
-                    analysis_type=str(candidate.get("analysis_type") or "compositional"),
-                    definition=primary_definition,
-                    raw_definition=raw_definition,
-                    alternates=alternates,
-                    confidence=float(candidate.get("confidence") or 0.0),
-                    score=float(candidate.get("score") or 0.0),
-                    role_hint=role_hint,
-                    selected_source=self._candidate_selected_source(meaning_list),
-                    definition_trace=selected_trace,
-                    morphs=[
-                        str(morph)
-                        for morph in candidate.get("morphs", [])
-                        if isinstance(morph, str)
-                    ],
-                    warnings=warnings,
-                    semantic_bundle=list(bundle.get("semantic_bundle") or []),
-                    bundle_surface_gloss=(
-                        str(bundle.get("bundle_surface_gloss") or "").strip() or None
-                    ),
-                    bundle_head_gloss=(
-                        str(bundle.get("bundle_head_gloss") or "").strip() or None
-                    ),
-                    bundle_function_profile=str(
-                        bundle.get("bundle_function_profile") or "unknown"
-                    ),
-                    bundle_coherence_score=float(
-                        bundle.get("bundle_coherence_score") or 0.0
-                    ),
-                    blind_mode_whole_word_rescue=bool(
-                        candidate.get("blind_mode_whole_word_rescue")
-                    ),
-                    blind_mode_rescue_note=blind_mode_rescue_note,
-                    dictionary_rescue_gloss=dictionary_rescue_gloss,
-                    dictionary_rescue_note=dictionary_rescue_note,
-                    weak_fallback_gloss=weak_fallback_gloss,
-                    weak_fallback_note=weak_fallback_note,
-                )
+            phrase_candidate = PhraseTokenCandidate(
+                token=token,
+                rank=int(candidate.get("rank") or 0),
+                analysis_type=str(candidate.get("analysis_type") or "compositional"),
+                definition=primary_definition,
+                raw_definition=raw_definition,
+                alternates=alternates,
+                confidence=float(candidate.get("confidence") or 0.0),
+                score=float(candidate.get("score") or 0.0),
+                role_hint=role_hint,
+                selected_source=self._candidate_selected_source(meaning_list),
+                definition_trace=selected_trace,
+                morphs=[
+                    str(morph)
+                    for morph in candidate.get("morphs", [])
+                    if isinstance(morph, str)
+                ],
+                warnings=warnings,
+                semantic_bundle=list(bundle.get("semantic_bundle") or []),
+                bundle_surface_gloss=(
+                    str(bundle.get("bundle_surface_gloss") or "").strip() or None
+                ),
+                bundle_head_gloss=(
+                    str(bundle.get("bundle_head_gloss") or "").strip() or None
+                ),
+                bundle_function_profile=str(
+                    bundle.get("bundle_function_profile") or "unknown"
+                ),
+                bundle_coherence_score=float(
+                    bundle.get("bundle_coherence_score") or 0.0
+                ),
+                blind_mode_whole_word_rescue=bool(
+                    candidate.get("blind_mode_whole_word_rescue")
+                ),
+                blind_mode_rescue_note=blind_mode_rescue_note,
+                dictionary_rescue_gloss=dictionary_rescue_gloss,
+                dictionary_rescue_note=dictionary_rescue_note,
             )
+            if (
+                not allow_whole_word
+                and phrase_candidate.blind_mode_whole_word_rescue
+            ):
+                continue
+            if (
+                not allow_whole_word
+                and self._human_facing_candidate_gloss(phrase_candidate) is None
+            ):
+                continue
+            converted.append(phrase_candidate)
         return converted
 
     def _dictionary_rescue_gloss(
         self,
-        token: str,
-        *,
-        allow_whole_word: bool,
-        primary_definition: str | None,
+        candidate: Mapping[str, object],
     ) -> str | None:
-        """Recover an exact dictionary gloss for render-only blind-mode rescue.
+        """Preserve any already-selected diagnostic rescue gloss without recomputing it."""
 
-        Blind retranslation intentionally keeps whole-word dictionary entries
-        out of candidate selection, but phrase rendering still needs an honest
-        best-effort gloss when the winning decomposition collapses into an
-        unreadable placeholder. This helper recovers the exact dictionary entry
-        without changing parse scores so reports can say, "here is the best
-        dictionary guess, and it is only a rescue."
+        raw_rescue = candidate.get("dictionary_rescue_gloss")
+        if not isinstance(raw_rescue, str) or not raw_rescue.strip():
+            return None
+        normalized = self._normalize_dictionary_rescue_gloss(raw_rescue.strip())
+        return normalized or None
+
+    @classmethod
+    def _should_use_dictionary_rescue(
+        cls,
+        *,
+        token: str,
+        primary_definition: str | None,
+        rescue_gloss: str,
+        bundle: Mapping[str, object],
+        selected_trace: Mapping[str, object],
+    ) -> bool:
+        """Decide when an exact dictionary gloss beats a weak compositional gloss.
+
+        The rescue path should stay conservative: if the surviving gloss is
+        already strong, we leave it alone. We only promote the exact dictionary
+        entry when the current gloss is missing, just a normalized function
+        label like ``in``, or obviously aligns worse with the selected semantic
+        core than the exact dictionary reading does.
         """
 
-        if allow_whole_word or primary_definition is not None:
-            return None
-        dictionary = getattr(self.word_service.candidate_finder, "dictionary", {})
-        if not isinstance(dictionary, Mapping):
-            return None
-        entry = dictionary.get(token.lower())
-        if not isinstance(entry, Mapping):
-            return None
+        cleaned_primary = cls._human_facing_definition(primary_definition, token=token)
+        if cleaned_primary is None:
+            return True
 
-        rescue_candidates: list[str] = []
-        for key in ("enhanced_definition", "definition"):
-            value = entry.get(key)
-            if isinstance(value, str) and value.strip():
-                rescue_candidates.append(value.strip())
-        senses = entry.get("senses")
-        if isinstance(senses, Sequence) and not isinstance(senses, (str, bytes)):
-            for sense in senses:
-                if not isinstance(sense, Mapping):
+        normalized_primary = cleaned_primary.strip().lower()
+        normalized_rescue = rescue_gloss.strip().lower()
+        if not normalized_rescue or normalized_primary == normalized_rescue:
+            return False
+
+        bundle_profile = str(bundle.get("bundle_function_profile") or "").strip()
+        canonical_gloss = _FUNCTION_PROFILE_CANONICAL_GLOSSES.get(bundle_profile)
+        if canonical_gloss and normalized_primary == canonical_gloss:
+            return normalized_rescue != canonical_gloss
+
+        primary_content_tokens = cls._meaningful_gloss_token_count(cleaned_primary)
+        rescue_content_tokens = cls._meaningful_gloss_token_count(rescue_gloss)
+        bundle_selection_reason = str(
+            selected_trace.get("bundle_selection_reason") or ""
+        ).strip().lower()
+        semantic_bundle = bundle.get("semantic_bundle")
+        semantic_bundle_count = (
+            len(semantic_bundle)
+            if isinstance(semantic_bundle, Sequence)
+            and not isinstance(semantic_bundle, (str, bytes))
+            else 0
+        )
+        if "function gloss" in bundle_selection_reason:
+            if rescue_content_tokens > primary_content_tokens:
+                return True
+            if (
+                semantic_bundle_count > 1
+                and len(rescue_gloss.split()) > len(cleaned_primary.split())
+            ):
+                return True
+
+        if normalized_primary in _WEAK_PRIMARY_RESCUE_GLOSSES:
+            if rescue_content_tokens >= primary_content_tokens:
+                return True
+            if len(rescue_gloss.split()) > len(cleaned_primary.split()):
+                return True
+
+        semantic_terms = normalize_semantic_terms(
+            selected_trace.get("selected_semantic_core")
+        )
+        if semantic_terms:
+            primary_score = cls._semantic_alignment_score(cleaned_primary, semantic_terms)
+            rescue_score = cls._semantic_alignment_score(rescue_gloss, semantic_terms)
+            if rescue_score > primary_score + 0.15:
+                return True
+            if (
+                rescue_score + 0.05 >= primary_score
+                and len(rescue_gloss.split()) > len(cleaned_primary.split())
+            ):
+                return True
+
+        return float(bundle.get("bundle_coherence_score") or 0.0) < 0.35
+
+    @staticmethod
+    def _meaningful_gloss_token_count(text: str) -> int:
+        """Count content-bearing gloss tokens after discarding stopword filler.
+
+        Render-only dictionary rescue should promote exact word entries when the
+        surviving decomposition has collapsed into a tiny function-like label.
+        Comparing only content-bearing tokens gives the phrase layer a cheap
+        way to notice that `circle of stars` carries more lexical substance
+        than `angel` or `in`, even if the raw word counts are noisy.
+        """
+
+        return len(PhraseTranslationService._gloss_alignment_tokens(text))
+
+    @staticmethod
+    def _semantic_alignment_score(gloss: str, semantic_terms: Sequence[str]) -> float:
+        """Estimate whether a gloss points at the same idea as the semantic core."""
+
+        gloss_tokens = PhraseTranslationService._gloss_alignment_tokens(gloss)
+        if not gloss_tokens:
+            return 0.0
+        semantic_tokens: set[str] = set()
+        for term in semantic_terms:
+            semantic_tokens.update(PhraseTranslationService._gloss_alignment_tokens(term))
+        if not semantic_tokens:
+            return 0.0
+        overlap = gloss_tokens & semantic_tokens
+        if not overlap:
+            return 0.0
+        return len(overlap) / float(len(gloss_tokens | semantic_tokens))
+
+    @classmethod
+    def _weak_compositional_gloss(cls, candidate: Mapping[str, object]) -> str | None:
+        """Build a best-effort gloss from concatenated morph meanings.
+
+        Some blind-mode candidates still carry readable submorph meanings even
+        when no single clean head gloss survives. This helper turns the word
+        layer's surviving semantic bundle into a compact weak fallback so
+        phrase output can say something grounded before giving up entirely.
+        """
+
+        cleaned_parts: list[str] = []
+        seen: set[str] = set()
+
+        def add_piece(raw_piece: object) -> None:
+            if not isinstance(raw_piece, str) or not raw_piece.strip():
+                return
+            cleaned = cls._human_facing_definition(raw_piece.strip())
+            if cleaned is None:
+                return
+            lowered = cleaned.lower()
+            if lowered in seen:
+                return
+            seen.add(lowered)
+            cleaned_parts.append(cleaned)
+
+        semantic_bundle = candidate.get("semantic_bundle")
+        if isinstance(semantic_bundle, Sequence) and not isinstance(
+            semantic_bundle,
+            (str, bytes),
+        ):
+            for entry in semantic_bundle:
+                if not isinstance(entry, Mapping):
                     continue
-                definition = sense.get("definition")
-                if isinstance(definition, str) and definition.strip():
-                    rescue_candidates.append(definition.strip())
+                add_piece(entry.get("head_gloss") or entry.get("surface_gloss"))
 
-        for raw_candidate in rescue_candidates:
-            cleaned = clean_lexical_gloss(raw_candidate, token=token)
-            if cleaned is not None:
-                normalized = self._normalize_dictionary_rescue_gloss(cleaned)
-                if normalized:
-                    return normalized
-        for raw_candidate in rescue_candidates:
-            sanitized = sanitize_human_gloss(raw_candidate, token=token)
-            if sanitized is None:
-                continue
-            normalized = self._normalize_dictionary_rescue_gloss(sanitized)
-            if normalized:
-                return normalized
-        return None
+        meanings = candidate.get("meanings")
+        if isinstance(meanings, Sequence) and not isinstance(meanings, (str, bytes)):
+            for meaning in meanings:
+                if not isinstance(meaning, Mapping):
+                    continue
+                add_piece(meaning.get("surface_gloss") or meaning.get("definition"))
+
+        raw_concatenation = candidate.get("concatenated_meanings")
+        if isinstance(raw_concatenation, str) and raw_concatenation.strip():
+            for piece in raw_concatenation.split("+"):
+                add_piece(piece.strip())
+
+        if not cleaned_parts:
+            return None
+        if len(cleaned_parts) == 1:
+            return cleaned_parts[0]
+        return " ".join(cleaned_parts[:3]).strip()
+
+    @staticmethod
+    def _gloss_alignment_tokens(text: str) -> set[str]:
+        """Tokenize a gloss for lightweight lexical alignment checks."""
+
+        return {
+            token.lower()
+            for token in re.findall(r"[a-zA-Z][a-zA-Z'-]*", text)
+            if token.lower() not in _GLOSS_ALIGNMENT_STOPWORDS
+        }
 
     @staticmethod
     def _normalize_dictionary_rescue_gloss(gloss: str) -> str:
@@ -737,283 +930,20 @@ class PhraseTranslationService:
         normalized = re.sub(r"\(([^()]*)\)", r"\1", gloss)
         return " ".join(normalized.split()).strip(" ,;-")
 
-    @classmethod
-    def _weak_human_facing_gloss(
-        cls,
-        value: object,
-        *,
-        token: str,
-    ) -> str | None:
-        """Recover a cautious gloss from weak evidence without changing the parse.
+    @staticmethod
+    def _human_facing_unresolved_gloss() -> str:
+        """Return the phrase-safe fallback when no grounded gloss survives.
 
-        Phrase rendering should do a final cleanup pass over low-confidence
-        semantic hints so human-facing output can stay readable even when the
-        winning candidate never produced a strong lexical gloss.
+        The final translation already carries source-token visibility in the
+        parse report and footnotes. Surfacing bracketed raw tokens in the
+        English line itself makes the sentence look broken, so the phrase layer
+        uses one explicit generic label instead.
         """
 
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            semantic_gloss = semantic_core_gloss(value)
-            if semantic_gloss is not None:
-                return semantic_gloss
-        cleaned = clean_lexical_gloss(value, token=token)
-        if cleaned is not None:
-            return cleaned
-        sanitized = sanitize_human_gloss(value, token=token)
-        if sanitized is None:
-            return None
-        return " ".join(sanitized.split()).strip()
+        return "unresolved term"
 
-    def _supported_piece_sequence(
-        self,
-        token: str,
-        *,
-        result: Mapping[str, object] | None,
-    ) -> list[str]:
-        """Recover a left-to-right supported piece walk through ``token``.
-
-        When no winning word-level candidate survives, the phrase layer still
-        has access to substring support discovered during single-word analysis.
-        This helper turns those supported substrings back into a concrete,
-        position-aware sequence so weak fallback rendering can stay grounded in
-        actual decomposition evidence instead of generic token preservation.
-        """
-
-        diagnostics = (result or {}).get("diagnostics")
-        if not isinstance(diagnostics, Mapping):
-            return []
-        raw_support = diagnostics.get("substring_support")
-        if not isinstance(raw_support, Sequence) or isinstance(raw_support, (str, bytes)):
-            return []
-
-        normalized_token = (token or "").strip().upper()
-        support = {
-            str(piece).strip().upper()
-            for piece in raw_support
-            if isinstance(piece, str) and str(piece).strip()
-        }
-        if not normalized_token or not support:
-            return []
-
-        sequence: list[str] = []
-        index = 0
-        while index < len(normalized_token):
-            matches = [
-                piece
-                for piece in support
-                if normalized_token.startswith(piece, index)
-            ]
-            if not matches:
-                index += 1
-                continue
-            piece = sorted(matches, key=lambda value: (len(value), value), reverse=True)[0]
-            sequence.append(piece)
-            index += len(piece)
-        return sequence
-
-    def _weak_decomposition_fallback(
-        self,
-        token: str,
-        *,
-        result: Mapping[str, object] | None,
-    ) -> tuple[str | None, str | None]:
-        """Mine weak glosses from supported decomposition pieces.
-
-        Some blind-mode failures still have real morph support under the hood,
-        but none of the composed candidates survive as phrase-usable glosses.
-        This helper reuses the single-word substring support to recover the
-        strongest supported piece gloss and explicitly labels it as
-        decomposition-derived best effort.
-        """
-
-        piece_sequence = self._supported_piece_sequence(token, result=result)
-        if not piece_sequence:
-            return None, None
-
-        repository = getattr(self.word_service, "repository", None)
-        fetch_support = getattr(repository, "fetch_morph_support", None)
-        if not callable(fetch_support):
-            return None, None
-
-        variants = (
-            list(result.get("variants_queried", []))
-            if isinstance(result, Mapping)
-            else []
-        ) or list(getattr(repository, "variants", []))
-        support_clusters, support_residuals, support_hypotheses = fetch_support(
-            piece_sequence,
-            variants=variants,
-        )
-        evidence = WordEvidence(
-            word=(token or "").strip().upper(),
-            variants_queried=list(variants),
-            direct_clusters=support_clusters,
-            residual_semantics=support_residuals,
-            morph_hypotheses=support_hypotheses,
-        )
-        definition_candidates = extract_definition_candidates(
-            piece_sequence,
-            evidence,
-            max_per_morph=1,
-            allow_dictionary=False,
-        )
-
-        ranked_piece_glosses: list[tuple[int, float, str, str]] = []
-        for piece in piece_sequence:
-            candidates = definition_candidates.get(piece, [])
-            if not candidates:
-                continue
-            candidate = candidates[0]
-            gloss = self._weak_human_facing_gloss(candidate.get("definition"), token=piece)
-            if gloss is None:
-                continue
-            quality = float(candidate.get("quality") or 0.0)
-            ranked_piece_glosses.append((len(piece), quality, piece, gloss))
-
-        if not ranked_piece_glosses:
-            return None, None
-
-        ranked_piece_glosses.sort(
-            key=lambda item: (item[0] > 1, item[1], item[0]),
-            reverse=True,
-        )
-        _piece_len, _quality, _piece, gloss = ranked_piece_glosses[0]
-        return (
-            gloss,
-            "Weak or placeholder evidence survived for this token, so this "
-            "best-effort gloss comes from the supported decomposition "
-            + " + ".join(piece_sequence[:6])
-            + ".",
-        )
-
-    def _weak_fallback_from_word_result(
-        self,
-        token: str,
-        *,
-        result: Mapping[str, object] | None,
-        candidate: Mapping[str, object] | None,
-        selected_trace: Mapping[str, object] | None,
-        bundle: Mapping[str, object] | None,
-        primary_definition: str | None,
-    ) -> tuple[str | None, str | None]:
-        """Carry the best surviving weak gloss into phrase-facing reports.
-
-        The translation stack still needs an honest best-effort chunk when the
-        selected candidate has only placeholder-strength evidence. This helper
-        searches semantic hints, runner-ups, and substring fallbacks before
-        finally preserving the opaque token form as an explicit last resort.
-        """
-
-        if isinstance(primary_definition, str) and primary_definition.strip():
-            return None, None
-
-        trace = dict(selected_trace or {})
-        semantic_candidates: list[object] = [trace.get("selected_semantic_core")]
-        bundle_semantic_cores = trace.get("bundle_semantic_cores")
-        if isinstance(bundle_semantic_cores, Sequence) and not isinstance(
-            bundle_semantic_cores, (str, bytes)
-        ):
-            semantic_candidates.extend(bundle_semantic_cores)
-        for semantic_candidate in semantic_candidates:
-            gloss = self._weak_human_facing_gloss(semantic_candidate, token=token)
-            if gloss is not None:
-                return (
-                    gloss,
-                    "Weak or placeholder evidence survived for this token, so this "
-                    "best-effort gloss comes from surviving semantic hints.",
-                )
-
-        runner_ups = trace.get("runner_ups")
-        if isinstance(runner_ups, Sequence) and not isinstance(runner_ups, (str, bytes)):
-            for runner_up in runner_ups:
-                if not isinstance(runner_up, Mapping):
-                    continue
-                for runner_up_value in (
-                    runner_up.get("semantic_core"),
-                    runner_up.get("definition"),
-                    runner_up.get("raw_definition"),
-                ):
-                    gloss = self._weak_human_facing_gloss(runner_up_value, token=token)
-                    if gloss is not None:
-                        return (
-                            gloss,
-                            "Weak or placeholder evidence survived for this token, so this "
-                            "best-effort gloss comes from a low-confidence alternate.",
-                        )
-
-        bundle_surface_candidates = (bundle or {}).get("bundle_surface_candidates")
-        if isinstance(bundle_surface_candidates, Sequence) and not isinstance(
-            bundle_surface_candidates, (str, bytes)
-        ):
-            for bundle_surface_candidate in bundle_surface_candidates:
-                gloss = self._weak_human_facing_gloss(bundle_surface_candidate, token=token)
-                if gloss is not None:
-                    return (
-                        gloss,
-                        "Weak or placeholder evidence survived for this token, so this "
-                        "best-effort gloss comes from a surviving bundle hint.",
-                    )
-
-        decomposition_gloss, decomposition_note = self._weak_decomposition_fallback(
-            token,
-            result=result,
-        )
-        if decomposition_gloss is not None and decomposition_note:
-            return decomposition_gloss, decomposition_note
-
-        fallback_morphs = (result or {}).get("fallback_morphs")
-        if isinstance(fallback_morphs, Sequence) and not isinstance(
-            fallback_morphs, (str, bytes)
-        ):
-            for hint in fallback_morphs:
-                if not isinstance(hint, Mapping):
-                    continue
-                gloss = self._weak_human_facing_gloss(hint.get("definition"), token=token)
-                if gloss is not None:
-                    return (
-                        gloss,
-                        "Weak or placeholder evidence survived for this token, so this "
-                        "best-effort gloss comes from a surviving substring hint.",
-                    )
-
-        return (
-            opaque_token_fallback_gloss(token),
-            "Weak or placeholder evidence survived for this token, so the opaque "
-            "token form was preserved as a last-resort best-effort gloss.",
-        )
-
-    def _fallback_token_candidates(
-        self,
-        token: str,
-        *,
-        word_result: Mapping[str, object] | None = None,
-        allow_whole_word: bool = True,
-    ) -> list[PhraseTokenCandidate]:
-        """Provide an opaque fallback when no algorithmic word analysis exists.
-
-        Phrase parsing cannot stop just because single-word analysis returned
-        no surviving candidates. This fallback keeps the token present in the
-        parse while threading through the weakest available gloss hint.
-        """
-
-        weak_fallback_gloss, weak_fallback_note = self._weak_fallback_from_word_result(
-            token,
-            result=word_result,
-            candidate=None,
-            selected_trace=None,
-            bundle=None,
-            primary_definition=None,
-        )
-        dictionary_rescue_gloss = self._dictionary_rescue_gloss(
-            token,
-            allow_whole_word=allow_whole_word,
-            primary_definition=None,
-        )
-        dictionary_rescue_note = None
-        if dictionary_rescue_gloss is not None:
-            dictionary_rescue_note = (
-                "Blind mode dictionary rescue used the exact dictionary entry "
-                "because decomposition-level evidence stayed unresolved."
-            )
+    def _fallback_token_candidates(self, token: str) -> list[PhraseTokenCandidate]:
+        """Provide an opaque fallback when no algorithmic word analysis exists."""
         memory_entry = self.memory_repository.fetch_entry(token)
         if memory_entry is not None:
             warnings = ["Recovered from translation memory."]
@@ -1329,6 +1259,37 @@ class PhraseTranslationService:
         meanings: Sequence[object],
         bundle: Mapping[str, object],
     ) -> str | None:
+        for meaning in meanings:
+            if not isinstance(meaning, dict):
+                continue
+            semantic_core = meaning.get("semantic_core") or meaning.get(
+                "semantic_core_terms"
+            )
+            negative_contrast = meaning.get("negative_contrast")
+            surface_gloss = meaning.get("surface_gloss")
+            if isinstance(surface_gloss, str) and surface_gloss.strip():
+                specific = specific_gloss_from_definition_and_semantic_core(
+                    semantic_core=semantic_core,
+                    definition=surface_gloss,
+                    negative_contrast=negative_contrast,
+                )
+                cleaned = PhraseTranslationService._human_facing_definition(
+                    specific or surface_gloss
+                )
+                if cleaned is not None:
+                    return cleaned
+            definition = meaning.get("definition")
+            if isinstance(definition, str) and definition.strip():
+                specific = specific_gloss_from_definition_and_semantic_core(
+                    semantic_core=semantic_core,
+                    definition=definition,
+                    negative_contrast=negative_contrast,
+                )
+                cleaned = PhraseTranslationService._human_facing_definition(
+                    specific or definition
+                )
+                if cleaned is not None:
+                    return cleaned
         bundle_surface = bundle.get("bundle_surface_gloss")
         if isinstance(bundle_surface, str) and bundle_surface.strip():
             cleaned_bundle_surface = PhraseTranslationService._human_facing_definition(
@@ -1343,19 +1304,9 @@ class PhraseTranslationService:
             )
             if cleaned_bundle_head is not None:
                 return cleaned_bundle_head
-        for meaning in meanings:
-            if not isinstance(meaning, dict):
-                continue
-            surface_gloss = meaning.get("surface_gloss")
-            if isinstance(surface_gloss, str) and surface_gloss.strip():
-                cleaned = PhraseTranslationService._human_facing_definition(surface_gloss)
-                if cleaned is not None:
-                    return cleaned
-            definition = meaning.get("definition")
-            if isinstance(definition, str) and definition.strip():
-                cleaned = PhraseTranslationService._human_facing_definition(definition)
-                if cleaned is not None:
-                    return cleaned
+        weak_concatenation = PhraseTranslationService._weak_compositional_gloss(candidate)
+        if weak_concatenation is not None:
+            return weak_concatenation
         return None
 
     @staticmethod
@@ -1442,8 +1393,66 @@ class PhraseTranslationService:
         as translations. Centralizing that cleanup here keeps the chosen parse
         explicit when evidence is weak instead of echoing diagnostic strings.
         """
+        cleaned = sanitize_human_gloss(definition, token=token)
+        if cleaned is None:
+            return None
+        if PhraseTranslationService._is_phrase_meta_gloss(cleaned):
+            return None
+        return cleaned
 
-        return sanitize_human_gloss(definition, token=token)
+    @staticmethod
+    def _is_phrase_meta_gloss(definition: str) -> bool:
+        """Filter lexicographic/meta senses out of phrase-facing token output.
+
+        Phrase translation needs meanings that can participate in a sentence.
+        Definitions like "the Enochian word for the digits 24" may be useful
+        dictionary diagnostics, but they should not outrank lexical senses in
+        normal phrase rendering.
+        """
+
+        lowered = " ".join(definition.lower().split())
+        if is_meta_linguistic_gloss(lowered):
+            return True
+        numeric_markers = (
+            "enochian word for",
+            "digits ",
+            "number ",
+            "numeral ",
+            "letter ",
+        )
+        return any(marker in lowered for marker in numeric_markers)
+
+    @staticmethod
+    def _human_facing_candidate_gloss(candidate: PhraseTokenCandidate) -> str | None:
+        """Return the best phrase-safe gloss already carried by a token candidate."""
+
+        for value in (
+            candidate.definition,
+            candidate.bundle_surface_gloss,
+            candidate.bundle_head_gloss,
+            *candidate.alternates,
+        ):
+            cleaned = PhraseTranslationService._human_facing_definition(value)
+            if cleaned is not None:
+                return cleaned
+        for entry in candidate.semantic_bundle:
+            if not isinstance(entry, Mapping):
+                continue
+            semantic_gloss = specific_gloss_from_definition_and_semantic_core(
+                semantic_core=entry.get("semantic_core_terms"),
+                definition=entry.get("surface_gloss") or entry.get("head_gloss"),
+                negative_contrast=entry.get("negative_contrast"),
+            )
+            cleaned = PhraseTranslationService._human_facing_definition(
+                semantic_gloss
+                or (
+                    str(entry.get("surface_gloss") or entry.get("head_gloss") or "").strip()
+                    or None
+                )
+            )
+            if cleaned is not None:
+                return cleaned
+        return None
 
     def _annotate_chosen_parse_traces(
         self,
@@ -1741,12 +1750,24 @@ class PhraseTranslationService:
         """
 
         profile = candidate.bundle_function_profile
+        human_facing = PhraseTranslationService._human_facing_candidate_gloss(candidate)
+        canonical_function_gloss = _FUNCTION_PROFILE_CANONICAL_GLOSSES.get(profile)
         if profile == "conjunction":
             return "and"
         if profile == "relative":
             return "that"
         if profile == "within_self":
             return "within itself"
+        if (
+            human_facing is not None
+            and canonical_function_gloss is not None
+            and not PhraseTranslationService._should_collapse_to_function_gloss(
+                profile=profile,
+                human_facing=human_facing,
+                canonical_gloss=canonical_function_gloss,
+            )
+        ):
+            return human_facing
         if profile == "locative":
             return "in"
         if profile == "imperative_existential":
@@ -1770,17 +1791,45 @@ class PhraseTranslationService:
         )
         if isinstance(preferred, str) and preferred.strip():
             return preferred.strip()
-        if (
-            isinstance(candidate.dictionary_rescue_gloss, str)
-            and candidate.dictionary_rescue_gloss.strip()
-        ):
-            return candidate.dictionary_rescue_gloss.strip()
-        if (
-            isinstance(candidate.weak_fallback_gloss, str)
-            and candidate.weak_fallback_gloss.strip()
-        ):
-            return candidate.weak_fallback_gloss.strip()
-        return opaque_token_fallback_gloss(token)
+        if human_facing is not None:
+            return human_facing
+        raise RuntimeError(
+            f"Phrase token {token.upper()} reached clause rendering without a grounded gloss."
+        )
+
+    @staticmethod
+    def _should_collapse_to_function_gloss(
+        *,
+        profile: str,
+        human_facing: str,
+        canonical_gloss: str,
+    ) -> bool:
+        """Prefer compact function words when the lexical gloss is still scaffolding.
+
+        Phrase rendering wants lexical meanings like `I am` to beat generic
+        function-profile shorthand such as `in`, but it should still collapse
+        verbose scaffolding like `additive conjunction that links` back to
+        compact English function words.
+        """
+
+        normalized = " ".join(human_facing.strip().lower().split())
+        if not normalized:
+            return True
+        if normalized == canonical_gloss:
+            return True
+        if is_meta_linguistic_gloss(normalized):
+            return True
+        if normalized in _WEAK_PRIMARY_RESCUE_GLOSSES:
+            return True
+        if profile == "conjunction":
+            return "conjunction" in normalized or normalized.startswith("and ")
+        if profile == "relative":
+            return normalized in {"relation", "subordination", "reference"}
+        if profile == "locative":
+            return normalized in {"place", "position", "location", "state", "being", "existence"}
+        if profile == "feminine_locative_possessive":
+            return normalized in {"her", "possession", "locative relation"}
+        return False
 
     @staticmethod
     def _parse_confidence(parse: PhraseParseCandidate) -> float:

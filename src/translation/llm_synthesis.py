@@ -23,12 +23,18 @@ from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 from .placeholder_glosses import (
     clean_lexical_gloss,
     specific_gloss_from_definition_and_semantic_core,
+<<<<<<< HEAD
     opaque_token_fallback_gloss,
+=======
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     sanitize_human_gloss,
     semantic_core_gloss,
 )
 
 LOGGER = logging.getLogger(__name__)
+
+_RAW_TOKEN_PLACEHOLDER_RE = re.compile(r"\[([A-Z][A-Z' ?-]*)\]")
+_HUMAN_UNRESOLVED_GLOSS = "unresolved term"
 
 DEFAULT_LLM_CONTEXT = (
     "Use Early Modern English prose from 16th-century Britain, grounded in the "
@@ -178,10 +184,11 @@ class PhraseRenderResult:
 class PhraseRenderBundleResult:
     """Carry the full phrase-render package returned from one bundled LLM call.
 
-    Phrase translation now wants a technical rendering, a lay rendering, and a
-    token-aligned footnote block. Returning all of that from one structured
-    result lets the phrase service reduce remote round-trips while keeping the
-    downstream CLI payload explicit.
+    Phrase translation now wants a technical rendering, a grounded lay
+    rendering, a more interpretive paraphrase, and a token-aligned footnote
+    block. Returning all of that from one structured result lets the phrase
+    service reduce remote round-trips while keeping the downstream CLI payload
+    explicit.
     """
 
     technical_translation: str
@@ -190,6 +197,12 @@ class PhraseRenderBundleResult:
     lay_translation: str
     lay_confidence: float
     lay_reasoning: str
+    poetic_translation: str = ""
+    poetic_confidence: float = 0.0
+    poetic_reasoning: str = ""
+    interpretive_translation: str = ""
+    interpretive_confidence: float = 0.0
+    interpretive_reasoning: str = ""
     footnoted_translation: str | None = None
     translation_footnotes: list[dict[str, object]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -203,6 +216,12 @@ class PhraseRenderBundleResult:
             "lay_translation": self.lay_translation,
             "lay_confidence": self.lay_confidence,
             "lay_reasoning": self.lay_reasoning,
+            "poetic_translation": self.poetic_translation,
+            "poetic_confidence": self.poetic_confidence,
+            "poetic_reasoning": self.poetic_reasoning,
+            "interpretive_translation": self.interpretive_translation,
+            "interpretive_confidence": self.interpretive_confidence,
+            "interpretive_reasoning": self.interpretive_reasoning,
             "footnoted_translation": self.footnoted_translation,
             "translation_footnotes": list(self.translation_footnotes),
             "warnings": list(self.warnings),
@@ -1102,12 +1121,13 @@ def render_phrase_bundle(
     parse_payload: dict[str, object],
     context: dict[str, object],
 ) -> PhraseRenderBundleResult:
-    """Render lay phrase output while keeping the technical render deterministic.
+    """Render grounded and poetic lay phrasing beside a fixed skeleton.
 
     Phrase translation now treats the chosen parse skeleton as the authoritative
-    technical translation. The optional model call is reserved for the short
-    lay gist and footnotes so remote rendering stays smaller, faster, and less
-    likely to wander back into glossary prose.
+    technical translation. The optional model call is reserved for a grounded
+    lay sentence, a more liberal poetic sentence, and token footnotes so
+    remote rendering stays smaller, faster, and less likely to wander back
+    into glossary prose.
     """
 
     skeleton = str(parse_payload.get("translation_skeleton") or "").strip()
@@ -1117,7 +1137,8 @@ def render_phrase_bundle(
     tool = QueryModelTool(
         system_prompt=(
             "You are a constrained lay phrase renderer for Enochian translation. "
-            "Return a short plain-English gist with token footnotes without "
+            "Return grounded and poetic plain-English phrase renderings "
+            "with token footnotes without "
             "introducing new meaning, relations, or token claims. "
             f"Historical scope: {llm_context}"
         ),
@@ -1162,6 +1183,36 @@ def render_phrase_bundle(
                 parsed.get("lay_reasoning")
                 or "Lay translation fell back to the algorithmic phrase skeleton."
             ),
+            poetic_translation=str(
+                parsed.get("poetic_translation")
+                or parsed.get("interpretive_translation")
+                or parsed.get("lay_translation")
+                or skeleton
+            ),
+            poetic_confidence=_safe_float(
+                parsed.get("poetic_confidence") or parsed.get("interpretive_confidence"),
+                default=_safe_float(parsed.get("lay_confidence"), default=confidence),
+            ),
+            poetic_reasoning=str(
+                parsed.get("poetic_reasoning")
+                or parsed.get("interpretive_reasoning")
+                or "Poetic translation fell back to the grounded lay reading."
+            ),
+            interpretive_translation=str(
+                parsed.get("poetic_translation")
+                or parsed.get("interpretive_translation")
+                or parsed.get("lay_translation")
+                or skeleton
+            ),
+            interpretive_confidence=_safe_float(
+                parsed.get("poetic_confidence") or parsed.get("interpretive_confidence"),
+                default=_safe_float(parsed.get("lay_confidence"), default=confidence),
+            ),
+            interpretive_reasoning=str(
+                parsed.get("poetic_reasoning")
+                or parsed.get("interpretive_reasoning")
+                or "Poetic translation fell back to the grounded lay reading."
+            ),
             footnoted_translation=parsed.get("footnoted_translation"),
             translation_footnotes=list(parsed.get("translation_footnotes") or []),
             raw_response=response.get("response_text"),
@@ -1183,6 +1234,18 @@ def render_phrase_bundle(
                 "Lay renderer unavailable; using deterministic "
                 f"fallback. ({exc})"
             ),
+            poetic_translation=fallback_lay,
+            poetic_confidence=fallback_confidence,
+            poetic_reasoning=(
+                "Poetic renderer unavailable; using deterministic "
+                f"fallback. ({exc})"
+            ),
+            interpretive_translation=fallback_lay,
+            interpretive_confidence=fallback_confidence,
+            interpretive_reasoning=(
+                "Poetic renderer unavailable; using deterministic "
+                f"fallback. ({exc})"
+            ),
             footnoted_translation=fallback_footnoted,
             translation_footnotes=fallback_notes,
             warnings=["LLM lay phrase rendering unavailable."],
@@ -1193,11 +1256,12 @@ def _build_phrase_bundle_prompt(
     parse_payload: dict[str, object],
     context: dict[str, object],
 ) -> str:
-    """Build the compact lay-render prompt used by phrase translation.
+    """Build the compact two-track lay-render prompt used by phrase translation.
 
     The technical translation now stays deterministic, so the model only needs
-    enough context to produce a short gist plus token footnotes. This smaller
-    contract keeps phrase rendering faster and more reliable on long inputs.
+    enough context to produce a grounded lay reading, a more liberal
+    poetic reading, and token footnotes. This smaller contract keeps
+    phrase rendering faster and more reliable on long inputs.
     """
 
     llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
@@ -1205,7 +1269,14 @@ def _build_phrase_bundle_prompt(
         {
             "lay_translation": "<plausible, roughly grammatical English sentence or clause that expresses one coherent reading of the phrase>",
             "lay_confidence": 0.0,
+<<<<<<< HEAD
             "lay_reasoning": "<brief note explaining the chosen reading>",
+=======
+            "lay_reasoning": "<brief note explaining the chosen grounded reading>",
+            "poetic_translation": "<more liberal, more expressive English interpretation that stays grounded in the supplied parse but may reorder and add connective tissue freely>",
+            "poetic_confidence": 0.0,
+            "poetic_reasoning": "<brief note explaining the poetic choices>",
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "footnoted_translation": "<same short translation with [^1] style markers>",
             "translation_footnotes": [
                 {
@@ -1223,6 +1294,12 @@ def _build_phrase_bundle_prompt(
             "lay_translation": "the holy law still stands",
             "lay_confidence": 0.72,
             "lay_reasoning": "Chooses one coherent everyday reading while staying anchored to the supplied parse.",
+<<<<<<< HEAD
+=======
+            "poetic_translation": "the sacred order still holds firm",
+            "poetic_confidence": 0.80,
+            "poetic_reasoning": "Leans into a more expressive paraphrase while preserving the same governing idea.",
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "footnoted_translation": "holy [^1] law [^2] still stands [^3]",
             "translation_footnotes": [
                 {
@@ -1251,6 +1328,7 @@ def _build_phrase_bundle_prompt(
     return "\n".join(
         [
             "ROLE: You are a constrained Enochian lay phrase renderer.",
+<<<<<<< HEAD
             "TASK: Return one plausible, approximately grammatical English interpretation of the supplied parse, plus grounded token footnotes.",
             f"HISTORICAL CONTEXT: {llm_context}",
             "CONSTRAINTS:",
@@ -1261,11 +1339,33 @@ def _build_phrase_bundle_prompt(
             "- You may add helper words, articles, and prepositions when they are needed to make the line feel grammatical.",
             "- Prefer one coherent reading over mirroring the source token order mechanically.",
             "- Do not return token-by-token comma lists, stacked prepositional fragments, or glossary dumps.",
+=======
+            "TASK: Return one grounded lay translation, one more expressive poetic translation, and token footnotes for the supplied parse.",
+            f"HISTORICAL CONTEXT: {llm_context}",
+            "CONSTRAINTS:",
+            "- Stay grounded in the supplied token choices, relations, skeleton, semantic cores, and alternates.",
+            "- `lay_translation` must read like normal English, not like a bag of glosses.",
+            "- Treat `lay_translation` as a plausible hypothetical interpretation of what the phrase could mean.",
+            "- You may add helper words, articles, and prepositions when they are needed to make the line feel grammatical.",
+            "- Prefer one coherent reading over mirroring the source token order mechanically.",
+            "- Unless the phrase is extremely short, `lay_translation` should not simply copy the technical skeleton word-for-word.",
+            "- Do not return token-by-token comma lists, stacked prepositional fragments, or glossary dumps.",
+            "- Repair awkward fragment chains such as repeated prepositions or noun piles into the most plausible grammatical English you can support.",
+            "- `poetic_translation` should push farther: reorder aggressively when useful, add connective tissue, and smooth hard edges so the phrase reads like compelling English.",
+            "- `poetic_translation` may choose among the supplied supported senses and alternates to produce the most plausible coherent sentence.",
+            "- `poetic_translation` may absorb weak tokens into stronger surrounding phrasing instead of forcing a choppy token-by-token mirror.",
+            "- `poetic_translation` does NOT need to differ from `lay_translation` if the grounded lay sentence is already coherent and expressive.",
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "- Return exactly one footnote entry per token choice, in source order.",
             "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
             "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
             "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
+<<<<<<< HEAD
             "- Do not repeat the raw source token in English unless the token remains unresolved; in that case use `[TOKEN]` and explain why.",
+=======
+            "- Never emit raw source tokens or bracket placeholders such as `[TOKEN]` in the English output.",
+            "- Do not emit `unresolved term`; use the best grounded gloss available from the payload and smooth around weak tokens.",
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "- Explanations must stay grounded in the selected token glosses, alternates, and relations.",
             "- Return STRICT JSON only.",
             "PARSE PAYLOAD:",
@@ -1385,10 +1485,17 @@ def _build_phrase_lay_render_prompt(
             "- Prefer a clear sentence-level idea over mirroring the source token order mechanically.",
             "- Never restate full token definitions, example sentences, or long alternation chains in `rendered_translation`.",
             "- Return exactly one footnote entry per token choice, in source order.",
+<<<<<<< HEAD
             "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
             "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
             "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
             "- Do not repeat the raw source token in English unless the token remains unresolved; in that case use `[TOKEN]` and explain why.",
+=======
+            "- Each `rendered_text` should usually be 1-3 words. Use extra filler words only when grammar truly requires them.",
+            "- If a chosen gloss is verbose, compress it to the smallest everyday concept supported by that gloss.",
+            "- Never emit raw source tokens or bracket placeholders such as `[TOKEN]` in the English output.",
+            "- If a token remains weakly supported, use the best grounded gloss available from the payload; if nothing usable survives, say `unresolved term` rather than echoing the source token.",
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
             "- Explanations must stay grounded in the selected token glosses, alternates, and relations.",
             "- If you add helper words for readable English, explain that smoothing in the relevant footnote.",
             "- Return STRICT JSON only.",
@@ -1465,6 +1572,13 @@ def _parse_phrase_lay_render_response(
         str(base.get("rendered_translation") or ""),
         footnoted,
         fallback_translation=fallback,
+<<<<<<< HEAD
+=======
+    )
+    base["rendered_translation"] = _replace_token_placeholders_in_translation(
+        str(base.get("rendered_translation") or ""),
+        parse_payload=parse_payload,
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     )
 
     return {
@@ -1503,6 +1617,16 @@ def _parse_phrase_bundle_response(
             "lay_reasoning": (
                 "Bundled renderer returned non-JSON output; using deterministic lay fallback."
             ),
+            "poetic_translation": fallback_lay,
+            "poetic_confidence": 0.5,
+            "poetic_reasoning": (
+                "Bundled renderer returned non-JSON output; using deterministic poetic fallback."
+            ),
+            "interpretive_translation": fallback_lay,
+            "interpretive_confidence": 0.5,
+            "interpretive_reasoning": (
+                "Bundled renderer returned non-JSON output; using deterministic poetic fallback."
+            ),
             "footnoted_translation": fallback_footnoted,
             "translation_footnotes": fallback_notes,
         }
@@ -1525,11 +1649,33 @@ def _parse_phrase_bundle_response(
         },
         ensure_ascii=False,
     )
+    poetic_payload = json.dumps(
+        {
+            "rendered_translation": data.get("poetic_translation")
+            or data.get("interpretive_translation"),
+            "confidence": data.get("poetic_confidence")
+            or data.get("interpretive_confidence"),
+            "reasoning": data.get("poetic_reasoning")
+            or data.get("interpretive_reasoning"),
+        },
+        ensure_ascii=False,
+    )
     technical = _parse_phrase_render_response(technical_payload, fallback=fallback)
     lay = _parse_phrase_lay_render_response(
         lay_payload,
         fallback=fallback,
         parse_payload=parse_payload,
+    )
+    poetic = _parse_phrase_render_response(
+        poetic_payload,
+        fallback=lay["rendered_translation"] or fallback,
+    )
+    normalized_poetic = _normalize_poetic_translation(
+        _replace_token_placeholders_in_translation(
+            poetic["rendered_translation"],
+            parse_payload=parse_payload,
+        ),
+        lay_translation=lay["rendered_translation"],
     )
     return {
         "technical_translation": technical["rendered_translation"],
@@ -1538,6 +1684,12 @@ def _parse_phrase_bundle_response(
         "lay_translation": lay["rendered_translation"],
         "lay_confidence": lay["confidence"],
         "lay_reasoning": lay["reasoning"],
+        "poetic_translation": normalized_poetic,
+        "poetic_confidence": poetic["confidence"],
+        "poetic_reasoning": poetic["reasoning"],
+        "interpretive_translation": normalized_poetic,
+        "interpretive_confidence": poetic["confidence"],
+        "interpretive_reasoning": poetic["reasoning"],
         "footnoted_translation": lay["footnoted_translation"],
         "translation_footnotes": lay["translation_footnotes"],
     }
@@ -1654,10 +1806,7 @@ def _fallback_rendered_text(token_choice: Mapping[str, object], token: str) -> s
     dictionary_rescue_gloss = _dictionary_rescue_gloss(token_choice, token)
     if dictionary_rescue_gloss is not None:
         return dictionary_rescue_gloss
-    weak_fallback_gloss = _weak_fallback_gloss(token_choice, token)
-    if weak_fallback_gloss is not None:
-        return weak_fallback_gloss
-    return opaque_token_fallback_gloss(token)
+    return _human_facing_unresolved_gloss()
 
 
 def _normalize_rendered_text(
@@ -1722,6 +1871,64 @@ def _normalize_lay_translation(
     if not _looks_overexpanded_lay_translation(cleaned):
         return cleaned
     return fallback_cleaned or cleaned
+<<<<<<< HEAD
+=======
+
+
+def _normalize_poetic_translation(
+    rendered_translation: str,
+    *,
+    lay_translation: str,
+) -> str:
+    """Normalize poetic output without forcing fake divergence from the lay line.
+
+    The poetic translation is allowed to stay close to the grounded lay
+    sentence when that already reads well. We only step in when the field is
+    missing entirely, in which case the grounded lay translation is still more
+    honest than an empty string.
+    """
+
+    cleaned = " ".join(rendered_translation.split())
+    lay_cleaned = " ".join(lay_translation.split())
+    if not cleaned:
+        return lay_cleaned
+    return cleaned
+
+
+def _replace_token_placeholders_in_translation(
+    text: str,
+    *,
+    parse_payload: Mapping[str, object],
+) -> str:
+    """Replace raw `[TOKEN]` placeholders with grounded glosses from the parse.
+
+    The lay renderer is supposed to produce readable English, but remote model
+    output can still occasionally surface raw bracketed source tokens. We
+    already carry token-level fallback glosses in the parse payload, so this
+    sanitizer swaps those placeholders out before the CLI ever prints them.
+    """
+
+    cleaned = " ".join((text or "").split())
+    if not cleaned:
+        return cleaned
+
+    token_choices = parse_payload.get("token_choices")
+    choices = token_choices if isinstance(token_choices, Sequence) else []
+    choice_lookup = {
+        str(choice.get("token") or "").upper(): choice
+        for choice in choices
+        if isinstance(choice, Mapping) and str(choice.get("token") or "").strip()
+    }
+
+    def _replacement(match: re.Match[str]) -> str:
+        token = match.group(1).strip().upper()
+        token_choice = choice_lookup.get(token)
+        if token_choice is None:
+            return _HUMAN_UNRESOLVED_GLOSS
+        return _fallback_rendered_text(token_choice, token)
+
+    return " ".join(_RAW_TOKEN_PLACEHOLDER_RE.sub(_replacement, cleaned).split())
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
 
 
 def _looks_overexpanded_lay_translation(text: str) -> bool:
@@ -1777,19 +1984,8 @@ def _fallback_footnote_explanation(
         and dictionary_rescue_note
     ):
         return dictionary_rescue_note
-    weak_fallback_gloss = _weak_fallback_gloss(token_choice, token)
-    weak_fallback_note = _weak_fallback_note(token_choice)
-    if (
-        weak_fallback_gloss is not None
-        and rendered_text == weak_fallback_gloss
-        and weak_fallback_note
-    ):
-        return weak_fallback_note
-    if rendered_text == opaque_token_fallback_gloss(token):
-        return (
-            "Weak or placeholder evidence survived for this token, so the opaque "
-            "token form was preserved as a last-resort best-effort gloss."
-        )
+    if rendered_text in {unresolved_token_gloss(token), _human_facing_unresolved_gloss()}:
+        return "Only weak or placeholder evidence survived for this token."
     if trace.get("blind_dictionary_fallback"):
         return (
             "No non-dictionary definition survived in blind mode, so the fallback "
@@ -1872,7 +2068,11 @@ def _preferred_primary_gloss(token_choice: Mapping[str, object], token: str) -> 
 
     Phrase lay rendering should preserve specific, human-facing lexical detail
     when the parse payload already carries it. This helper therefore tries the
+<<<<<<< HEAD
     serialized bundle/surface definitions first, optionally mining a more
+=======
+    serialized bundle and surface definitions first, optionally mining a more
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     specific phrase from them, before collapsing all the way down to a bare
     semantic-core label.
     """
@@ -1880,13 +2080,22 @@ def _preferred_primary_gloss(token_choice: Mapping[str, object], token: str) -> 
     trace = _definition_trace_for_token_choice(token_choice)
     semantic_core = token_choice.get("semantic_core")
     negative_contrast = token_choice.get("negative_contrast")
+<<<<<<< HEAD
+=======
+    dictionary_rescue = _dictionary_rescue_gloss(token_choice, token)
+    if dictionary_rescue is not None:
+        return dictionary_rescue
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
     primary_candidates = [
-        token_choice.get("bundle_surface_gloss"),
-        token_choice.get("bundle_head_gloss"),
         trace.get("surface_gloss"),
         token_choice.get("surface_gloss"),
         trace.get("selected_definition"),
         token_choice.get("definition"),
+<<<<<<< HEAD
+=======
+        token_choice.get("bundle_surface_gloss"),
+        token_choice.get("bundle_head_gloss"),
+>>>>>>> d242e9c4572b7962c27025dc35b57e204bca26b6
         trace.get("raw_selected_definition"),
         token_choice.get("raw_definition"),
     ]
@@ -1979,7 +2188,16 @@ def _dictionary_rescue_gloss(token_choice: Mapping[str, object], token: str) -> 
     """
 
     raw_rescue = token_choice.get("dictionary_rescue_gloss")
-    return _compact_lay_gloss(raw_rescue, token=token)
+    sanitized = sanitize_human_gloss(raw_rescue, token=token)
+    if sanitized is None:
+        return None
+    return " ".join(sanitized.split()).strip()
+
+
+def _human_facing_unresolved_gloss() -> str:
+    """Return the phrase-safe fallback when no grounded gloss survives."""
+
+    return _HUMAN_UNRESOLVED_GLOSS
 
 
 def _weak_fallback_gloss(token_choice: Mapping[str, object], token: str) -> str | None:

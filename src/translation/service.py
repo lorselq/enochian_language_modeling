@@ -949,109 +949,87 @@ class SingleWordTranslationService:
                 )
             fallback_decompositions: list[Decomposition] = []
             fallback_min_coverage: float | None = None
-
-            ranked: list[tuple[Decomposition, float]] = []
-            coherence_results: dict[tuple[str, ...], CoherenceResult] = {}
-            fasttext_model = getattr(self.candidate_finder, "fasttext_model", None)
-
-            for decomp in filtered:
-                # Check if decomposition has singletons and compute coherence
-                has_singletons = any(len(m) == 1 for m in decomp.morphs)
-
-                if has_singletons and fasttext_model is not None:
-                    # Use coherence-aware scoring for singleton decompositions
-                    if weight_enabled:
-                        score, coherence, breakdown = (
-                            score_decomposition_with_coherence_breakdown(
-                                decomp,
-                                evidence,
-                                fasttext_model,
-                                weights=self.scoring_weights,
-                                coherence_weight=0.05,
-                                weighted=True,
-                            )
-                        )
-                        decomp.score_breakdown = breakdown
-                    else:
-                        base_score, breakdown = score_decomposition_breakdown(
-                            decomp,
-                            evidence,
-                            weighted=False,
-                        )
-                        coherence = compute_semantic_coherence(
-                            decomp.morphs, fasttext_model
-                        )
-                        score = 0.95 * base_score + 0.05 * coherence.score
-                        breakdown["base_score"] = base_score
-                        breakdown["coherence"] = {
-                            "raw": coherence.score,
-                            "weight": 0.05,
-                            "weighted": 0.05 * coherence.score,
-                            "singleton_cohesion": coherence.singleton_cohesion,
-                            "large_morph_diversity": coherence.large_morph_diversity,
-                            "singleton_count": coherence.singleton_count,
-                            "large_morph_count": coherence.large_morph_count,
-                        }
-                        breakdown["total"] = score
-                        decomp.score_breakdown = breakdown
-                    coherence_results[tuple(decomp.morphs)] = coherence
-                else:
-                    # Standard scoring for non-singleton decompositions
-                    if weight_enabled:
-                        score, breakdown = score_decomposition_breakdown(
-                            decomp,
-                            evidence,
-                            weights=self.scoring_weights,
-                            weighted=True,
-                        )
-                        decomp.score_breakdown = breakdown
-                    else:
-                        score, breakdown = score_decomposition_breakdown(
-                            decomp,
-                            evidence,
-                            weighted=False,
-                        )
-                        decomp.score_breakdown = breakdown
-                rejected_morphs = [
-                    morph for morph in decomp.morphs
-                    if morph.upper() in evidence.rejected_morphs
-                ]
-                if rejected_morphs:
-                    score -= 2.5 * len(rejected_morphs)
-                    decomp.score_breakdown = dict(decomp.score_breakdown)
-                    decomp.score_breakdown["rejected_morphs"] = rejected_morphs
-                    decomp.score_breakdown["rejected_morph_penalty"] = (
-                        2.5 * len(rejected_morphs)
-                    )
-
-                ranked.append((decomp, score))
-
-            if coherence_results:
-                diagnostics["coherence_scores"] = {
-                    " + ".join(morphs): {
-                        "score": result.score,
-                        "singleton_cohesion": result.singleton_cohesion,
-                        "large_morph_diversity": result.large_morph_diversity,
-                        "singleton_count": result.singleton_count,
-                        "large_morph_count": result.large_morph_count,
-                    }
-                    for morphs, result in coherence_results.items()
-                }
-
-            reranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
-            selected = select_top_k(
-                reranked,
-                k=top_k,
+            selected = self._select_compositional_candidates(
+                filtered,
                 evidence=evidence,
-                allow_dictionary=allow_whole_word,
+                diagnostics=diagnostics,
+                strategy=strategy,
+                top_k=top_k,
+                weight_enabled=weight_enabled,
+                allow_whole_word=allow_whole_word,
             )
-            for candidate in selected:
-                self._annotate_candidate(
-                    candidate,
-                    evidence=evidence,
-                    analysis_type="compositional",
+            blind_full_cover_candidates = [
+                candidate
+                for candidate in selected
+                if self._is_grounded_full_cover_compositional(candidate)
+            ]
+            if (
+                not allow_whole_word
+                and use_beam_search
+                and not blind_full_cover_candidates
+            ):
+                guaranteed_decompositions, guaranteed_diag = (
+                    self._enumerate_attested_full_cover_decompositions(
+                        normalized,
+                        evidence=evidence,
+                        attested_pieces=attested_pieces,
+                        allow_whole_word=allow_whole_word,
+                        definition_counts=definition_counts,
+                        definition_glosses=definition_glosses,
+                        evidence_mode=evidence_mode.value,
+                    )
                 )
-                self._attach_candidate_bundle_metadata(candidate)
+                diagnostics["blind_full_cover_fallback"] = guaranteed_diag
+                if guaranteed_decompositions:
+                    merged_decompositions = self._merge_decompositions(
+                        decompositions,
+                        guaranteed_decompositions,
+                    )
+                    filtered, filter_diagnostics = apply_hard_filters(
+                        merged_decompositions,
+                        evidence,
+                        evidence_mode=evidence_mode.value,
+                    )
+                    stage1_drops_total = int(
+                        filter_diagnostics.get(
+                            "stage1_drops_total",
+                            filter_diagnostics.get("stage1_dropped", 0),
+                        )
+                    )
+                    stage1_drops_missing_support = int(
+                        filter_diagnostics.get(
+                            "stage1_drops_missing_support",
+                            stage1_drops_total,
+                        )
+                    )
+                    stage1_drops_other_reasons = int(
+                        filter_diagnostics.get(
+                            "stage1_drops_other_reasons",
+                            max(0, stage1_drops_total - stage1_drops_missing_support),
+                        )
+                    )
+                    diagnostics["decomposition_count"] = len(merged_decompositions)
+                    diagnostics["hard_filter_stage1_drops_total"] = stage1_drops_total
+                    diagnostics["hard_filter_stage1_drops_missing_support"] = (
+                        stage1_drops_missing_support
+                    )
+                    diagnostics["hard_filter_stage1_drops_other_reasons"] = (
+                        stage1_drops_other_reasons
+                    )
+                    selected = self._select_compositional_candidates(
+                        filtered,
+                        evidence=evidence,
+                        diagnostics=diagnostics,
+                        strategy=strategy,
+                        top_k=top_k,
+                        weight_enabled=weight_enabled,
+                        allow_whole_word=allow_whole_word,
+                    )
+                    blind_full_cover_candidates = [
+                        candidate
+                        for candidate in selected
+                        if self._is_grounded_full_cover_compositional(candidate)
+                    ]
 
             provisional_candidates, fallback_morphs, provisional_suppression_notes = (
                 self._build_provisional_candidates(
@@ -1072,10 +1050,20 @@ class SingleWordTranslationService:
                     compositional_candidates=selected,
                     provisional_candidates=provisional_candidates,
                     had_decomposition_attempts=bool(decompositions),
+                    has_full_cover_compositional=bool(blind_full_cover_candidates),
                 )
             )
             blind_suppression_notes.extend(provisional_suppression_notes)
             blind_suppression_notes.extend(decomposition_priority_notes)
+            if (
+                not allow_whole_word
+                and bool(decompositions)
+                and not blind_full_cover_candidates
+            ):
+                blind_suppression_notes.append(
+                    "Blind retranslation BUG: no grounded full-cover compositional "
+                    f"candidate survived for {normalized} after attested decomposition fallback."
+                )
             diagnostics["blind_retranslation"] = {
                 "enabled": not allow_whole_word,
                 "short_root_max_len": self.BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN,
@@ -1695,6 +1683,285 @@ class SingleWordTranslationService:
                 trace["blind_mode_rescue_note"] = blind_mode_rescue_note
             meaning["definition_trace"] = trace
 
+    def _select_compositional_candidates(
+        self,
+        filtered: Sequence[Decomposition],
+        *,
+        evidence: WordEvidence,
+        diagnostics: dict[str, object],
+        strategy: str,
+        top_k: int,
+        weight_enabled: bool,
+        allow_whole_word: bool,
+    ) -> list[dict[str, object]]:
+        """Score filtered decompositions and keep the strongest compositional reads.
+
+        Word translation now needs to rescore decompositions twice in blind
+        mode: first for the preferred chunkier beam search, then again when the
+        singleton-capable full-cover fallback injects extra decompositions.
+        Centralizing the scoring and selection logic keeps both passes aligned.
+        """
+
+        ranked: list[tuple[Decomposition, float]] = []
+        coherence_results: dict[tuple[str, ...], CoherenceResult] = {}
+        fasttext_model = getattr(self.candidate_finder, "fasttext_model", None)
+
+        for decomp in filtered:
+            has_singletons = any(len(morph) == 1 for morph in decomp.morphs)
+            if has_singletons and fasttext_model is not None:
+                if weight_enabled:
+                    score, coherence, breakdown = (
+                        score_decomposition_with_coherence_breakdown(
+                            decomp,
+                            evidence,
+                            fasttext_model,
+                            weights=self.scoring_weights,
+                            coherence_weight=0.05,
+                            weighted=True,
+                        )
+                    )
+                    decomp.score_breakdown = breakdown
+                else:
+                    base_score, breakdown = score_decomposition_breakdown(
+                        decomp,
+                        evidence,
+                        weighted=False,
+                    )
+                    coherence = compute_semantic_coherence(
+                        decomp.morphs,
+                        fasttext_model,
+                    )
+                    score = 0.95 * base_score + 0.05 * coherence.score
+                    breakdown["base_score"] = base_score
+                    breakdown["coherence"] = {
+                        "raw": coherence.score,
+                        "weight": 0.05,
+                        "weighted": 0.05 * coherence.score,
+                        "singleton_cohesion": coherence.singleton_cohesion,
+                        "large_morph_diversity": coherence.large_morph_diversity,
+                        "singleton_count": coherence.singleton_count,
+                        "large_morph_count": coherence.large_morph_count,
+                    }
+                    breakdown["total"] = score
+                    decomp.score_breakdown = breakdown
+                coherence_results[tuple(decomp.morphs)] = coherence
+            else:
+                if weight_enabled:
+                    score, breakdown = score_decomposition_breakdown(
+                        decomp,
+                        evidence,
+                        weights=self.scoring_weights,
+                        weighted=True,
+                    )
+                    decomp.score_breakdown = breakdown
+                else:
+                    score, breakdown = score_decomposition_breakdown(
+                        decomp,
+                        evidence,
+                        weighted=False,
+                    )
+                    decomp.score_breakdown = breakdown
+
+            rejected_morphs = [
+                morph
+                for morph in decomp.morphs
+                if morph.upper() in evidence.rejected_morphs
+            ]
+            if rejected_morphs:
+                score -= 2.5 * len(rejected_morphs)
+                decomp.score_breakdown = dict(decomp.score_breakdown)
+                decomp.score_breakdown["rejected_morphs"] = rejected_morphs
+                decomp.score_breakdown["rejected_morph_penalty"] = (
+                    2.5 * len(rejected_morphs)
+                )
+
+            ranked.append((decomp, score))
+
+        if coherence_results:
+            diagnostics["coherence_scores"] = {
+                " + ".join(morphs): {
+                    "score": result.score,
+                    "singleton_cohesion": result.singleton_cohesion,
+                    "large_morph_diversity": result.large_morph_diversity,
+                    "singleton_count": result.singleton_count,
+                    "large_morph_count": result.large_morph_count,
+                }
+                for morphs, result in coherence_results.items()
+            }
+
+        reranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
+        selected = select_top_k(
+            reranked,
+            k=top_k,
+            evidence=evidence,
+            allow_dictionary=allow_whole_word,
+        )
+        for candidate in selected:
+            self._annotate_candidate(
+                candidate,
+                evidence=evidence,
+                analysis_type="compositional",
+            )
+            self._attach_candidate_bundle_metadata(candidate)
+        return selected
+
+    def _enumerate_attested_full_cover_decompositions(
+        self,
+        word: str,
+        *,
+        evidence: WordEvidence,
+        attested_pieces: set[str],
+        allow_whole_word: bool,
+        definition_counts: dict[str, int],
+        definition_glosses: dict[str, list[tuple[str, float | None]]],
+        evidence_mode: str,
+    ) -> tuple[list[Decomposition], dict[str, object]]:
+        """Guarantee a singleton-capable blind decomposition pass when needed.
+
+        Beam search is still the preferred path because it tends to surface
+        chunkier, easier-to-read decompositions. Blind phrase translation,
+        however, should not stop there. When the first pass fails to yield a
+        grounded full-cover compositional read, this helper enumerates every
+        attested full-cover segmentation, including singleton-backed paths, so
+        user-facing blind mode can stay decomposition-led instead of falling
+        back to whole-word rescue.
+        """
+
+        max_partial = DEFAULT_MAX_PARTIAL_PER_INDEX
+        max_full = DEFAULT_MAX_FULL_SEGMENTATIONS
+        segmentations, enumerator_diag = (
+            enumerate_attested_segmentations_with_diagnostics(
+                word,
+                attested_pieces,
+                max_partial_per_index=max_partial,
+                max_full_segmentations=max_full,
+                min_piece_len=1,
+            )
+        )
+        if not allow_whole_word and len(word) > 1:
+            segmentations = [
+                segmentation
+                for segmentation in segmentations
+                if not (len(segmentation) == 1 and segmentation[0] == word)
+            ]
+
+        decompositions = build_decompositions_from_segmentations(
+            word,
+            segmentations,
+            candidate_finder=self.candidate_finder,
+            evidence=evidence,
+            evidence_mode=evidence_mode,
+        )
+        self._assign_beam_scores_to_decompositions(
+            word,
+            decompositions,
+            evidence=evidence,
+            allow_whole_word=allow_whole_word,
+            definition_counts=definition_counts,
+            definition_glosses=definition_glosses,
+            evidence_mode=evidence_mode,
+        )
+        return (
+            decompositions,
+            {
+                "enumerator_enabled": True,
+                "enumerator_params": {
+                    "max_partial_per_index": max_partial,
+                    "max_full_segmentations": max_full,
+                    "min_piece_len": 1,
+                },
+                "enumerated_full_count": enumerator_diag.get("enumerated_full_count", 0),
+                "enumerated_full_returned": len(segmentations),
+                "enumerated_partial_pruned_count": enumerator_diag.get(
+                    "enumerated_partial_pruned_count",
+                    0,
+                ),
+                "decomposition_count": len(decompositions),
+            },
+        )
+
+    def _assign_beam_scores_to_decompositions(
+        self,
+        word: str,
+        decompositions: Sequence[Decomposition],
+        *,
+        evidence: WordEvidence,
+        allow_whole_word: bool,
+        definition_counts: dict[str, int],
+        definition_glosses: dict[str, list[tuple[str, float | None]]],
+        evidence_mode: str,
+    ) -> None:
+        """Backfill beam-style priors onto enumerated blind decompositions.
+
+        The singleton-capable fallback uses explicit attested segmentation
+        enumeration, which does not carry the beam scores that the primary
+        search path emits. Recomputing lightweight beam priors here lets those
+        fallback decompositions compete fairly with chunkier parses.
+        """
+
+        if not decompositions:
+            return
+
+        segment_target = getattr(self.candidate_finder, "segment_target", None)
+        if not callable(segment_target):
+            return
+
+        extra_ngrams = _build_evidence_ngrams(
+            word,
+            evidence,
+            candidate_finder=self.candidate_finder,
+            definition_counts=definition_counts,
+            definition_glosses=definition_glosses,
+            evidence_mode=evidence_mode,
+        )
+        try:
+            parses = segment_target(
+                word,
+                extra_ngrams=extra_ngrams,
+                definition_counts=definition_counts,
+                definition_glosses=definition_glosses,
+                restrict_to_attested=True,
+            )
+        except Exception:
+            return
+
+        beam_scores: dict[tuple[str, ...], float] = {}
+        parsed_paths: list[tuple[tuple[str, ...], float]] = []
+        all_morphs: set[str] = set()
+        for _path, score, _ngram_scores, coverage in parses:
+            if not coverage:
+                continue
+            morphs: list[str] = []
+            for segment in coverage:
+                ngram = segment.get("ngram")
+                if isinstance(ngram, str) and ngram:
+                    morphs.append(ngram.upper())
+            if not morphs:
+                continue
+            key = tuple(morphs)
+            parsed_paths.append((key, float(score)))
+            all_morphs.update(morphs)
+
+        definition_candidates = extract_definition_candidates(
+            all_morphs,
+            evidence,
+            max_per_morph=3,
+            allow_dictionary=allow_whole_word,
+        )
+        for key, score in parsed_paths:
+            penalty = compute_contradiction_penalty_for_candidates(
+                key,
+                definition_candidates,
+            )
+            adjusted = score - penalty
+            existing = beam_scores.get(key)
+            if existing is None or adjusted > existing:
+                beam_scores[key] = adjusted
+
+        for decomp in decompositions:
+            decomp.beam_score = beam_scores.get(tuple(decomp.morphs), 0.0)
+        _normalize_beam_scores(list(decompositions))
+
     def _apply_blind_decomposition_priority(
         self,
         *,
@@ -1704,6 +1971,7 @@ class SingleWordTranslationService:
         compositional_candidates: Sequence[dict[str, object]],
         provisional_candidates: Sequence[dict[str, object]],
         had_decomposition_attempts: bool,
+        has_full_cover_compositional: bool,
     ) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str]]:
         """Keep blind mode decomposition-first and reserve whole-word rescue.
 
@@ -1719,42 +1987,25 @@ class SingleWordTranslationService:
             return list(exact_candidates), list(provisional_candidates), []
         if not compositional_candidates and not had_decomposition_attempts:
             return list(exact_candidates), list(provisional_candidates), []
-
-        usable_compositional = any(
-            self._candidate_has_usable_bundle(candidate)
-            for candidate in compositional_candidates
-        )
-        if usable_compositional:
+        if has_full_cover_compositional:
             return (
                 [],
                 [],
                 [
                     "Blind retranslation reserved whole-word readings for "
-                    f"{word} because decomposition already produced a usable lexical bundle."
+                    f"{word} because decomposition already produced a grounded full-cover candidate."
                 ],
             )
-
-        rescue_note = (
-            "Blind mode whole-word rescue activated because no usable "
-            "decomposition-level lexical bundle survived."
-        )
-        rescue_candidates = [dict(candidate) for candidate in exact_candidates]
-        rescue_candidates.extend(dict(candidate) for candidate in provisional_candidates)
-        for candidate in rescue_candidates:
-            candidate["blind_mode_whole_word_rescue"] = True
-            candidate["blind_mode_rescue_note"] = rescue_note
-            warnings = list(candidate.get("warnings") or [])
-            if rescue_note not in warnings:
-                warnings.append(rescue_note)
-            candidate["warnings"] = warnings
-            self._attach_candidate_bundle_metadata(candidate)
-
-        exact_count = len(exact_candidates)
-        return (
-            rescue_candidates[:exact_count],
-            rescue_candidates[exact_count:],
-            [f"{rescue_note} Token: {word}."],
-        )
+        if had_decomposition_attempts:
+            return (
+                [],
+                [],
+                [
+                    "Blind retranslation kept whole-word readings suppressed for "
+                    f"{word} because no grounded full-cover compositional candidate survived."
+                ],
+            )
+        return list(exact_candidates), list(provisional_candidates), []
 
     @staticmethod
     def _candidate_has_usable_bundle(candidate: dict[str, object]) -> bool:
