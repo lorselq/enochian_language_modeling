@@ -16,7 +16,7 @@ from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_lm.root_extraction.utils.embeddings import (
     cluster_definition_counts,
-    get_sentence_transformer,
+    get_sentence_transformer_if_available,
 )
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 
@@ -65,6 +65,7 @@ from .scoring import (
 )
 from .strategies import (
     apply_strategy,
+    compose_semantic_bundle,
     compute_contradiction_penalty_for_candidates,
     extract_definition_candidates,
     select_top_k,
@@ -338,6 +339,8 @@ class InterpretationService:
 class SingleWordTranslationService:
     """Single-word translation pipeline with optional LLM synthesis (Tasks 4.1/4.2)."""
 
+    BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN = 2
+
     class EvidenceMode(str, Enum):
         ALL = "all"
         CLUSTERS_ONLY = "clusters-only"
@@ -364,6 +367,10 @@ class SingleWordTranslationService:
         self.llm_use_remote = llm_use_remote
         self.llm_adapter = llm_adapter
         self._decomposition_engine = DecompositionEngine(candidate_finder)
+        self._clustered_definition_count_cache: dict[
+            tuple[str, tuple[tuple[str, float | None], ...]],
+            int,
+        ] = {}
 
     @classmethod
     def from_config(
@@ -421,6 +428,97 @@ class SingleWordTranslationService:
         tb: TracebackType | None,
     ) -> None:
         self.close()
+
+    def _cluster_definition_counts_cached(
+        self,
+        definition_glosses: dict[str, list[tuple[str, float | None]]],
+        *,
+        embedder,
+    ) -> dict[str, int]:
+        """Reuse semantic cluster counts across repeated translation calls.
+
+        Phrase translation revisits the same substring gloss sets across many
+        tokens. Caching the clustered count by morph-plus-gloss signature keeps
+        the semantic-deduplication signal intact without paying the embedding
+        clustering cost every time a token asks for the same morph family.
+        """
+
+        if embedder is None or not definition_glosses:
+            return {}
+
+        cached_counts: dict[str, int] = {}
+        missing: dict[str, list[tuple[str, float | None]]] = {}
+        for morph, glosses in definition_glosses.items():
+            normalized_glosses = tuple(
+                sorted(
+                    (
+                        str(gloss).strip(),
+                        None if score is None else float(score),
+                    )
+                    for gloss, score in glosses
+                    if isinstance(gloss, str) and gloss.strip()
+                )
+            )
+            if not normalized_glosses:
+                continue
+            cache_key = (morph.upper(), normalized_glosses)
+            cached = self._clustered_definition_count_cache.get(cache_key)
+            if cached is not None:
+                cached_counts[morph.upper()] = cached
+                continue
+            missing[morph] = list(normalized_glosses)
+
+        if missing:
+            clustered = cluster_definition_counts(
+                missing,
+                embedder,
+            )
+            for morph, glosses in missing.items():
+                cache_key = (morph.upper(), tuple(glosses))
+                count = int(clustered.get(morph.upper(), 0))
+                self._clustered_definition_count_cache[cache_key] = count
+                cached_counts[morph.upper()] = count
+
+        return cached_counts
+
+    def _prewarm_clustered_definition_counts(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+        evidence_mode: "SingleWordTranslationService.EvidenceMode" = EvidenceMode.ALL,
+    ) -> None:
+        """Precompute semantic cluster counts for phrase-wide substring pools.
+
+        The phrase layer already knows when it is about to analyze many tokens.
+        Warming the clustered definition counts here lets later `translate_word`
+        calls reuse those semantic-deduplication results instead of rebuilding
+        them token by token.
+        """
+
+        unique = {str(morph).upper() for morph in morphs if morph}
+        if not unique:
+            return
+
+        definition_glosses = self.repository.fetch_accepted_definition_glosses(
+            unique,
+            variants=variants,
+            include_clusters=evidence_mode != self.EvidenceMode.RESIDUALS_ONLY,
+            include_residuals=evidence_mode != self.EvidenceMode.CLUSTERS_ONLY,
+        )
+        if not definition_glosses:
+            return
+
+        embedder = get_sentence_transformer_if_available(
+            "paraphrase-MiniLM-L6-v2",
+            local_files_only=True,
+        )
+        if embedder is None:
+            return
+        self._cluster_definition_counts_cached(
+            definition_glosses,
+            embedder=embedder,
+        )
 
     def translate_word(
         self,
@@ -568,19 +666,26 @@ class SingleWordTranslationService:
                 include_clusters=evidence_mode != self.EvidenceMode.RESIDUALS_ONLY,
                 include_residuals=evidence_mode != self.EvidenceMode.CLUSTERS_ONLY,
             )
-            clustered_counts = cluster_definition_counts(
+            embedder = get_sentence_transformer_if_available(
+                "paraphrase-MiniLM-L6-v2",
+                local_files_only=True,
+            )
+            clustered_counts = self._cluster_definition_counts_cached(
                 definition_glosses,
-                get_sentence_transformer("paraphrase-MiniLM-L6-v2"),
+                embedder=embedder,
             )
             if clustered_counts:
                 definition_counts = {**definition_counts, **clustered_counts}
 
             evidence.definition_counts = definition_counts
             evidence.definition_glosses = definition_glosses
-            exact_candidates = self._collect_exact_word_candidates(
+            exact_candidates, blind_suppression_notes = self._collect_exact_word_candidates(
                 normalized,
                 evidence,
+                allow_whole_word=allow_whole_word,
             )
+            for candidate in exact_candidates:
+                self._attach_candidate_bundle_metadata(candidate)
 
             attested_pieces = _collect_attested_pieces(
                 evidence, evidence_mode=evidence_mode.value
@@ -599,6 +704,11 @@ class SingleWordTranslationService:
                 "dictionary_ngram_keys": 0,
                 "dictionary_ngram_entries": 0,
                 "dictionary_forced": False,
+                "blind_retranslation": {
+                    "enabled": not allow_whole_word,
+                    "short_root_max_len": self.BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN,
+                    "suppressed": blind_suppression_notes,
+                },
             }
             fallback_used = False
             fallback_mode: str | None = None
@@ -732,6 +842,7 @@ class SingleWordTranslationService:
                         all_morphs,
                         evidence,
                         max_per_morph=3,
+                        allow_dictionary=allow_whole_word,
                     )
                     for key, score in parsed_paths:
                         penalty = compute_contradiction_penalty_for_candidates(
@@ -932,6 +1043,7 @@ class SingleWordTranslationService:
                 reranked,
                 k=top_k,
                 evidence=evidence,
+                allow_dictionary=allow_whole_word,
             )
             for candidate in selected:
                 self._annotate_candidate(
@@ -939,15 +1051,36 @@ class SingleWordTranslationService:
                     evidence=evidence,
                     analysis_type="compositional",
                 )
+                self._attach_candidate_bundle_metadata(candidate)
 
-            provisional_candidates, fallback_morphs = (
+            provisional_candidates, fallback_morphs, provisional_suppression_notes = (
                 self._build_provisional_candidates(
                     normalized,
                     evidence=evidence,
                     top_n=fallback_top_n,
                     existing_candidates=exact_candidates + selected,
+                    allow_whole_word=allow_whole_word,
                 )
             )
+            for candidate in provisional_candidates:
+                self._attach_candidate_bundle_metadata(candidate)
+            exact_candidates, provisional_candidates, decomposition_priority_notes = (
+                self._apply_blind_decomposition_priority(
+                    word=normalized,
+                    allow_whole_word=allow_whole_word,
+                    exact_candidates=exact_candidates,
+                    compositional_candidates=selected,
+                    provisional_candidates=provisional_candidates,
+                    had_decomposition_attempts=bool(decompositions),
+                )
+            )
+            blind_suppression_notes.extend(provisional_suppression_notes)
+            blind_suppression_notes.extend(decomposition_priority_notes)
+            diagnostics["blind_retranslation"] = {
+                "enabled": not allow_whole_word,
+                "short_root_max_len": self.BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN,
+                "suppressed": blind_suppression_notes,
+            }
             if provisional_candidates and not selected:
                 fallback_used = True
                 fallback_mode = fallback_mode or "provisional_candidates"
@@ -1068,7 +1201,12 @@ class SingleWordTranslationService:
             coverage_ratio = _safe_ratio(base.get("breakdown"), "coverage_ratio")
             residual_ratio = _safe_ratio(base.get("breakdown"), "residual_ratio")
 
-            base["concatenated_meanings"] = self._concatenate_meanings(meanings)
+            bundle_surface = str(
+                base.get("bundle_surface_gloss") or base.get("bundle_head_gloss") or ""
+            ).strip()
+            base["concatenated_meanings"] = (
+                bundle_surface or self._concatenate_meanings(meanings)
+            )
 
             if llm_enabled:
                 morph_meanings = [
@@ -1226,17 +1364,23 @@ class SingleWordTranslationService:
         self,
         word: str,
         evidence: WordEvidence,
-    ) -> list[dict[str, object]]:
+        *,
+        allow_whole_word: bool,
+    ) -> tuple[list[dict[str, object]], list[str]]:
         """Build exact-word anchor candidates before decomposition ranking.
 
         Single-word translation needs exact lexical anchors and whole-word
         accepted roots to compete directly with decomposed analyses. This keeps
         canonical dictionary items definitive while still allowing a strong
-        whole-word database anchor to beat an over-eager split.
+        whole-word database anchor to beat an over-eager split. When blind
+        retranslation mode is active (`allow_whole_word=False`), this helper
+        suppresses exact dictionary matches and long whole-word DB anchors so
+        retranslations are forced back through productive decomposition.
         """
         candidates: list[dict[str, object]] = []
+        suppression_notes: list[str] = []
 
-        dictionary_exact = evidence.dictionary_morphs.get(word)
+        dictionary_exact = self._dictionary_exact_entry(word, evidence)
         if dictionary_exact and (dictionary_exact.definition or dictionary_exact.senses):
             definitions = [
                 text
@@ -1244,17 +1388,22 @@ class SingleWordTranslationService:
                 if isinstance(text, str) and text.strip()
             ]
             if definitions:
-                candidates.append(
-                    self._build_single_morph_candidate(
-                        word,
-                        definition=definitions[0],
-                        definitions=definitions,
-                        provenance="dictionary",
-                        score=200.0,
-                        analysis_type="dictionary_exact",
-                        warnings=[],
+                if allow_whole_word:
+                    candidates.append(
+                        self._build_single_morph_candidate(
+                            word,
+                            definition=definitions[0],
+                            definitions=definitions,
+                            provenance="dictionary",
+                            score=200.0,
+                            analysis_type="dictionary_exact",
+                            warnings=[],
+                        )
                     )
-                )
+                else:
+                    suppression_notes.append(
+                        f"Blind retranslation suppressed exact dictionary match for {word}."
+                    )
 
         exact_definition_candidates = extract_definition_candidates(
             [word],
@@ -1270,24 +1419,33 @@ class SingleWordTranslationService:
             selected = anchor_candidates[0]
             selected_definition = selected.get("definition")
             if isinstance(selected_definition, str) and selected_definition.strip():
-                candidates.append(
-                    self._build_single_morph_candidate(
-                        word,
-                        definition=selected_definition,
-                        definitions=[
-                            str(entry.get("definition")).strip()
-                            for entry in anchor_candidates
-                            if isinstance(entry.get("definition"), str)
-                            and str(entry.get("definition")).strip()
-                        ],
-                        provenance=str(selected.get("source") or "cluster"),
-                        score=150.0 + float(selected.get("quality") or 0.0),
-                        analysis_type="whole_word_anchor",
-                        warnings=[],
+                if (
+                    not allow_whole_word
+                    and len(word) > self.BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN
+                ):
+                    suppression_notes.append(
+                        "Blind retranslation suppressed long whole-word DB anchor "
+                        f"for {word}."
                     )
-                )
+                else:
+                    candidates.append(
+                        self._build_single_morph_candidate(
+                            word,
+                            definition=selected_definition,
+                            definitions=[
+                                str(entry.get("definition")).strip()
+                                for entry in anchor_candidates
+                                if isinstance(entry.get("definition"), str)
+                                and str(entry.get("definition")).strip()
+                            ],
+                            provenance=str(selected.get("source") or "cluster"),
+                            score=150.0 + float(selected.get("quality") or 0.0),
+                            analysis_type="whole_word_anchor",
+                            warnings=[],
+                        )
+                    )
 
-        return candidates
+        return candidates, suppression_notes
 
     def _build_provisional_candidates(
         self,
@@ -1296,15 +1454,19 @@ class SingleWordTranslationService:
         evidence: WordEvidence,
         top_n: int,
         existing_candidates: Sequence[dict[str, object]],
-    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        allow_whole_word: bool,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str]]:
         """Return provisional whole-word candidates plus human-readable hints.
 
         The current pipeline should not fail silently when support is weak but
         there is still corpus or dictionary context worth surfacing. Provisional
         candidates make that uncertainty explicit while preserving useful
         building blocks for later phrase-level or corpus-level disambiguation.
+        In blind retranslation mode, provisional exact-word fallback is only
+        allowed when the token does not already have an exact dictionary entry.
         """
         fallback_morphs = self._fallback_morph_hints(word)[:top_n]
+        suppression_notes: list[str] = []
         existing_types = {
             (
                 tuple(str(morph) for morph in candidate.get("morphs", [])),
@@ -1319,6 +1481,7 @@ class SingleWordTranslationService:
             for candidate in existing_candidates
             if isinstance(candidate, dict)
         )
+        has_dictionary_exact = self._dictionary_exact_entry(word, evidence) is not None
 
         provisional: list[dict[str, object]] = []
         attested_definitions = sorted(
@@ -1332,6 +1495,17 @@ class SingleWordTranslationService:
         )
         if (
             attested_definitions
+            and not allow_whole_word
+            and has_dictionary_exact
+            and not has_exact_word_candidate
+        ):
+            suppression_notes.append(
+                "Blind retranslation suppressed provisional full-word fallback "
+                f"for {word} because an exact dictionary entry exists."
+            )
+        if (
+            attested_definitions
+            and (allow_whole_word or not has_dictionary_exact)
             and not has_exact_word_candidate
             and ((word,), "provisional") not in existing_types
         ):
@@ -1349,7 +1523,27 @@ class SingleWordTranslationService:
                 )
             )
 
-        return provisional, fallback_morphs
+        return provisional, fallback_morphs, suppression_notes
+
+    @staticmethod
+    def _dictionary_exact_entry(
+        word: str,
+        evidence: WordEvidence,
+    ) -> DictionaryMorph | None:
+        """Return the exact dictionary entry for ``word`` when one is usable.
+
+        Blind retranslation decisions depend on whether a token has an exact
+        dictionary-backed whole-word reading, not just whether dictionary data
+        exists for substrings. Centralizing that lookup keeps the exact-anchor
+        and provisional-fallback rules aligned.
+        """
+
+        dictionary_exact = evidence.dictionary_morphs.get(word)
+        if dictionary_exact is None:
+            return None
+        if dictionary_exact.definition or dictionary_exact.senses:
+            return dictionary_exact
+        return None
 
     def _build_single_morph_candidate(
         self,
@@ -1374,6 +1568,7 @@ class SingleWordTranslationService:
             for idx, text in enumerate(definitions)
             if text and text not in definitions[:idx]
         ]
+        selected_definition = unique_definitions[0] if unique_definitions else definition
         return {
             "rank": 1,
             "morphs": [word],
@@ -1387,12 +1582,48 @@ class SingleWordTranslationService:
                     "canonical": word,
                     "definition": definition,
                     "definitions": unique_definitions,
+                    "raw_definition": definition,
+                    "semantic_core": [],
+                    "semantic_core_terms": [],
+                    "negative_contrast": [],
+                    "surface_gloss": definition,
+                    "surface_gloss_strategy": "whole_word",
                     "provenance": provenance,
                     "anchor_strength": 1.0,
+                    "definition_trace": {
+                        "selected_definition": selected_definition,
+                        "raw_selected_definition": selected_definition,
+                        "selected_semantic_core": [],
+                        "selected_negative_contrast": [],
+                        "surface_gloss": selected_definition,
+                        "surface_gloss_strategy": "whole_word",
+                        "selected_source": provenance,
+                        "selected_quality": 1.0,
+                        "runner_ups": [
+                            {
+                                "definition": alternate,
+                                "raw_definition": alternate,
+                                "semantic_core": [],
+                                "negative_contrast": [],
+                                "surface_gloss_strategy": "whole_word",
+                                "source": provenance,
+                                "quality": 1.0,
+                            }
+                            for alternate in unique_definitions
+                            if isinstance(alternate, str)
+                            and alternate.strip()
+                            and alternate != selected_definition
+                        ][:3],
+                        "suppressed": [],
+                        "blind_dictionary_fallback": False,
+                        "negative_contrast_penalties": [],
+                        "meta_linguistic_rejections": [],
+                    },
                 }
             ],
             "warnings": list(warnings),
             "analysis_type": analysis_type,
+            "blind_mode_whole_word_rescue": False,
         }
 
     def _annotate_candidate(
@@ -1418,6 +1649,132 @@ class SingleWordTranslationService:
             )
         if warnings:
             candidate["warnings"] = warnings
+
+    def _attach_candidate_bundle_metadata(self, candidate: dict[str, object]) -> None:
+        """Attach ordered semantic-bundle fields to one candidate payload.
+
+        Word translation previously collapsed each decomposition down to a flat
+        gloss list. Phrase translation now needs the ordered per-morph
+        structure preserved so blind-mode scoring, phrase composition, and
+        verbose traces can all see how the decomposition itself is carrying the
+        meaning.
+        """
+
+        meanings_raw = candidate.get("meanings")
+        meanings = meanings_raw if isinstance(meanings_raw, list) else []
+        bundle = compose_semantic_bundle(meanings)
+        candidate.update(bundle)
+        candidate.setdefault("blind_mode_whole_word_rescue", False)
+
+        bundle_semantic_cores = [
+            list(entry.get("semantic_core_terms") or [])
+            for entry in bundle.get("semantic_bundle", [])
+            if isinstance(entry, dict)
+        ]
+        bundle_negative_contrast = [
+            list(entry.get("negative_contrast") or [])
+            for entry in bundle.get("semantic_bundle", [])
+            if isinstance(entry, dict)
+        ]
+        bundle_surface_candidates = list(bundle.get("bundle_surface_candidates") or [])
+        bundle_selection_reason = str(bundle.get("bundle_selection_reason") or "").strip()
+        blind_mode_rescue_note = str(
+            candidate.get("blind_mode_rescue_note") or ""
+        ).strip()
+
+        for meaning in meanings:
+            if not isinstance(meaning, dict):
+                continue
+            trace_raw = meaning.get("definition_trace")
+            trace = dict(trace_raw) if isinstance(trace_raw, dict) else {}
+            trace["bundle_semantic_cores"] = bundle_semantic_cores
+            trace["bundle_negative_contrast"] = bundle_negative_contrast
+            trace["bundle_surface_candidates"] = bundle_surface_candidates
+            trace["bundle_selection_reason"] = bundle_selection_reason
+            if blind_mode_rescue_note:
+                trace["blind_mode_rescue_note"] = blind_mode_rescue_note
+            meaning["definition_trace"] = trace
+
+    def _apply_blind_decomposition_priority(
+        self,
+        *,
+        word: str,
+        allow_whole_word: bool,
+        exact_candidates: Sequence[dict[str, object]],
+        compositional_candidates: Sequence[dict[str, object]],
+        provisional_candidates: Sequence[dict[str, object]],
+        had_decomposition_attempts: bool,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str]]:
+        """Keep blind mode decomposition-first and reserve whole-word rescue.
+
+        `--no-whole-word(s)` is intended to stress-test decomposition quality,
+        not let provisional or whole-word reads silently retake the lead.
+        Whole-word candidates therefore stay out of the main winner path when a
+        usable compositional bundle already exists, but remain available as
+        clearly labeled rescue evidence when decomposition still collapses into
+        unresolved or meta-linguistic output.
+        """
+
+        if allow_whole_word:
+            return list(exact_candidates), list(provisional_candidates), []
+        if not compositional_candidates and not had_decomposition_attempts:
+            return list(exact_candidates), list(provisional_candidates), []
+
+        usable_compositional = any(
+            self._candidate_has_usable_bundle(candidate)
+            for candidate in compositional_candidates
+        )
+        if usable_compositional:
+            return (
+                [],
+                [],
+                [
+                    "Blind retranslation reserved whole-word readings for "
+                    f"{word} because decomposition already produced a usable lexical bundle."
+                ],
+            )
+
+        rescue_note = (
+            "Blind mode whole-word rescue activated because no usable "
+            "decomposition-level lexical bundle survived."
+        )
+        rescue_candidates = [dict(candidate) for candidate in exact_candidates]
+        rescue_candidates.extend(dict(candidate) for candidate in provisional_candidates)
+        for candidate in rescue_candidates:
+            candidate["blind_mode_whole_word_rescue"] = True
+            candidate["blind_mode_rescue_note"] = rescue_note
+            warnings = list(candidate.get("warnings") or [])
+            if rescue_note not in warnings:
+                warnings.append(rescue_note)
+            candidate["warnings"] = warnings
+            self._attach_candidate_bundle_metadata(candidate)
+
+        exact_count = len(exact_candidates)
+        return (
+            rescue_candidates[:exact_count],
+            rescue_candidates[exact_count:],
+            [f"{rescue_note} Token: {word}."],
+        )
+
+    @staticmethod
+    def _candidate_has_usable_bundle(candidate: dict[str, object]) -> bool:
+        """Return whether a candidate yields a phrase-usable bundle head.
+
+        Blind-mode rescue should only reintroduce whole-word evidence when the
+        decomposition still has no human-facing lexical head. This helper keeps
+        that threshold explicit and shared across word and phrase ranking.
+        """
+
+        if str(candidate.get("analysis_type") or "") != "compositional":
+            return False
+        if candidate_has_placeholder_gloss(candidate):
+            return False
+        bundle_head = str(candidate.get("bundle_head_gloss") or "").strip()
+        if not bundle_head:
+            return False
+        if candidate_is_placeholder_anchor(candidate):
+            return False
+        return float(candidate.get("bundle_coherence_score") or 0.0) >= 0.25
 
     def _merge_candidate_pool(
         self,

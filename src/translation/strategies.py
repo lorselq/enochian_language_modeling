@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import json
 import math
@@ -11,9 +11,17 @@ import numpy as np
 from enochian_lm.common.types import MaybeNumber
 from enochian_lm.root_extraction.utils.embeddings import (
     cluster_definitions,
-    get_sentence_transformer,
+    get_sentence_transformer_if_available,
 )
 from .decomposition import Decomposition
+from .placeholder_glosses import (
+    clean_lexical_gloss,
+    gloss_overlaps_negative_contrast,
+    is_meta_linguistic_gloss,
+    normalize_semantic_terms,
+    semantic_core_gloss,
+    surface_gloss_from_sources,
+)
 from .repository import ClusterRecord, DictionaryMorph, WordEvidence
 
 
@@ -117,6 +125,7 @@ def select_top_k(
     k: int = 3,
     *,
     evidence: WordEvidence | None = None,
+    allow_dictionary: bool = True,
 ) -> list[dict[str, object]]:
     if not ranked:
         return []
@@ -149,24 +158,56 @@ def select_top_k(
         if delta < 0.05:
             tie_warning = "alternate decomposition exists"
 
-    results: list[dict[str, object]] = []
-    for idx, (decomp, score) in enumerate(deduped[:top_k], start=1):
+    prepared_results: list[dict[str, object]] = []
+    for decomp, score in deduped:
         warnings: list[str] = []
-        if tie_warning and idx <= 2:
-            warnings.append(tie_warning)
-
         canonicals = list(decomp.canonicals) if decomp.canonicals else []
-        results.append(
+        meanings = _extract_meanings(
+            decomp=decomp,
+            evidence=evidence,
+            allow_dictionary=allow_dictionary,
+        )
+        bundle = compose_semantic_bundle(meanings)
+        adjusted_score = float(score) + _bundle_score_bonus(bundle)
+        prepared_results.append(
             {
-                "rank": idx,
                 "morphs": list(decomp.morphs),
                 "canonicals": canonicals,
-                "score": score,
+                "score": adjusted_score,
                 "breakdown": decomp.breakdown,
                 "score_breakdown": dict(decomp.score_breakdown)
                 if decomp.score_breakdown
                 else None,
-                "meanings": _extract_meanings(decomp=decomp, evidence=evidence),
+                "meanings": meanings,
+                "warnings": warnings,
+                **bundle,
+            }
+        )
+
+    prepared_results.sort(
+        key=lambda item: float(item.get("score") or 0.0),
+        reverse=True,
+    )
+
+    results: list[dict[str, object]] = []
+    for idx, prepared in enumerate(prepared_results[:top_k], start=1):
+        warnings = list(prepared.get("warnings") or [])
+        if tie_warning and idx <= 2:
+            warnings.append(tie_warning)
+        results.append(
+            {
+                "rank": idx,
+                "morphs": list(prepared.get("morphs") or []),
+                "canonicals": list(prepared.get("canonicals") or []),
+                "score": float(prepared.get("score") or 0.0),
+                "breakdown": prepared.get("breakdown"),
+                "score_breakdown": prepared.get("score_breakdown"),
+                "meanings": list(prepared.get("meanings") or []),
+                "semantic_bundle": list(prepared.get("semantic_bundle") or []),
+                "bundle_surface_gloss": prepared.get("bundle_surface_gloss"),
+                "bundle_head_gloss": prepared.get("bundle_head_gloss"),
+                "bundle_function_profile": prepared.get("bundle_function_profile"),
+                "bundle_coherence_score": prepared.get("bundle_coherence_score"),
                 "warnings": warnings,
             }
         )
@@ -178,6 +219,7 @@ def _extract_meanings(
     *,
     decomp: Decomposition,
     evidence: WordEvidence | None,
+    allow_dictionary: bool = True,
 ) -> list[dict[str, object]]:
     support_lookup: dict[str, str] = {
         k.upper(): v for k, v in (decomp.morph_support or {}).items()
@@ -199,6 +241,7 @@ def _extract_meanings(
         decomp.morphs,
         evidence,
         max_per_morph=4,
+        allow_dictionary=allow_dictionary,
     )
     for idx, morph in enumerate(decomp.morphs):
         key = (morph or "").upper()
@@ -211,6 +254,7 @@ def _extract_meanings(
             morph=key,
             evidence=evidence,
             canonical=canonical,
+            allow_dictionary=allow_dictionary,
         )
         candidates.setdefault(key, [])
         existing = {str(item.get("definition", "")).strip().lower() for item in candidates[key]}
@@ -228,7 +272,11 @@ def _extract_meanings(
             candidates[key].append(
                 {
                     "definition": normalized,
+                    "raw_definition": entry.get("raw_definition"),
                     "source": entry.get("provenance"),
+                    "semantic_core_terms": list(entry.get("semantic_core_terms") or []),
+                    "negative_contrast": list(entry.get("negative_contrast") or []),
+                    "surface_gloss_strategy": entry.get("surface_gloss_strategy") or "cleaned_definition",
                     "quality": 0.0,
                 }
             )
@@ -249,9 +297,24 @@ def _extract_meanings(
         selected = selections.get(key)
         definition = selected.get("definition") if selected else None
         provenance = selected.get("source") if selected else None
+        semantic_core_terms = list(selected.get("semantic_core_terms") or []) if selected else []
+        negative_contrast = list(selected.get("negative_contrast") or []) if selected else []
+        surface_gloss = selected.get("definition") if selected else None
+        surface_gloss_strategy = (
+            str(selected.get("surface_gloss_strategy") or "unresolved")
+            if selected
+            else "unresolved"
+        )
 
         if not provenance or provenance == "unknown":
             provenance = support_lookup.get(key, "unknown")
+        trace = _definition_trace(
+            morph=key,
+            selected=selected,
+            candidates=candidates.get(key, []),
+            evidence=evidence,
+            allow_dictionary=allow_dictionary,
+        )
 
         meanings.append(
             {
@@ -263,11 +326,22 @@ def _extract_meanings(
                     for entry in candidates.get(key, [])
                     if isinstance(entry.get("definition"), str)
                 ],
+                "raw_definition": (
+                    selected.get("raw_definition")
+                    if isinstance(selected, Mapping)
+                    else None
+                ),
+                "semantic_core": semantic_core_terms,
+                "semantic_core_terms": semantic_core_terms,
+                "negative_contrast": negative_contrast,
+                "surface_gloss": surface_gloss,
+                "surface_gloss_strategy": surface_gloss_strategy,
                 "provenance": provenance,
                 "anchor_strength": compute_anchor_strength(
                     key,
                     candidates.get(key, []),
                 ),
+                "definition_trace": trace,
             }
         )
 
@@ -279,6 +353,7 @@ def _meaning_from_evidence(
     morph: str,
     evidence: WordEvidence | None,
     canonical: str | None,
+    allow_dictionary: bool = True,
 ) -> list[dict[str, object]]:
     if evidence is None:
         return []
@@ -286,36 +361,73 @@ def _meaning_from_evidence(
     results: list[dict[str, object]] = []
     seen: set[str] = set()
 
-    def add(definition: str | None, provenance: str) -> None:
-        if not isinstance(definition, str):
+    def add(
+        definition: str | None,
+        provenance: str,
+        *,
+        semantic_core_terms: Sequence[str] | None = None,
+        negative_contrast: Sequence[str] | None = None,
+    ) -> None:
+        surface_gloss, strategy = surface_gloss_from_sources(
+            semantic_core=list(semantic_core_terms or []),
+            definition=definition,
+            negative_contrast=list(negative_contrast or []),
+            token=morph,
+        )
+        if not isinstance(surface_gloss, str):
             return
-        normalized = definition.strip()
+        normalized = surface_gloss.strip()
         if not normalized:
             return
         key = normalized.lower()
         if key in seen:
             return
         seen.add(key)
-        results.append({"definition": normalized, "provenance": provenance})
+        results.append(
+            {
+                "definition": normalized,
+                "raw_definition": definition.strip() if isinstance(definition, str) else None,
+                "provenance": provenance,
+                "semantic_core_terms": list(semantic_core_terms or []),
+                "negative_contrast": list(negative_contrast or []),
+                "surface_gloss_strategy": strategy,
+            }
+        )
 
     for cluster in evidence.direct_clusters:
         if cluster.ngram.upper() != morph:
             continue
+        definition, semantic_core_terms, negative_contrast = _glossator_candidate_metadata(
+            cluster.glossator_def
+        )
         definition = _first_non_empty(
-            _extract_glossator_definition(cluster.glossator_def),
+            definition,
             _first_cluster_raw_definition(cluster),
             cluster.residual_headline,
         )
-        add(definition, "cluster")
+        add(
+            definition,
+            "cluster",
+            semantic_core_terms=semantic_core_terms or cluster.semantic_core,
+            negative_contrast=negative_contrast or cluster.negative_contrast,
+        )
 
     for residual in evidence.residual_semantics:
         if residual.residual.upper() != morph:
             continue
+        definition, semantic_core_terms, negative_contrast = _glossator_candidate_metadata(
+            residual.glossator_def
+        )
         definition = _first_non_empty(
-            _extract_glossator_definition(residual.glossator_def),
+            definition,
             residual.residual_headline,
         )
-        add(definition, "residual")
+        add(
+            definition,
+            "residual",
+            semantic_core_terms=semantic_core_terms or residual.semantic_core,
+            negative_contrast=negative_contrast or residual.negative_contrast,
+        )
 
     for hypothesis in evidence.morph_hypotheses:
         if hypothesis.morph.upper() != morph:
@@ -331,7 +443,7 @@ def _meaning_from_evidence(
         add(definition, "attested")
 
     entry = evidence.dictionary_morphs.get(morph)
-    if entry is not None:
+    if allow_dictionary and entry is not None:
         definition = _first_non_empty(entry.definition, ", ".join(entry.senses))
         add(definition, "dictionary")
 
@@ -340,6 +452,7 @@ def _meaning_from_evidence(
             morph=canonical,
             evidence=evidence,
             canonical=None,
+            allow_dictionary=allow_dictionary,
         ):
             provenance = entry.get("provenance")
             definition = entry.get("definition")
@@ -443,6 +556,43 @@ def _definition_from_glossator_json(payload: dict) -> str | None:
     return None
 
 
+def _semantic_core_from_glossator_json(payload: Mapping[str, object]) -> list[str]:
+    return normalize_semantic_terms(
+        payload.get("SEMANTIC_CORE", payload.get("semantic_core"))
+    )
+
+
+def _negative_contrast_from_glossator_json(payload: Mapping[str, object]) -> list[str]:
+    return normalize_semantic_terms(
+        payload.get("NEGATIVE_CONTRAST", payload.get("negative_contrast"))
+    )
+
+
+def _glossator_candidate_metadata(payload: object) -> tuple[str | None, list[str], list[str]]:
+    if payload is None:
+        return None, [], []
+    if isinstance(payload, Mapping):
+        return (
+            _definition_from_glossator_json(payload),
+            _semantic_core_from_glossator_json(payload),
+            _negative_contrast_from_glossator_json(payload),
+        )
+    if not isinstance(payload, str):
+        return None, [], []
+
+    text = payload.strip()
+    if not text:
+        return None, [], []
+    parsed = _parse_glossator_json(text)
+    if not isinstance(parsed, Mapping):
+        return None, [], []
+    return (
+        _definition_from_glossator_json(parsed),
+        _semantic_core_from_glossator_json(parsed),
+        _negative_contrast_from_glossator_json(parsed),
+    )
+
+
 def _length_variance(morphs: Iterable[str]) -> float:
     lengths = [len(m or "") for m in morphs]
     if len(lengths) <= 1:
@@ -464,6 +614,419 @@ def _safe_number(value: MaybeNumber, *, default: float) -> float:
     return default
 
 
+_FUNCTION_CANONICAL_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "imperative_existential",
+        "let there be",
+        ("let there be", "bring into being", "establish create"),
+    ),
+    (
+        "within_self",
+        "within itself",
+        ("within itself", "in itself", "within her"),
+    ),
+    (
+        "conjunction",
+        "and",
+        ("conjunction", "additive", "links", "linkage", "parallel elements"),
+    ),
+    (
+        "relative",
+        "that",
+        ("which", "that", "relativizer", "relative clause", "subordination"),
+    ),
+    (
+        "feminine_locative_possessive",
+        "her",
+        ("her", "she", "feminine", "possessive", "locative relation"),
+    ),
+    (
+        "locative",
+        "in",
+        ("locative", "inside", "within", "in"),
+    ),
+)
+
+_FUNCTION_ABSTRACT_HINTS: dict[str, set[str]] = {
+    "imperative_existential": {"existence", "state", "copula", "being"},
+    "within_self": {"within", "inside", "self", "locative", "relation"},
+    "conjunction": {"conjunction", "additive", "parallel", "elements", "link", "linkage"},
+    "relative": {"relation", "subordination", "relative", "clause", "entity"},
+    "feminine_locative_possessive": {"possession", "possessive", "locative", "relation", "feminine", "referent"},
+    "locative": {"locative", "inside", "within", "position", "relation"},
+}
+
+
+def compose_semantic_bundle(meanings: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """Collapse ordered morph meanings into one word-level semantic bundle.
+
+    Single-word translation already knows the morph-by-morph reading for a
+    decomposition. Phrase translation needs that richer structure preserved so
+    blind-mode ranking can prefer coherent decompositions instead of collapsing
+    immediately to one gloss string. This helper keeps the ordered per-morph
+    evidence and derives a human-facing bundle head plus a lightweight
+    coherence score for downstream ranking and phrase assembly.
+    """
+
+    bundle_entries: list[dict[str, object]] = []
+    surface_candidates: list[str] = []
+    content_entries: list[dict[str, object]] = []
+    function_entries: list[dict[str, object]] = []
+
+    for meaning in meanings:
+        if not isinstance(meaning, Mapping):
+            continue
+        entry = _compose_bundle_entry(meaning)
+        bundle_entries.append(entry)
+        head_gloss = str(entry.get("head_gloss") or "").strip()
+        if head_gloss and head_gloss not in surface_candidates:
+            surface_candidates.append(head_gloss)
+        if str(entry.get("kind") or "") == "function":
+            function_entries.append(entry)
+        else:
+            content_entries.append(entry)
+
+    bundle_head = _bundle_head_gloss(content_entries, function_entries)
+    bundle_surface = bundle_head
+    bundle_function_profile = _bundle_function_profile(content_entries, function_entries)
+    bundle_coherence = _bundle_coherence_score(
+        bundle_entries,
+        bundle_head_gloss=bundle_head,
+    )
+
+    return {
+        "semantic_bundle": bundle_entries,
+        "bundle_surface_gloss": bundle_surface,
+        "bundle_head_gloss": bundle_head,
+        "bundle_function_profile": bundle_function_profile,
+        "bundle_coherence_score": bundle_coherence,
+        "bundle_surface_candidates": surface_candidates,
+        "bundle_selection_reason": _bundle_selection_reason(
+            bundle_entries,
+            bundle_head_gloss=bundle_head,
+            bundle_function_profile=bundle_function_profile,
+        ),
+    }
+
+
+def _compose_bundle_entry(meaning: Mapping[str, object]) -> dict[str, object]:
+    """Normalize one morph meaning into a bundle entry for phrase composition.
+
+    The phrase layer needs a stable per-morph record that already knows whether
+    it behaves more like a function word or a content word. Building that here
+    keeps all decomposition candidates on the same lexical footing before the
+    phrase parser ever sees them.
+    """
+
+    morph = str(meaning.get("morph") or "").upper()
+    raw_definition = (
+        str(meaning.get("raw_definition") or "").strip() or None
+    )
+    surface_gloss = (
+        str(meaning.get("surface_gloss") or "").strip() or None
+    )
+    if not surface_gloss:
+        definition = meaning.get("definition")
+        if isinstance(definition, str) and definition.strip():
+            surface_gloss = definition.strip()
+    semantic_core_terms = normalize_semantic_terms(
+        meaning.get("semantic_core_terms") or meaning.get("semantic_core")
+    )
+    negative_contrast = normalize_semantic_terms(
+        meaning.get("negative_contrast")
+    )
+    provenance = str(meaning.get("provenance") or "unknown")
+    trace = meaning.get("definition_trace")
+    quality = 0.0
+    if isinstance(trace, Mapping):
+        quality = _safe_number(trace.get("selected_quality"), default=0.0)
+    quality = max(quality, _safe_number(meaning.get("anchor_strength"), default=0.0))
+
+    function_profile, canonical_gloss = _infer_function_profile(
+        surface_gloss=surface_gloss,
+        semantic_core_terms=semantic_core_terms,
+        raw_definition=raw_definition,
+    )
+    chosen_gloss = _choose_bundle_entry_gloss(
+        surface_gloss=surface_gloss,
+        canonical_gloss=canonical_gloss,
+        function_profile=function_profile,
+        semantic_core_terms=semantic_core_terms,
+        negative_contrast=negative_contrast,
+    )
+
+    return {
+        "morph": morph,
+        "surface_gloss": surface_gloss,
+        "semantic_core_terms": semantic_core_terms,
+        "negative_contrast": negative_contrast,
+        "provenance": provenance,
+        "function_profile": function_profile,
+        "kind": "function" if function_profile else "content",
+        "head_gloss": chosen_gloss,
+        "quality": quality,
+        "raw_definition": raw_definition,
+    }
+
+
+def _infer_function_profile(
+    *,
+    surface_gloss: str | None,
+    semantic_core_terms: Sequence[str],
+    raw_definition: str | None,
+) -> tuple[str | None, str | None]:
+    """Infer whether a morph behaves like a normalized function word.
+
+    Blind-mode phrase rendering needs compact English for conjunctions,
+    relative markers, feminine possessives, and locatives. This helper detects
+    those cases from the surviving semantic payload without flattening content
+    words into grammar labels.
+    """
+
+    normalized_gloss = (surface_gloss or "").strip().lower()
+    normalized_terms = [term.strip().lower() for term in semantic_core_terms if term]
+    raw_lower = (raw_definition or "").strip().lower()
+
+    for profile, canonical, hints in _FUNCTION_CANONICAL_RULES:
+        for hint in hints:
+            hint_lower = hint.lower()
+            if normalized_gloss == hint_lower:
+                return profile, canonical
+            if hint_lower in normalized_terms:
+                return profile, canonical
+            if hint_lower and hint_lower in raw_lower:
+                if profile == "feminine_locative_possessive" and "glory" in raw_lower:
+                    continue
+                return profile, canonical
+
+    if (
+        "feminine" in raw_lower
+        and "possessive" in raw_lower
+        and "locative" in raw_lower
+        and "glory" not in raw_lower
+    ):
+        return "feminine_locative_possessive", "her"
+    return None, None
+
+
+def _choose_bundle_entry_gloss(
+    *,
+    surface_gloss: str | None,
+    canonical_gloss: str | None,
+    function_profile: str | None,
+    semantic_core_terms: Sequence[str],
+    negative_contrast: Sequence[str],
+) -> str | None:
+    """Pick the lexical head for one bundle entry with soft function preference.
+
+    The user wants concise function-word normalization, but only as a medium
+    preference. This helper therefore keeps richer lexical phrasing when it is
+    materially better, while still canonicalizing abstract grammar prose such
+    as `parallel elements` or `possession`.
+    """
+
+    if canonical_gloss is None:
+        return surface_gloss
+
+    current = surface_gloss
+    if current is None:
+        return canonical_gloss
+    if is_meta_linguistic_gloss(current) or len(current.split()) > 2:
+        return canonical_gloss
+
+    generic_hints = _FUNCTION_ABSTRACT_HINTS.get(function_profile or "", set())
+    current_tokens = _bundle_gloss_tokens(current)
+    if current_tokens and current_tokens <= generic_hints:
+        return canonical_gloss
+
+    current_score = _bundle_similarity_score(
+        current,
+        semantic_terms=semantic_core_terms,
+        negative_contrast=negative_contrast,
+    )
+    canonical_score = _bundle_similarity_score(
+        canonical_gloss,
+        semantic_terms=semantic_core_terms,
+        negative_contrast=negative_contrast,
+    )
+    if canonical_score + 0.20 >= current_score:
+        return canonical_gloss
+    return current
+
+
+def _bundle_head_gloss(
+    content_entries: Sequence[Mapping[str, object]],
+    function_entries: Sequence[Mapping[str, object]],
+) -> str | None:
+    """Choose the word-level lexical head from ordered bundle entries.
+
+    Phrase assembly needs one compact lexical anchor per token even when the
+    underlying candidate preserves several morph meanings. This chooser favors
+    the strongest surviving content gloss and only falls back to a function
+    gloss when the bundle is purely grammatical.
+    """
+
+    if content_entries:
+        ranked = sorted(
+            content_entries,
+            key=lambda entry: (
+                _safe_number(entry.get("quality"), default=0.0),
+                -len(str(entry.get("head_gloss") or "").split()),
+            ),
+            reverse=True,
+        )
+        for entry in ranked:
+            head_gloss = entry.get("head_gloss")
+            if isinstance(head_gloss, str) and head_gloss.strip():
+                return head_gloss.strip()
+    for entry in function_entries:
+        head_gloss = entry.get("head_gloss")
+        if isinstance(head_gloss, str) and head_gloss.strip():
+            return head_gloss.strip()
+    return None
+
+
+def _bundle_function_profile(
+    content_entries: Sequence[Mapping[str, object]],
+    function_entries: Sequence[Mapping[str, object]],
+) -> str:
+    """Summarize whether a bundle behaves like a function or content word."""
+
+    if content_entries:
+        return "content"
+    for entry in function_entries:
+        profile = entry.get("function_profile")
+        if isinstance(profile, str) and profile.strip():
+            return profile.strip()
+    return "unknown"
+
+
+def _bundle_coherence_score(
+    bundle_entries: Sequence[Mapping[str, object]],
+    *,
+    bundle_head_gloss: str | None,
+) -> float:
+    """Estimate whether an ordered morph bundle yields a usable word reading.
+
+    Blind-mode ranking needs a cheap proxy for “does this decomposition look
+    phrase-usable?” This score rewards lexical heads, non-meta wording, and
+    per-entry quality while demoting bundles that still read like analysis
+    prose instead of translation.
+    """
+
+    if not bundle_entries:
+        return 0.0
+
+    quality_values: list[float] = []
+    lexical_entries = 0
+    function_entries = 0
+    for entry in bundle_entries:
+        quality_values.append(_safe_number(entry.get("quality"), default=0.0))
+        head_gloss = str(entry.get("head_gloss") or "").strip()
+        if head_gloss and not is_meta_linguistic_gloss(head_gloss):
+            lexical_entries += 1
+        if str(entry.get("kind") or "") == "function":
+            function_entries += 1
+
+    average_quality = sum(quality_values) / float(len(quality_values)) if quality_values else 0.0
+    lexical_ratio = lexical_entries / float(len(bundle_entries))
+    score = 0.35 * average_quality + 0.45 * lexical_ratio
+    if bundle_head_gloss:
+        score += 0.20
+    if function_entries and lexical_entries:
+        score += 0.05
+    return max(0.0, min(1.0, score))
+
+
+def _bundle_selection_reason(
+    bundle_entries: Sequence[Mapping[str, object]],
+    *,
+    bundle_head_gloss: str | None,
+    bundle_function_profile: str,
+) -> str:
+    """Summarize how ordered morph evidence collapsed into one word reading."""
+
+    if not bundle_entries:
+        return "No bundle evidence survived."
+    if bundle_head_gloss is None:
+        return "No lexical bundle head survived after cleanup."
+    entry_count = len(bundle_entries)
+    if bundle_function_profile != "content":
+        return (
+            f"Ordered bundle normalized {entry_count} morph reading(s) into the "
+            f'function gloss "{bundle_head_gloss}".'
+        )
+    return (
+        f"Ordered bundle preferred the lexical head \"{bundle_head_gloss}\" from "
+        f"{entry_count} surviving morph reading(s)."
+    )
+
+
+def _bundle_score_bonus(bundle: Mapping[str, object]) -> float:
+    """Add a small bundle-viability bonus to compositional candidate scores.
+
+    Decomposition ranking should still be dominated by the underlying evidence
+    model, but phrase translation benefits when candidates that already produce
+    a usable lexical head rise slightly above equally scored glossary-like
+    alternatives.
+    """
+
+    coherence = _safe_number(bundle.get("bundle_coherence_score"), default=0.0)
+    head_gloss = str(bundle.get("bundle_head_gloss") or "").strip()
+    if not head_gloss:
+        return -0.25
+    if is_meta_linguistic_gloss(head_gloss):
+        return -0.35
+    return 0.75 * coherence
+
+
+def _bundle_gloss_tokens(text: str) -> set[str]:
+    """Tokenize a bundle gloss without depending on placeholder helpers.
+
+    Bundle scoring needs a tiny lexical overlap check, but the phrase/placeholder
+    layer keeps its tokenizer private. This local copy keeps the strategies
+    layer self-contained while still using the same stopword policy.
+    """
+
+    return {
+        token.lower()
+        for token in re.findall(r"[a-zA-Z][a-zA-Z'-]*", text)
+        if token.lower() not in {"a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "is", "of", "on", "or", "that", "the", "to", "through", "upon", "which", "with"}
+    }
+
+
+def _bundle_similarity_score(
+    candidate: str,
+    *,
+    semantic_terms: Sequence[str],
+    negative_contrast: Sequence[str],
+) -> float:
+    """Score one bundle gloss candidate against semantic-core hints.
+
+    Bundle gloss choice only needs a lightweight lexical alignment check. This
+    helper intentionally mirrors the semantic-core-first policy without pulling
+    in the broader placeholder-gloss selection machinery.
+    """
+
+    candidate_tokens = _bundle_gloss_tokens(candidate)
+    if not candidate_tokens:
+        return -1.0
+
+    best_score = -1.0
+    for term in semantic_terms:
+        term_tokens = _bundle_gloss_tokens(term)
+        if not term_tokens:
+            continue
+        overlap = len(candidate_tokens & term_tokens) / float(len(term_tokens))
+        score = overlap
+        if candidate.strip().lower() == term.strip().lower():
+            score += 0.05
+        blocked = gloss_overlaps_negative_contrast(candidate, negative_contrast)
+        score -= 0.25 * float(len(blocked))
+        best_score = max(best_score, score)
+    return best_score
+
+
 # ---------------------------------------------
 # Beam-scoring helpers for definition candidates
 # ---------------------------------------------
@@ -473,6 +1036,7 @@ def extract_definition_candidates(
     evidence: WordEvidence,
     *,
     max_per_morph: int = 3,
+    allow_dictionary: bool = True,
 ) -> dict[str, list[dict[str, object]]]:
     """Return candidate definitions per morph with quality metadata."""
     try:
@@ -486,7 +1050,11 @@ def extract_definition_candidates(
         if not morph:
             continue
 
-        candidates = _collect_definition_candidates(morph, evidence)
+        candidates = _collect_definition_candidates(
+            morph,
+            evidence,
+            allow_dictionary=allow_dictionary,
+        )
         if candidates:
             candidates.sort(
                 key=lambda item: (_candidate_quality(item), len(item.get("definition", ""))),
@@ -534,11 +1102,20 @@ def compute_complementarity_band_similarity(
     if len(cleaned) < 2:
         return 0.0
 
-    embedder = get_sentence_transformer("paraphrase-MiniLM-L6-v2")
-    vectors = [
-        np.array(embedder.encode(text, normalize_embeddings=True), dtype=float)
-        for text in cleaned
-    ]
+    embedder = get_sentence_transformer_if_available(
+        "paraphrase-MiniLM-L6-v2",
+        local_files_only=True,
+    )
+    if embedder is None:
+        return 0.0
+
+    try:
+        vectors = [
+            np.array(embedder.encode(text, normalize_embeddings=True), dtype=float)
+            for text in cleaned
+        ]
+    except Exception:
+        return 0.0
 
     sims: list[float] = []
     for i in range(len(vectors)):
@@ -840,12 +1417,21 @@ def _definition_cluster_map(definitions: list[str]) -> dict[str, int]:
     if len(cleaned) == 1:
         return {cleaned[0]: 0}
 
-    embedder = get_sentence_transformer("paraphrase-MiniLM-L6-v2")
-    clusters = cluster_definitions(
-        cleaned,
-        model=embedder,
-        similarity_threshold=0.8,
+    embedder = get_sentence_transformer_if_available(
+        "paraphrase-MiniLM-L6-v2",
+        local_files_only=True,
     )
+    if embedder is None:
+        return {definition: idx for idx, definition in enumerate(cleaned)}
+
+    try:
+        clusters = cluster_definitions(
+            cleaned,
+            model=embedder,
+            similarity_threshold=0.8,
+        )
+    except Exception:
+        return {definition: idx for idx, definition in enumerate(cleaned)}
     mapping: dict[str, int] = {}
     for idx, cluster in enumerate(clusters):
         for member_idx in cluster.get("members", []):
@@ -857,12 +1443,24 @@ def _definition_cluster_map(definitions: list[str]) -> dict[str, int]:
 def _collect_definition_candidates(
     morph: str,
     evidence: WordEvidence,
+    *,
+    allow_dictionary: bool = True,
 ) -> list[dict[str, object]]:
     candidates: list[dict[str, object]] = []
     seen: set[str] = set()
 
     def add_candidate(payload: dict[str, object]) -> None:
-        definition = payload.get("definition")
+        raw_definition = payload.get("raw_definition")
+        if not isinstance(raw_definition, str):
+            raw_definition = payload.get("definition")
+        semantic_core_terms = normalize_semantic_terms(payload.get("semantic_core_terms"))
+        negative_contrast = normalize_semantic_terms(payload.get("negative_contrast"))
+        definition, strategy = surface_gloss_from_sources(
+            semantic_core=semantic_core_terms,
+            definition=raw_definition,
+            negative_contrast=negative_contrast,
+            token=morph,
+        )
         if not isinstance(definition, str):
             return
         normalized = definition.strip()
@@ -873,21 +1471,33 @@ def _collect_definition_candidates(
             return
         seen.add(key)
         payload["definition"] = normalized
+        payload["raw_definition"] = raw_definition.strip() if isinstance(raw_definition, str) else None
+        payload["semantic_core_terms"] = semantic_core_terms
+        payload["negative_contrast"] = negative_contrast
+        payload["surface_gloss_strategy"] = strategy
+        payload["meta_linguistic_rejection"] = (
+            isinstance(raw_definition, str) and is_meta_linguistic_gloss(raw_definition)
+        )
         payload["quality"] = _candidate_quality(payload)
         candidates.append(payload)
 
     for cluster in evidence.direct_clusters:
         if cluster.ngram.upper() != morph:
             continue
+        definition, semantic_core_terms, negative_contrast = _glossator_candidate_metadata(
+            cluster.glossator_def
+        )
         definition = _first_non_empty(
-            _extract_glossator_definition(cluster.glossator_def),
+            definition,
             _first_cluster_raw_definition(cluster),
             cluster.residual_headline,
         )
         if definition:
             add_candidate(
                 {
-                    "definition": definition,
+                    "raw_definition": definition,
+                    "semantic_core_terms": semantic_core_terms or cluster.semantic_core,
+                    "negative_contrast": negative_contrast or cluster.negative_contrast,
                     "source": "cluster",
                     "cluster_id": cluster.cluster_id,
                     "semantic_coverage": cluster.semantic_coverage,
@@ -901,14 +1511,19 @@ def _collect_definition_candidates(
     for residual in evidence.residual_semantics:
         if residual.residual.upper() != morph:
             continue
+        definition, semantic_core_terms, negative_contrast = _glossator_candidate_metadata(
+            residual.glossator_def
+        )
         definition = _first_non_empty(
-            _extract_glossator_definition(residual.glossator_def),
+            definition,
             residual.residual_headline,
         )
         if definition:
             add_candidate(
                 {
-                    "definition": definition,
+                    "raw_definition": definition,
+                    "semantic_core_terms": semantic_core_terms or residual.semantic_core,
+                    "negative_contrast": negative_contrast or residual.negative_contrast,
                     "source": "residual",
                     "semantic_coverage": residual.semantic_coverage,
                     "cohesion": residual.cohesion,
@@ -927,7 +1542,7 @@ def _collect_definition_candidates(
         if definition:
             add_candidate(
                 {
-                    "definition": definition,
+                    "raw_definition": definition,
                     "source": "hypothesis",
                     "anchor": hypothesis.anchor,
                     "delta_cosine": hypothesis.delta_cosine,
@@ -943,7 +1558,7 @@ def _collect_definition_candidates(
         if definition:
             add_candidate(
                 {
-                    "definition": definition,
+                    "raw_definition": definition,
                     "source": "attested",
                     "cluster_id": attested.cluster_id,
                 }
@@ -955,12 +1570,148 @@ def _collect_definition_candidates(
         if definition:
             add_candidate(
                 {
-                    "definition": definition,
+                    "raw_definition": definition,
                     "source": "dictionary",
                 }
             )
 
-    return candidates
+    if allow_dictionary:
+        return candidates
+
+    non_dictionary = [
+        candidate for candidate in candidates if str(candidate.get("source") or "") != "dictionary"
+    ]
+    if non_dictionary:
+        return non_dictionary
+
+    dictionary_only: list[dict[str, object]] = []
+    for candidate in candidates:
+        if str(candidate.get("source") or "") != "dictionary":
+            continue
+        fallback = dict(candidate)
+        fallback["blind_dictionary_fallback"] = True
+        dictionary_only.append(fallback)
+    return dictionary_only
+
+
+def _definition_trace(
+    *,
+    morph: str,
+    selected: Mapping[str, object] | None,
+    candidates: Sequence[dict[str, object]],
+    evidence: WordEvidence | None,
+    allow_dictionary: bool,
+) -> dict[str, object]:
+    """Capture the provenance trail behind a selected morph definition.
+
+    Phrase-level reporting needs more than the winning gloss string. This trace
+    preserves the selected source, nearby runner-ups, and any blind-mode
+    suppressions so downstream footnotes can explain why a reading survived.
+    """
+
+    selected_definition = (
+        selected.get("definition") if isinstance(selected, Mapping) else None
+    )
+    selected_raw_definition = (
+        selected.get("raw_definition") if isinstance(selected, Mapping) else None
+    )
+    selected_semantic_core = normalize_semantic_terms(
+        selected.get("semantic_core_terms") if isinstance(selected, Mapping) else []
+    )
+    selected_negative_contrast = normalize_semantic_terms(
+        selected.get("negative_contrast") if isinstance(selected, Mapping) else []
+    )
+    runner_ups: list[dict[str, object]] = []
+    for candidate in candidates:
+        definition = candidate.get("definition")
+        if not isinstance(definition, str) or not definition.strip():
+            continue
+        if (
+            isinstance(selected_definition, str)
+            and definition.strip() == selected_definition.strip()
+        ):
+            continue
+        runner_ups.append(
+            {
+                "definition": definition.strip(),
+                "raw_definition": candidate.get("raw_definition"),
+                "semantic_core": list(candidate.get("semantic_core_terms") or []),
+                "negative_contrast": list(candidate.get("negative_contrast") or []),
+                "surface_gloss_strategy": candidate.get("surface_gloss_strategy"),
+                "source": str(candidate.get("source") or "unknown"),
+                "quality": _safe_number(candidate.get("quality"), default=0.0),
+            }
+        )
+
+    blind_dictionary_fallback = bool(
+        isinstance(selected, Mapping) and selected.get("blind_dictionary_fallback")
+    )
+    return {
+        "selected_definition": selected_definition.strip()
+        if isinstance(selected_definition, str) and selected_definition.strip()
+        else None,
+        "raw_selected_definition": (
+            selected_raw_definition.strip()
+            if isinstance(selected_raw_definition, str) and selected_raw_definition.strip()
+            else None
+        ),
+        "selected_semantic_core": selected_semantic_core,
+        "selected_negative_contrast": selected_negative_contrast,
+        "surface_gloss": selected_definition.strip()
+        if isinstance(selected_definition, str) and selected_definition.strip()
+        else None,
+        "surface_gloss_strategy": (
+            str(selected.get("surface_gloss_strategy") or "unresolved")
+            if isinstance(selected, Mapping)
+            else "unresolved"
+        ),
+        "selected_source": (
+            str(selected.get("source") or "unknown")
+            if isinstance(selected, Mapping)
+            else "unknown"
+        ),
+        "selected_quality": (
+            _safe_number(selected.get("quality"), default=0.0)
+            if isinstance(selected, Mapping)
+            else 0.0
+        ),
+        "runner_ups": runner_ups[:3],
+        "suppressed": _definition_suppression_notes(
+            morph=morph,
+            evidence=evidence,
+            allow_dictionary=allow_dictionary,
+            blind_dictionary_fallback=blind_dictionary_fallback,
+        ),
+        "blind_dictionary_fallback": blind_dictionary_fallback,
+        "negative_contrast_penalties": list(
+            selected.get("negative_contrast_penalties") or []
+        )
+        if isinstance(selected, Mapping)
+        else [],
+        "meta_linguistic_rejections": list(
+            selected.get("meta_linguistic_rejections") or []
+        )
+        if isinstance(selected, Mapping)
+        else [],
+    }
+
+
+def _definition_suppression_notes(
+    *,
+    morph: str,
+    evidence: WordEvidence | None,
+    allow_dictionary: bool,
+    blind_dictionary_fallback: bool,
+) -> list[str]:
+    """Describe blind-mode dictionary filtering for one morph trace."""
+
+    if allow_dictionary or evidence is None or evidence.dictionary_morphs.get(morph) is None:
+        return []
+    if blind_dictionary_fallback:
+        return [
+            f"Blind mode reintroduced dictionary evidence for {morph} because no non-dictionary definition survived."
+        ]
+    return [f"Blind mode suppressed dictionary-backed definition candidates for {morph}."]
 
 
 def _candidate_quality(candidate: dict[str, object]) -> float:
@@ -971,4 +1722,28 @@ def _candidate_quality(candidate: dict[str, object]) -> float:
         candidate.get("delta_cosine"),
     ]
     values = [_safe_number(metric, default=0.0) for metric in metrics if metric is not None]
-    return sum(values) / float(len(values)) if values else 0.0
+    base_quality = sum(values) / float(len(values)) if values else 0.0
+
+    semantic_core_terms = normalize_semantic_terms(candidate.get("semantic_core_terms"))
+    surface_gloss = candidate.get("definition")
+    lexical_bonus = 0.12 if semantic_core_terms else 0.0
+    if isinstance(surface_gloss, str) and surface_gloss.strip():
+        if not is_meta_linguistic_gloss(surface_gloss):
+            lexical_bonus += 0.08
+
+    negative_contrast_penalties = gloss_overlaps_negative_contrast(
+        surface_gloss,
+        candidate.get("negative_contrast"),
+    )
+    candidate["negative_contrast_penalties"] = negative_contrast_penalties
+    meta_linguistic_rejections = []
+    raw_definition = candidate.get("raw_definition")
+    if isinstance(raw_definition, str) and is_meta_linguistic_gloss(raw_definition):
+        meta_linguistic_rejections.append(raw_definition.strip())
+    candidate["meta_linguistic_rejections"] = meta_linguistic_rejections
+
+    penalty = 0.18 * len(negative_contrast_penalties)
+    if candidate.get("meta_linguistic_rejection") and not semantic_core_terms:
+        penalty += 0.12
+
+    return max(0.0, base_quality + lexical_bonus - penalty)

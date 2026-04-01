@@ -9,7 +9,10 @@ import math
 import numpy as np
 
 from enochian_lm.common.types import FastTextModel, MaybeNumber, Vector
-from enochian_lm.root_extraction.utils.embeddings import cluster_definitions, get_sentence_transformer
+from enochian_lm.root_extraction.utils.embeddings import (
+    cluster_definitions,
+    get_sentence_transformer_if_available,
+)
 from .decomposition import Decomposition
 from .repository import (
     ClusterRecord,
@@ -477,7 +480,12 @@ def _definition_coherence_score(
     if not morph_list:
         return 0.0
 
-    embedder = get_sentence_transformer("paraphrase-MiniLM-L6-v2")
+    embedder = get_sentence_transformer_if_available(
+        "paraphrase-MiniLM-L6-v2",
+        local_files_only=True,
+    )
+    if embedder is None:
+        return 0.0
     morph_scores: list[float] = []
     centroid_vectors: list[np.ndarray] = []
 

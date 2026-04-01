@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import threading
+import time
 import textwrap
 from pathlib import Path
 from collections.abc import Iterable, Sequence
@@ -35,12 +38,28 @@ COMMAND_ALIASES = {
 
 
 class TranslationCLIProgressRenderer:
-    """Render translation LLM status updates as plain CLI lines."""
+    """Render timed translation progress updates for long-running CLI work.
 
-    def __init__(self, stream = None) -> None:
+    Phrase translation now spends meaningful time in deterministic token
+    analysis and in opaque remote render calls. This renderer keeps both of
+    those stages visibly alive with elapsed timers, variant labels, and honest
+    ETA reporting where the pipeline actually has enough information.
+    """
+
+    def __init__(self, stream = None, *, clock = None) -> None:
         self.stream = stream or sys.stderr
         self._is_tty = bool(getattr(self.stream, "isatty", lambda: False)())
         self._active = False
+        self._clock = clock or time.monotonic
+        started = self._clock()
+        self._overall_started = started
+        self._stage_started = started
+        self._stage_id: str | None = None
+        self._token_phase_started: float | None = None
+        self._current_variant: str | None = None
+        self._current_variant_index: int | None = None
+        self._current_variant_total: int | None = None
+        self._lock = threading.Lock()
 
     def prepare(self, progress: LLMRequestProgress) -> None:
         suffix = ""
@@ -48,9 +67,12 @@ class TranslationCLIProgressRenderer:
             suffix = f" ({progress.total_primary_requests} planned request"
             suffix += "s" if progress.total_primary_requests != 1 else ""
             suffix += ")"
-        self._write(f"Preparing LLM synthesis...{suffix}")
+        self.stage(
+            f"Preparing LLM synthesis...{suffix}",
+            stage_id="llm_prepare",
+        )
 
-    def stage(self, message: str) -> None:
+    def stage(self, message: str, **metadata: object) -> None:
         """Render deterministic phrase-translation stage updates.
 
         Phrase translation now exposes several non-LLM stages that can still
@@ -58,10 +80,45 @@ class TranslationCLIProgressRenderer:
         lines visually aligned with the existing single-word LLM progress path.
         """
 
-        self._write(message)
+        with self._lock:
+            now = self._clock()
+            self._apply_context(metadata)
+            stage_id = metadata.get("stage_id")
+            if isinstance(stage_id, str):
+                self._begin_stage(stage_id, now)
+            elif self._stage_id is None:
+                self._begin_stage("generic", now)
+
+            elapsed = metadata.get("elapsed_seconds")
+            elapsed_seconds = (
+                float(elapsed)
+                if isinstance(elapsed, (int, float))
+                else max(0.0, now - self._stage_started)
+            )
+            extras = self._common_extras(elapsed_seconds)
+            current = metadata.get("current")
+            total = metadata.get("total")
+            if (
+                self._stage_id == "token_analysis"
+                and isinstance(current, int)
+                and isinstance(total, int)
+                and current > 0
+                and self._token_phase_started is not None
+            ):
+                token_elapsed = max(0.0, now - self._token_phase_started)
+                avg = token_elapsed / float(current)
+                extras.append(f"avg {avg:.1f}s/token")
+                if total > current:
+                    extras.append(
+                        f"eta {self._format_duration((total - current) * avg)}"
+                    )
+            self._write(self._compose_line(message, extras))
 
     def start_primary(self, *, phase: str, current: int, total: int) -> None:
-        self._write(f"{self._phase_label(phase)} ({current}/{total})")
+        self.stage(
+            f"{self._phase_label(phase)} ({current}/{total})",
+            stage_id=f"llm_{phase}",
+        )
 
     def start_validation(
         self,
@@ -73,18 +130,145 @@ class TranslationCLIProgressRenderer:
     ) -> None:
         label = self._phase_label(phase)
         if total > 0 and current > 0:
-            self._write(f"{label} ({current}/{total}, validation {kind})")
+            self.stage(
+                f"{label} ({current}/{total}, validation {kind})",
+                stage_id=f"llm_{phase}_validation",
+            )
         else:
-            self._write(f"{label} (validation {kind})")
+            self.stage(
+                f"{label} (validation {kind})",
+                stage_id=f"llm_{phase}_validation",
+            )
+
+    def llm_status(self, event: dict[str, object]) -> None:
+        """Render low-level LLM wait/retry events on the active progress line.
+
+        Remote render calls can stall for minutes while connecting, waiting for
+        the first token, or retrying after provider failures. This method turns
+        structured model-tool events into a single, continuously updated status
+        line so the CLI visibly proves the process is still alive.
+        """
+
+        with self._lock:
+            now = self._clock()
+            self._apply_context(event)
+            label = str(event.get("label") or "LLM request")
+            stage_id = str(event.get("stage_id") or label)
+            self._begin_stage(stage_id, now)
+            state = str(event.get("state") or "working")
+            warning = event.get("warning")
+            if isinstance(warning, str) and warning.strip():
+                warning_head = warning.split(":", 1)[0].strip()
+                base = f"{label} | {state} ({warning_head})"
+            else:
+                base = f"{label} | {state}"
+            extras = []
+            variant_label = self._variant_label()
+            if variant_label:
+                extras.append(variant_label)
+            source = event.get("source")
+            attempt = event.get("attempt")
+            max_attempts = event.get("max_attempts")
+            if isinstance(source, str) and source:
+                if isinstance(attempt, int) and isinstance(max_attempts, int):
+                    extras.append(f"{source} attempt {attempt}/{max_attempts}")
+                else:
+                    extras.append(source)
+            retry_delay = event.get("retry_delay_seconds")
+            if isinstance(retry_delay, (int, float)) and retry_delay > 0:
+                extras.append(f"next retry {self._format_duration(float(retry_delay))}")
+            chunk_count = event.get("chunk_count")
+            if isinstance(chunk_count, int) and chunk_count > 0:
+                extras.append(f"chunks {chunk_count}")
+            char_count = event.get("char_count")
+            if isinstance(char_count, int) and char_count > 0:
+                extras.append(f"chars {char_count}")
+            elapsed = event.get("elapsed_seconds")
+            elapsed_seconds = (
+                float(elapsed)
+                if isinstance(elapsed, (int, float))
+                else max(0.0, now - self._stage_started)
+            )
+            extras.append(f"elapsed {self._format_duration(elapsed_seconds)}")
+            self._write(self._compose_line(base, extras))
 
     def done(self) -> None:
-        self._write("Done.", final=True)
+        with self._lock:
+            total_elapsed = max(0.0, self._clock() - self._overall_started)
+            line = self._compose_line(
+                "Done.",
+                [f"elapsed {self._format_duration(total_elapsed)}"],
+            )
+            self._write(line, final=True)
 
     @staticmethod
     def _phase_label(phase: str) -> str:
         if phase == "consensus":
             return "Building consensus..."
         return "Synthesizing top candidates..."
+
+    def _apply_context(self, metadata: dict[str, object]) -> None:
+        variant = metadata.get("variant")
+        if isinstance(variant, str) and variant:
+            self._current_variant = variant
+        variant_index = metadata.get("variant_index")
+        if isinstance(variant_index, int):
+            self._current_variant_index = variant_index
+        variant_total = metadata.get("variant_total")
+        if isinstance(variant_total, int):
+            self._current_variant_total = variant_total
+
+    def _begin_stage(self, stage_id: str, now: float) -> None:
+        if stage_id == self._stage_id:
+            return
+        self._stage_id = stage_id
+        self._stage_started = now
+        if stage_id == "token_analysis":
+            self._token_phase_started = now
+        else:
+            self._token_phase_started = None
+
+    def _common_extras(self, elapsed_seconds: float) -> list[str]:
+        extras: list[str] = []
+        variant_label = self._variant_label()
+        if variant_label:
+            extras.append(variant_label)
+        extras.append(f"elapsed {self._format_duration(elapsed_seconds)}")
+        return extras
+
+    def _variant_label(self) -> str | None:
+        if not self._current_variant:
+            return None
+        if isinstance(self._current_variant_index, int) and isinstance(
+            self._current_variant_total, int
+        ):
+            return (
+                f"{self._current_variant} "
+                f"{self._current_variant_index}/{self._current_variant_total}"
+            )
+        return self._current_variant
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        total_seconds = max(0, int(round(seconds)))
+        minutes, secs = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f"{hours:d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
+
+    def _compose_line(self, message: str, extras: Sequence[str]) -> str:
+        visible_extras = [item for item in extras if item]
+        if not visible_extras:
+            return message
+        suffix = " | ".join(visible_extras)
+        if not self._is_tty:
+            return f"{message} | {suffix}"
+        width = shutil.get_terminal_size(fallback=(120, 20)).columns
+        if len(message) + len(suffix) + 1 < width:
+            padding = width - len(message) - len(suffix) - 1
+            return f"{message}{' ' * padding}{suffix}"
+        return f"{message} | {suffix}"
 
     def _write(self, message: str, *, final: bool = False) -> None:
         if self._is_tty:
@@ -271,9 +455,10 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         dest="allow_whole_word",
         action="store_false",
         help=(
-            "Disallow single-piece whole-word decomposition paths for multi-letter "
-            "words. Exact dictionary anchors and provisional full-word readings "
-            "may still appear."
+            "Blind retranslation mode: suppress exact dictionary matches, suppress "
+            "whole-word DB anchors longer than 2 characters, and disallow "
+            "single-piece whole-word decompositions. Short 1-2 character DB roots "
+            "and non-dictionary provisional exact reads may still appear."
         ),
     )
 
@@ -323,22 +508,22 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help=(
             "Enable an additional constrained/historical LLM render for the "
-            "chosen phrase parse. The lay translation is always attempted."
+            "chosen phrase parse, including the lay translation and footnotes."
         ),
     )
     llm_group.add_argument(
         "--no-llm",
         action="store_true",
         help=(
-            "Disable the additional constrained/historical render. The lay "
-            "translation is still attempted (default behavior)."
+            "Disable all phrase-level LLM rendering and use only deterministic "
+            "algorithmic output (default behavior)."
         ),
     )
     parser.add_argument(
         "--llm-mode",
         choices=["local", "remote"],
         default="remote",
-        help="Choose which LLM backend to use for lay and constrained phrase rendering.",
+        help="Choose which LLM backend to use when phrase-level rendering is enabled.",
     )
     parser.add_argument(
         "--llm-context",
@@ -395,9 +580,10 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
         dest="allow_whole_word",
         action="store_false",
         help=(
-            "Suppress single-piece whole-word decomposition paths for multi-letter "
-            "tokens. Exact dictionary anchors and provisional full-word readings "
-            "can still surface."
+            "Blind retranslation mode: suppress exact dictionary matches, suppress "
+            "whole-word DB anchors longer than 2 characters, and disallow "
+            "single-piece whole-word token analyses. Short 1-2 character DB roots "
+            "and non-dictionary provisional exact reads may still appear."
         ),
     )
 
@@ -638,10 +824,10 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
 
     llm_enabled = bool(args.llm) if args.llm or args.no_llm else False
     llm_use_remote = args.llm_mode == "remote"
-    try:
-        _configure_llm_env(args.llm_mode)
-    except FileNotFoundError as exc:
-        if llm_enabled:
+    if llm_enabled:
+        try:
+            _configure_llm_env(args.llm_mode)
+        except FileNotFoundError as exc:
             _emit_error(str(exc))
             return 2
 
@@ -659,13 +845,17 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
             if len(variants) > 1:
                 progress_renderer.stage(
                     f"Running {len(variants)} translation variants: "
-                    + ", ".join(str(variant) for variant in variants)
+                    + ", ".join(str(variant) for variant in variants),
+                    stage_id="variant_plan",
                 )
             for index, variant in enumerate(variants, start=1):
-                if len(variants) > 1:
-                    progress_renderer.stage(
-                        f"Starting variant {variant} ({index}/{len(variants)})..."
-                    )
+                progress_renderer.stage(
+                    f"Starting variant {variant} ({index}/{len(variants)})...",
+                    stage_id="variant_start",
+                    variant=variant,
+                    variant_index=index,
+                    variant_total=len(variants),
+                )
                 result = service.translate_phrase(
                     phrase,
                     variants=[variant],
@@ -686,10 +876,13 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
                         verbose=args.verbose,
                     )
                 )
-                if len(variants) > 1:
-                    progress_renderer.stage(
-                        f"Completed variant {variant} ({index}/{len(variants)})."
-                    )
+                progress_renderer.stage(
+                    f"Completed variant {variant} ({index}/{len(variants)}).",
+                    stage_id="variant_complete",
+                    variant=variant,
+                    variant_index=index,
+                    variant_total=len(variants),
+                )
     except FileNotFoundError as exc:
         _emit_error(str(exc))
         return 2
@@ -1375,6 +1568,22 @@ def _format_variant_report(
             if isinstance(fallback_morphs, list) and fallback_morphs:
                 sample = ", ".join(str(item) for item in fallback_morphs)
                 lines.append(_wrap_text(f"Fallback morphs: {sample}", indent=2))
+            blind_retranslation = diagnostics.get("blind_retranslation")
+            if isinstance(blind_retranslation, dict):
+                enabled = blind_retranslation.get("enabled")
+                short_root_max_len = blind_retranslation.get("short_root_max_len")
+                if isinstance(enabled, bool):
+                    label = f"Blind retranslation: {enabled}"
+                    if isinstance(short_root_max_len, int):
+                        label += f" (short roots <= {short_root_max_len})"
+                    lines.append(_wrap_text(label, indent=2))
+                suppressed = blind_retranslation.get("suppressed")
+                if isinstance(suppressed, list) and suppressed:
+                    lines.append(_wrap_text("Blind-mode suppressions:", indent=2))
+                    for item in suppressed:
+                        if not isinstance(item, str) or not item:
+                            continue
+                        lines.append(_wrap_text(item, indent=4, bullet=True))
             substring_support = diagnostics.get("substring_support")
             if isinstance(substring_support, list) and substring_support:
                 sample = ", ".join(str(item) for item in substring_support)
@@ -1694,13 +1903,161 @@ def _format_phrase_report(
                 for candidate in token_payload.get("candidates", []):
                     if not isinstance(candidate, dict):
                         continue
+                    chosen_suffix = " [chosen parse]" if candidate.get("chosen_in_parse") else ""
                     label = (
                         f"rank={candidate.get('rank')} "
                         f"type={candidate.get('analysis_type')} "
                         f"role={candidate.get('role_hint')} "
                         f"definition={candidate.get('definition') or '[' + str(token) + ']'}"
+                        f"{chosen_suffix}"
                     )
                     lines.append(_wrap_text(label, indent=4, bullet=True))
+                    definition_trace = candidate.get("definition_trace")
+                    if isinstance(definition_trace, dict):
+                        selected_source = definition_trace.get("selected_source")
+                        if isinstance(selected_source, str) and selected_source.strip():
+                            lines.append(
+                                _wrap_text(
+                                    f"Selected source: {selected_source.strip()}",
+                                    indent=6,
+                                )
+                            )
+                        surface_gloss = definition_trace.get("surface_gloss")
+                        if isinstance(surface_gloss, str) and surface_gloss.strip():
+                            gloss_strategy = str(
+                                definition_trace.get("surface_gloss_strategy") or "unknown"
+                            ).strip()
+                            lines.append(
+                                _wrap_text(
+                                    f"Surface gloss: {surface_gloss.strip()} ({gloss_strategy})",
+                                    indent=6,
+                                )
+                            )
+                        raw_selected_definition = definition_trace.get("raw_selected_definition")
+                        if (
+                            isinstance(raw_selected_definition, str)
+                            and raw_selected_definition.strip()
+                            and raw_selected_definition.strip()
+                            != str(definition_trace.get("surface_gloss") or "").strip()
+                        ):
+                            lines.append(
+                                _wrap_text(
+                                    f"Raw selected definition: {raw_selected_definition.strip()}",
+                                    indent=6,
+                                )
+                            )
+                        semantic_core = definition_trace.get("selected_semantic_core")
+                        if isinstance(semantic_core, list) and semantic_core:
+                            lines.append(
+                                _wrap_text(
+                                    "Semantic core: " + "; ".join(str(item) for item in semantic_core),
+                                    indent=6,
+                                )
+                            )
+                        bundle_surface_candidates = definition_trace.get("bundle_surface_candidates")
+                        if isinstance(bundle_surface_candidates, list) and bundle_surface_candidates:
+                            lines.append(
+                                _wrap_text(
+                                    "Bundle surface candidates: "
+                                    + "; ".join(str(item) for item in bundle_surface_candidates),
+                                    indent=6,
+                                )
+                            )
+                        bundle_selection_reason = definition_trace.get("bundle_selection_reason")
+                        if isinstance(bundle_selection_reason, str) and bundle_selection_reason.strip():
+                            lines.append(
+                                _wrap_text(
+                                    "Bundle selection: " + bundle_selection_reason.strip(),
+                                    indent=6,
+                                )
+                            )
+                        negative_contrast = definition_trace.get("selected_negative_contrast")
+                        if isinstance(negative_contrast, list) and negative_contrast:
+                            lines.append(
+                                _wrap_text(
+                                    "Negative contrast: "
+                                    + "; ".join(str(item) for item in negative_contrast),
+                                    indent=6,
+                                )
+                            )
+                        runner_ups = definition_trace.get("runner_ups")
+                        if isinstance(runner_ups, list) and runner_ups:
+                            rendered_runner_ups: list[str] = []
+                            for runner_up in runner_ups:
+                                if not isinstance(runner_up, dict):
+                                    continue
+                                definition = runner_up.get("definition")
+                                source = runner_up.get("source")
+                                quality = runner_up.get("quality")
+                                if not isinstance(definition, str) or not definition.strip():
+                                    continue
+                                label_bits = [definition.strip()]
+                                if isinstance(source, str) and source.strip():
+                                    label_bits.append(source.strip())
+                                if isinstance(quality, (int, float)):
+                                    label_bits.append(f"q={float(quality):.2f}")
+                                rendered_runner_ups.append(" (" + ", ".join(label_bits[1:]) + ")" if len(label_bits) > 1 else "")
+                                rendered_runner_ups[-1] = label_bits[0] + rendered_runner_ups[-1]
+                            if rendered_runner_ups:
+                                lines.append(
+                                    _wrap_text(
+                                        "Runner-ups: " + "; ".join(rendered_runner_ups),
+                                        indent=6,
+                                    )
+                                )
+                        suppressed = definition_trace.get("suppressed")
+                        if isinstance(suppressed, list) and suppressed:
+                            lines.append(
+                                _wrap_text(
+                                    "Suppressed: " + "; ".join(str(item) for item in suppressed),
+                                    indent=6,
+                                )
+                            )
+                        negative_contrast_penalties = definition_trace.get("negative_contrast_penalties")
+                        if (
+                            isinstance(negative_contrast_penalties, list)
+                            and negative_contrast_penalties
+                        ):
+                            lines.append(
+                                _wrap_text(
+                                    "Negative-contrast penalties: "
+                                    + "; ".join(str(item) for item in negative_contrast_penalties),
+                                    indent=6,
+                                )
+                            )
+                        meta_rejections = definition_trace.get("meta_linguistic_rejections")
+                        if isinstance(meta_rejections, list) and meta_rejections:
+                            lines.append(
+                                _wrap_text(
+                                    "Meta-linguistic rejections: "
+                                    + "; ".join(str(item) for item in meta_rejections),
+                                    indent=6,
+                                )
+                            )
+                        blind_mode_rescue_note = definition_trace.get("blind_mode_rescue_note")
+                        if isinstance(blind_mode_rescue_note, str) and blind_mode_rescue_note.strip():
+                            lines.append(
+                                _wrap_text(
+                                    "Blind-mode rescue: " + blind_mode_rescue_note.strip(),
+                                    indent=6,
+                                )
+                            )
+                        selection_reason = definition_trace.get("selection_reason")
+                        if isinstance(selection_reason, str) and selection_reason.strip():
+                            lines.append(
+                                _wrap_text(
+                                    "Why this won: " + selection_reason.strip(),
+                                    indent=6,
+                                )
+                            )
+                    warnings = candidate.get("warnings")
+                    if isinstance(warnings, list) and warnings:
+                        lines.append(
+                            _wrap_text(
+                                "Warnings: " + "; ".join(str(item) for item in warnings),
+                                indent=6,
+                            )
+                        )
 
     memory_updates = payload.get("memory_updates")
     if isinstance(memory_updates, list) and memory_updates:
