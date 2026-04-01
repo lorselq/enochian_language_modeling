@@ -1124,6 +1124,12 @@ def _build_phrase_output_payload(
         "lay_translation": result.get("lay_translation"),
         "lay_reasoning": result.get("lay_reasoning"),
         "lay_confidence": result.get("lay_confidence"),
+        "poetic_translation": result.get("poetic_translation"),
+        "poetic_reasoning": result.get("poetic_reasoning"),
+        "poetic_confidence": result.get("poetic_confidence"),
+        "interpretive_translation": result.get("interpretive_translation"),
+        "interpretive_reasoning": result.get("interpretive_reasoning"),
+        "interpretive_confidence": result.get("interpretive_confidence"),
         "lay_warnings": result.get("lay_warnings", []),
         "footnoted_translation": result.get("footnoted_translation"),
         "translation_footnotes": result.get("translation_footnotes", []),
@@ -1869,6 +1875,31 @@ def _format_phrase_report(
     lay_reasoning = payload.get("lay_reasoning")
     if isinstance(lay_reasoning, str) and lay_reasoning:
         lines.append(_wrap_text(f"Lay reasoning: {lay_reasoning}", indent=0))
+
+    poetic_translation = payload.get("poetic_translation")
+    if not isinstance(poetic_translation, str) or not poetic_translation:
+        poetic_translation = payload.get("interpretive_translation")
+    if isinstance(poetic_translation, str) and poetic_translation:
+        lines.append(
+            _wrap_text(
+                f"Poetic translation: {poetic_translation}",
+                indent=0,
+            )
+        )
+
+    poetic_confidence = payload.get("poetic_confidence")
+    if not isinstance(poetic_confidence, (int, float)):
+        poetic_confidence = payload.get("interpretive_confidence")
+    if isinstance(poetic_confidence, (int, float)):
+        lines.append(f"Poetic confidence: {float(poetic_confidence):.2f}")
+
+    poetic_reasoning = payload.get("poetic_reasoning")
+    if not isinstance(poetic_reasoning, str) or not poetic_reasoning:
+        poetic_reasoning = payload.get("interpretive_reasoning")
+    if isinstance(poetic_reasoning, str) and poetic_reasoning:
+        lines.append(
+            _wrap_text(f"Poetic reasoning: {poetic_reasoning}", indent=0)
+        )
 
     chosen_parse = payload.get("chosen_parse")
     if isinstance(chosen_parse, dict):
