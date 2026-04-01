@@ -37,8 +37,9 @@ from .placeholder_glosses import (
     sanitize_human_gloss,
     specific_gloss_from_definition_and_semantic_core,
 )
+from .repository import WordEvidence
 from .service import SingleWordTranslationService
-from .strategies import compose_semantic_bundle
+from .strategies import compose_semantic_bundle, extract_definition_candidates
 
 
 _BLIND_DICTIONARY_RESCUE_NOTE = (
@@ -143,6 +144,8 @@ class PhraseTokenCandidate:
     blind_mode_rescue_note: str | None = None
     dictionary_rescue_gloss: str | None = None
     dictionary_rescue_note: str | None = None
+    weak_fallback_gloss: str | None = None
+    weak_fallback_note: str | None = None
 
 
 @dataclass(slots=True)
@@ -501,6 +504,17 @@ class PhraseTranslationService:
                     left_neighbor=tokens[index - 1] if index > 0 else None,
                     right_neighbor=tokens[index + 1] if index + 1 < len(tokens) else None,
                 )
+                if (
+                    update.get("best_gloss") is None
+                    and isinstance(candidate.weak_fallback_gloss, str)
+                    and candidate.weak_fallback_gloss.strip()
+                ):
+                    update["display_gloss"] = candidate.weak_fallback_gloss
+                    if (
+                        isinstance(candidate.weak_fallback_note, str)
+                        and candidate.weak_fallback_note.strip()
+                    ):
+                        update["display_note"] = candidate.weak_fallback_note
                 memory_updates.append(update)
 
         return {
@@ -932,6 +946,11 @@ class PhraseTranslationService:
         """Provide an opaque fallback when no algorithmic word analysis exists."""
         memory_entry = self.memory_repository.fetch_entry(token)
         if memory_entry is not None:
+            warnings = ["Recovered from translation memory."]
+            if dictionary_rescue_note and dictionary_rescue_note not in warnings:
+                warnings.append(dictionary_rescue_note)
+            if weak_fallback_note and weak_fallback_note not in warnings:
+                warnings.append(weak_fallback_note)
             return [
                 PhraseTokenCandidate(
                     token=token,
@@ -958,9 +977,17 @@ class PhraseTranslationService:
                         ],
                         "suppressed": [],
                         "blind_dictionary_fallback": False,
+                        "dictionary_rescue_gloss": dictionary_rescue_gloss,
+                        "dictionary_rescue_note": dictionary_rescue_note,
+                        "weak_fallback_gloss": weak_fallback_gloss,
+                        "weak_fallback_note": weak_fallback_note,
                     },
                     morphs=[token],
-                    warnings=["Recovered from translation memory."],
+                    warnings=warnings,
+                    dictionary_rescue_gloss=dictionary_rescue_gloss,
+                    dictionary_rescue_note=dictionary_rescue_note,
+                    weak_fallback_gloss=weak_fallback_gloss,
+                    weak_fallback_note=weak_fallback_note,
                 )
             ]
         return [
@@ -982,9 +1009,17 @@ class PhraseTranslationService:
                     "runner_ups": [],
                     "suppressed": [],
                     "blind_dictionary_fallback": False,
+                    "dictionary_rescue_gloss": dictionary_rescue_gloss,
+                    "dictionary_rescue_note": dictionary_rescue_note,
+                    "weak_fallback_gloss": weak_fallback_gloss,
+                    "weak_fallback_note": weak_fallback_note,
                 },
                 morphs=[token],
                 warnings=["No supported lexical analysis yet."],
+                dictionary_rescue_gloss=dictionary_rescue_gloss,
+                dictionary_rescue_note=dictionary_rescue_note,
+                weak_fallback_gloss=weak_fallback_gloss,
+                weak_fallback_note=weak_fallback_note,
             )
         ]
 
@@ -1832,6 +1867,8 @@ class PhraseTranslationService:
                     "blind_mode_rescue_note": candidate.blind_mode_rescue_note,
                     "dictionary_rescue_gloss": candidate.dictionary_rescue_gloss,
                     "dictionary_rescue_note": candidate.dictionary_rescue_note,
+                    "weak_fallback_gloss": candidate.weak_fallback_gloss,
+                    "weak_fallback_note": candidate.weak_fallback_note,
                     "semantic_core": list(trace.get("selected_semantic_core") or []),
                     "negative_contrast": list(trace.get("selected_negative_contrast") or []),
                     "alternates": list(candidate.alternates[:3]),

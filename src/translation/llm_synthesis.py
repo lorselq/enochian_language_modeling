@@ -25,7 +25,6 @@ from .placeholder_glosses import (
     specific_gloss_from_definition_and_semantic_core,
     sanitize_human_gloss,
     semantic_core_gloss,
-    unresolved_token_gloss,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -2146,6 +2145,30 @@ def _human_facing_unresolved_gloss() -> str:
     """Return the phrase-safe fallback when no grounded gloss survives."""
 
     return _HUMAN_UNRESOLVED_GLOSS
+
+
+def _weak_fallback_gloss(token_choice: Mapping[str, object], token: str) -> str | None:
+    """Return the phrase-layer weak fallback gloss when one was serialized.
+
+    Phrase rendering now preserves a dedicated weak-evidence gloss so the
+    final translation can stay readable without upgrading that gloss into the
+    candidate's primary definition. This helper keeps the footnote fallback
+    path aligned with that serialized phrase-layer decision.
+    """
+
+    raw_fallback = token_choice.get("weak_fallback_gloss")
+    return _compact_lay_gloss(raw_fallback, token=token)
+
+
+def _weak_fallback_note(token_choice: Mapping[str, object]) -> str:
+    """Return the serialized weak-fallback explanation when available."""
+
+    trace = _definition_trace_for_token_choice(token_choice)
+    return str(
+        token_choice.get("weak_fallback_note")
+        or trace.get("weak_fallback_note")
+        or ""
+    ).strip()
 
 
 def _definition_trace_for_token_choice(token_choice: Mapping[str, object]) -> Mapping[str, object]:

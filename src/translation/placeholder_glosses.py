@@ -342,6 +342,21 @@ def unresolved_token_gloss(token: str) -> str:
     return f"[{normalized}]"
 
 
+def opaque_token_fallback_gloss(token: str) -> str:
+    """Render a last-resort opaque token form for human-facing phrase output.
+
+    Some phrase reads survive scoring with only placeholder-strength evidence.
+    The phrase layer still needs a visible best-effort chunk in those cases,
+    but the older bracketed ``[TOKEN]`` form reads like an internal diagnostic
+    instead of an honest fallback gloss. Returning the normalized token in
+    lowercase preserves the surviving opaque evidence without pretending it is
+    a grounded English translation.
+    """
+
+    normalized = (token or "").strip().upper() or "?"
+    return normalized.lower()
+
+
 def _quoted_gloss_candidate(text: str) -> str | None:
     for match in _QUOTED_PHRASE_RE.finditer(text):
         candidate = _normalize_term(match.group(1))

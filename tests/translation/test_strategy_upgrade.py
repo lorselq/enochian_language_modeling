@@ -489,7 +489,11 @@ def _word_candidate(
     }
 
 
-def _word_result(word: str, *candidates: dict[str, object]) -> dict[str, object]:
+def _word_result(
+    word: str,
+    *candidates: dict[str, object],
+    fallback_morphs: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     """Wrap candidate payloads in the single-word result schema."""
     return {
         "word": word,
@@ -503,7 +507,7 @@ def _word_result(word: str, *candidates: dict[str, object]) -> dict[str, object]
         "timestamp": "2026-03-29T00:00:00Z",
         "candidates": list(candidates),
         "evidence": {},
-        "fallback_morphs": [],
+        "fallback_morphs": list(fallback_morphs or []),
         "diagnostics": {},
     }
 
