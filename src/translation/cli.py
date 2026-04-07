@@ -21,6 +21,7 @@ from collections.abc import Iterable, Sequence
 from dotenv import find_dotenv, load_dotenv
 
 from enochian_lm.common.config import get_config_paths
+from enochian_lm.root_extraction.utils.local_env_refresher import sync_local_model_name
 
 from .llm_synthesis import DEFAULT_LLM_CONTEXT, LLMRequestProgress
 from .phrase_service import PhraseTranslationService
@@ -968,6 +969,23 @@ def _parse_bool(value: str) -> bool:
     raise argparse.ArgumentTypeError("Expected a boolean value (true/false).")
 
 
+def _sync_local_model_name_with_lm_studio(env_local: str) -> None:
+    """Best-effort sync of LOCAL_MODEL_NAME with LM Studio's loaded model set.
+
+    Translation startup should auto-heal stale local model identifiers without
+    becoming fragile when LM Studio is unavailable. This helper keeps that
+    behavior centralized so local and remote fallback flows remain consistent.
+    """
+    result = sync_local_model_name(env_path=env_local)
+    if result.get("ok"):
+        return
+    reason = result.get("reason", "unknown")
+    _emit_error(
+        "Warning: could not auto-sync LOCAL_MODEL_NAME from LM Studio "
+        f"({reason}); continuing with existing .env_local values."
+    )
+
+
 def _configure_llm_env(llm_mode: str) -> None:
     """Load environment variables required for LLM synthesis.
 
@@ -980,6 +998,8 @@ def _configure_llm_env(llm_mode: str) -> None:
         if not env_local:
             raise FileNotFoundError("Missing .env_local for local LLM configuration.")
         load_dotenv(env_local, override=True)
+        _sync_local_model_name_with_lm_studio(env_local)
+        load_dotenv(env_local, override=True)
         return
 
     env_remote = find_dotenv(".env_remote")
@@ -988,6 +1008,8 @@ def _configure_llm_env(llm_mode: str) -> None:
     load_dotenv(env_remote, override=True)
     env_local = find_dotenv(".env_local")
     if env_local:
+        load_dotenv(env_local, override=True)
+        _sync_local_model_name_with_lm_studio(env_local)
         load_dotenv(env_local, override=True)
     else:
         _emit_error(

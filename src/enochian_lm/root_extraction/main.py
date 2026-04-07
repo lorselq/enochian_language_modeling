@@ -4,7 +4,10 @@ import argparse
 import os
 from dotenv import load_dotenv, find_dotenv
 from collections import defaultdict
-from enochian_lm.root_extraction.utils.local_env_refresher import refresh_local_env
+from enochian_lm.root_extraction.utils.local_env_refresher import (
+    refresh_local_env,
+    sync_local_model_name,
+)
 from enochian_lm.root_extraction.pipeline.run_root_extraction import RootExtractionCrew
 from enochian_lm.root_extraction.pipeline.run_residual_semantic_extraction import (
     RemainderExtractionCrew,
@@ -92,6 +95,14 @@ def main():
         if refresh_local_env(local=refresh_local):
             env_local = find_dotenv(".env_local")
             env_remote = find_dotenv(".env_remote")
+            load_dotenv(env_local, override=True)
+            sync_result = sync_local_model_name(env_path=env_local)
+            if not sync_result.get("ok"):
+                reason = sync_result.get("reason", "unknown")
+                print(
+                    "[WARN] Could not auto-sync LOCAL_MODEL_NAME from LM Studio "
+                    f"({reason}); continuing with existing local env values."
+                )
             load_dotenv(env_local, override=True)
             load_dotenv(env_remote, override=True)
             if local_remote_mode == "1":

@@ -3514,6 +3514,93 @@ def test_translate_phrase_cli_emits_progress_updates_to_stderr(
     assert "Done." in captured.err
 
 
+def test_configure_llm_env_local_syncs_and_reloads(monkeypatch) -> None:
+    """Auto-sync local model ids every time local LLM env is configured.
+
+    Local phrase/word translation now depends on a best-effort sync pass that
+    refreshes `LOCAL_MODEL_NAME` from LM Studio before requests are issued.
+    """
+    dotenv_calls: list[tuple[str, bool]] = []
+    sync_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        translation_cli,
+        "find_dotenv",
+        lambda name: "/tmp/.env_local" if name == ".env_local" else "",
+    )
+    monkeypatch.setattr(
+        translation_cli,
+        "load_dotenv",
+        lambda path, override=True: dotenv_calls.append((str(path), bool(override))) or True,
+    )
+    monkeypatch.setattr(
+        translation_cli,
+        "sync_local_model_name",
+        lambda **kwargs: sync_calls.append(kwargs) or {"ok": True, "updated": True},
+    )
+
+    translation_cli._configure_llm_env("local")
+
+    assert sync_calls == [{"env_path": "/tmp/.env_local"}]
+    assert dotenv_calls == [
+        ("/tmp/.env_local", True),
+        ("/tmp/.env_local", True),
+    ]
+
+
+def test_configure_llm_env_remote_syncs_only_when_env_local_exists(monkeypatch) -> None:
+    """Sync local fallback model only when remote mode can see `.env_local`.
+
+    Remote mode still loads `.env_local` to support local fallback after remote
+    failures; this regression locks the new sync hook to that same condition.
+    """
+    dotenv_calls: list[tuple[str, bool]] = []
+    sync_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        translation_cli,
+        "find_dotenv",
+        lambda name: {
+            ".env_remote": "/tmp/.env_remote",
+            ".env_local": "/tmp/.env_local",
+        }.get(name, ""),
+    )
+    monkeypatch.setattr(
+        translation_cli,
+        "load_dotenv",
+        lambda path, override=True: dotenv_calls.append((str(path), bool(override))) or True,
+    )
+    monkeypatch.setattr(
+        translation_cli,
+        "sync_local_model_name",
+        lambda **kwargs: sync_calls.append(kwargs) or {"ok": True, "updated": False},
+    )
+
+    translation_cli._configure_llm_env("remote")
+
+    assert sync_calls == [{"env_path": "/tmp/.env_local"}]
+    assert dotenv_calls == [
+        ("/tmp/.env_remote", True),
+        ("/tmp/.env_local", True),
+        ("/tmp/.env_local", True),
+    ]
+
+    sync_calls.clear()
+    dotenv_calls.clear()
+    monkeypatch.setattr(
+        translation_cli,
+        "find_dotenv",
+        lambda name: "/tmp/.env_remote" if name == ".env_remote" else "",
+    )
+
+    translation_cli._configure_llm_env("remote")
+
+    assert sync_calls == []
+    assert dotenv_calls == [
+        ("/tmp/.env_remote", True),
+    ]
+
+
 def test_translate_word_cli_emits_progress_updates_to_stderr(capsys, monkeypatch) -> None:
     """Expose word-translation progress in no-LLM mode for long deterministic work.
 
