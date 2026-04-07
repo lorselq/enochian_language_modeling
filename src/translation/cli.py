@@ -751,7 +751,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
         else 5
     )
 
-    progress_renderer = TranslationCLIProgressRenderer() if llm_enabled else None
+    progress_renderer = TranslationCLIProgressRenderer()
 
     try:
         with SingleWordTranslationService.from_config(
@@ -760,7 +760,20 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
             llm_use_remote=llm_use_remote,
         ) as service:
             outputs: list[dict[str, object]] = []
-            for variant in variants:
+            if len(variants) > 1:
+                progress_renderer.stage(
+                    f"Running {len(variants)} translation variants: "
+                    + ", ".join(str(variant) for variant in variants),
+                    stage_id="variant_plan",
+                )
+            for index, variant in enumerate(variants, start=1):
+                progress_renderer.stage(
+                    f"Starting variant {variant} ({index}/{len(variants)})...",
+                    stage_id="variant_start",
+                    variant=variant,
+                    variant_index=index,
+                    variant_total=len(variants),
+                )
                 result = service.translate_word(
                     word,
                     variants=[variant],
@@ -772,10 +785,17 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
                     allow_whole_word=bool(args.allow_whole_word),
-                    progress_reporter=progress_renderer,
+                    progress_reporter=progress_renderer if llm_enabled else None,
                 )
                 outputs.append(
                     _build_output_payload(result, variant=variant, verbose=args.verbose)
+                )
+                progress_renderer.stage(
+                    f"Completed variant {variant} ({index}/{len(variants)}).",
+                    stage_id="variant_complete",
+                    variant=variant,
+                    variant_index=index,
+                    variant_total=len(variants),
                 )
     except FileNotFoundError as exc:
         _emit_error(str(exc))
@@ -783,6 +803,9 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
     except ValueError as exc:
         _emit_error(str(exc))
         return 2
+
+    if not llm_enabled:
+        progress_renderer.done()
 
     payload: dict[str, object] | list[dict[str, object]]
     if args.variant == "both":
@@ -1943,6 +1966,20 @@ def _format_phrase_report(
                         f"{chosen_suffix}"
                     )
                     lines.append(_wrap_text(label, indent=4, bullet=True))
+                    morphs_raw = candidate.get("morphs")
+                    if isinstance(morphs_raw, list):
+                        morphs = [
+                            str(morph).strip()
+                            for morph in morphs_raw
+                            if isinstance(morph, str) and str(morph).strip()
+                        ]
+                        if morphs:
+                            lines.append(
+                                _wrap_text(
+                                    "Decomposition: " + " + ".join(morphs),
+                                    indent=6,
+                                )
+                            )
                     definition_trace = candidate.get("definition_trace")
                     if isinstance(definition_trace, dict):
                         selected_source = definition_trace.get("selected_source")

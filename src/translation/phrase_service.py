@@ -316,13 +316,16 @@ class PhraseTranslationService:
                 allow_whole_word=allow_whole_word,
             )
             if not token_candidates:
-                if not allow_whole_word:
+                fallback_candidates = self._fallback_token_candidates(token)
+                if fallback_candidates:
+                    token_candidates = fallback_candidates
+                else:
                     diagnostics = word_result.get("diagnostics")
+                    mode = "Blind phrase translation" if not allow_whole_word else "Phrase translation"
                     raise RuntimeError(
-                        "Blind phrase translation could not resolve token "
+                        f"{mode} could not resolve token "
                         f"{token.upper()} through decomposition. Diagnostics: {diagnostics!r}"
                     )
-                token_candidates = self._fallback_token_candidates(token)
             candidate_matrix.append(token_candidates)
             token_payloads.append(
                 {
@@ -943,7 +946,16 @@ class PhraseTranslationService:
         return "unresolved term"
 
     def _fallback_token_candidates(self, token: str) -> list[PhraseTokenCandidate]:
-        """Provide an opaque fallback when no algorithmic word analysis exists."""
+        """Return memory-backed fallback candidates when lexical analysis is empty.
+
+        Phrase rendering should stay decomposition-first and avoid synthetic
+        unresolved placeholders. The only allowed fallback here is recovered
+        translation-memory evidence that already has a human-facing gloss.
+        """
+        dictionary_rescue_gloss: str | None = None
+        dictionary_rescue_note: str | None = None
+        weak_fallback_gloss: str | None = None
+        weak_fallback_note: str | None = None
         memory_entry = self.memory_repository.fetch_entry(token)
         if memory_entry is not None:
             warnings = ["Recovered from translation memory."]
@@ -990,38 +1002,7 @@ class PhraseTranslationService:
                     weak_fallback_note=weak_fallback_note,
                 )
             ]
-        return [
-            PhraseTokenCandidate(
-                token=token,
-                rank=1,
-                analysis_type="provisional",
-                definition=None,
-                raw_definition=None,
-                alternates=[],
-                confidence=0.1,
-                score=1.0,
-                role_hint="unknown",
-                selected_source="unknown",
-                definition_trace={
-                    "selected_definition": None,
-                    "selected_source": "unknown",
-                    "selected_quality": 0.0,
-                    "runner_ups": [],
-                    "suppressed": [],
-                    "blind_dictionary_fallback": False,
-                    "dictionary_rescue_gloss": dictionary_rescue_gloss,
-                    "dictionary_rescue_note": dictionary_rescue_note,
-                    "weak_fallback_gloss": weak_fallback_gloss,
-                    "weak_fallback_note": weak_fallback_note,
-                },
-                morphs=[token],
-                warnings=["No supported lexical analysis yet."],
-                dictionary_rescue_gloss=dictionary_rescue_gloss,
-                dictionary_rescue_note=dictionary_rescue_note,
-                weak_fallback_gloss=weak_fallback_gloss,
-                weak_fallback_note=weak_fallback_note,
-            )
-        ]
+        return []
 
     def _build_parse_candidates(
         self,
@@ -1430,6 +1411,8 @@ class PhraseTranslationService:
             candidate.definition,
             candidate.bundle_surface_gloss,
             candidate.bundle_head_gloss,
+            candidate.dictionary_rescue_gloss,
+            candidate.weak_fallback_gloss,
             *candidate.alternates,
         ):
             cleaned = PhraseTranslationService._human_facing_definition(value)

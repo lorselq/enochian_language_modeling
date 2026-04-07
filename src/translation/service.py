@@ -963,6 +963,70 @@ class SingleWordTranslationService:
                 for candidate in selected
                 if self._is_grounded_full_cover_compositional(candidate)
             ]
+            if use_beam_search and not selected and not exact_candidates:
+                guaranteed_decompositions, guaranteed_diag = (
+                    self._enumerate_attested_full_cover_decompositions(
+                        normalized,
+                        evidence=evidence,
+                        attested_pieces=attested_pieces,
+                        allow_whole_word=allow_whole_word,
+                        definition_counts=definition_counts,
+                        definition_glosses=definition_glosses,
+                        evidence_mode=evidence_mode.value,
+                    )
+                )
+                diagnostics["beam_empty_fallback"] = guaranteed_diag
+                if guaranteed_decompositions:
+                    merged_decompositions = self._merge_decompositions(
+                        decompositions,
+                        guaranteed_decompositions,
+                    )
+                    decompositions = merged_decompositions
+                    filtered, filter_diagnostics = apply_hard_filters(
+                        merged_decompositions,
+                        evidence,
+                        evidence_mode=evidence_mode.value,
+                    )
+                    stage1_drops_total = int(
+                        filter_diagnostics.get(
+                            "stage1_drops_total",
+                            filter_diagnostics.get("stage1_dropped", 0),
+                        )
+                    )
+                    stage1_drops_missing_support = int(
+                        filter_diagnostics.get(
+                            "stage1_drops_missing_support",
+                            stage1_drops_total,
+                        )
+                    )
+                    stage1_drops_other_reasons = int(
+                        filter_diagnostics.get(
+                            "stage1_drops_other_reasons",
+                            max(0, stage1_drops_total - stage1_drops_missing_support),
+                        )
+                    )
+                    diagnostics["decomposition_count"] = len(merged_decompositions)
+                    diagnostics["hard_filter_stage1_drops_total"] = stage1_drops_total
+                    diagnostics["hard_filter_stage1_drops_missing_support"] = (
+                        stage1_drops_missing_support
+                    )
+                    diagnostics["hard_filter_stage1_drops_other_reasons"] = (
+                        stage1_drops_other_reasons
+                    )
+                    selected = self._select_compositional_candidates(
+                        filtered,
+                        evidence=evidence,
+                        diagnostics=diagnostics,
+                        strategy=strategy,
+                        top_k=top_k,
+                        weight_enabled=weight_enabled,
+                        allow_whole_word=allow_whole_word,
+                    )
+                    blind_full_cover_candidates = [
+                        candidate
+                        for candidate in selected
+                        if self._is_grounded_full_cover_compositional(candidate)
+                    ]
             if (
                 not allow_whole_word
                 and use_beam_search
@@ -985,6 +1049,7 @@ class SingleWordTranslationService:
                         decompositions,
                         guaranteed_decompositions,
                     )
+                    decompositions = merged_decompositions
                     filtered, filter_diagnostics = apply_hard_filters(
                         merged_decompositions,
                         evidence,

@@ -64,6 +64,8 @@ class Decomposition:
         Mapping of morph → provenance label:
             - ``"cluster"``
             - ``"residual"``
+            - ``"attested"``
+            - ``"dictionary"``
             - ``"hypothesis"``
             - ``"unknown"``
         based on the supplied :class:`WordEvidence`.
@@ -588,6 +590,8 @@ def _build_support_lookup(
 
     1. direct clusters (``"cluster"``)
     2. residual semantics (``"residual"``)
+    3. attested root ngrams (``"attested"``)
+    4. dictionary-backed morph slices (``"dictionary"``)
 
     Later sources never overwrite earlier ones for the same morph key.
     """
@@ -609,6 +613,33 @@ def _build_support_lookup(
             key = residual.residual.upper()
             support.setdefault(key, "residual")
 
+    for attested in evidence.attested_definitions:
+        definition = getattr(attested, "definition", None)
+        if not isinstance(definition, str) or not definition.strip():
+            continue
+        root_ngram = getattr(attested, "root_ngram", None)
+        if not isinstance(root_ngram, str):
+            continue
+        key = root_ngram.strip().upper()
+        if key:
+            support.setdefault(key, "attested")
+
+    for morph, entry in evidence.dictionary_morphs.items():
+        definition = getattr(entry, "definition", None)
+        senses = getattr(entry, "senses", None)
+        has_lexical_signal = (
+            isinstance(definition, str)
+            and definition.strip()
+        ) or (
+            isinstance(senses, list)
+            and any(isinstance(sense, str) and sense.strip() for sense in senses)
+        )
+        if not has_lexical_signal:
+            continue
+        key = str(morph).strip().upper()
+        if key:
+            support.setdefault(key, "dictionary")
+
     return support
 
 
@@ -617,7 +648,15 @@ def _collect_attested_pieces(
     *,
     evidence_mode: str | None = "all",
 ) -> set[str]:
-    """Collect attested morph pieces from clusters/residuals only."""
+    """Collect attested morph pieces used by blind full-cover decomposition.
+
+    Historically this only considered cluster/residual evidence, which could
+    miss legitimately attested root pieces carried through ``raw_defs`` as
+    ``AttestedDefinition.root_ngram``. Including those root ngrams prevents
+    false zero-decomposition failures for tokens such as ``AQLO`` where one
+    piece (for example ``Q``) is attested but absent from accepted cluster rows
+    in a given variant snapshot.
+    """
     evidence_mode = _normalize_evidence_mode(evidence_mode)
     clusters_enabled, residuals_enabled = _evidence_flags(evidence_mode)
     pieces: set[str] = set()
@@ -641,6 +680,16 @@ def _collect_attested_pieces(
                 normalized = residual_text.strip().upper()
                 if normalized:
                     pieces.add(normalized)
+
+    for attested in evidence.attested_definitions:
+        definition = getattr(attested, "definition", None)
+        if not isinstance(definition, str) or not definition.strip():
+            continue
+        root_ngram = getattr(attested, "root_ngram", None)
+        if isinstance(root_ngram, str):
+            normalized = root_ngram.strip().upper()
+            if normalized:
+                pieces.add(normalized)
 
     return pieces
 
@@ -858,6 +907,37 @@ def _compile_support_stats(
             entry.has_residual = True
             entry.uses += 1
 
+    # Attested root ngrams are valid morph-level evidence for blind fallback.
+    for attested in evidence.attested_definitions:
+        definition = getattr(attested, "definition", None)
+        if not isinstance(definition, str) or not definition.strip():
+            continue
+        root_ngram = getattr(attested, "root_ngram", None)
+        if not isinstance(root_ngram, str):
+            continue
+        entry = ensure(root_ngram)
+        entry.has_attested = True
+        entry.uses += 1
+
+    # Dictionary-supported morph slices are weaker than accepted clusters, but
+    # still provide a meaningful support signal when no cluster/residual row
+    # exists for a token piece in the current variant snapshot.
+    for morph, dictionary_entry in evidence.dictionary_morphs.items():
+        definition = getattr(dictionary_entry, "definition", None)
+        senses = getattr(dictionary_entry, "senses", None)
+        has_lexical_signal = (
+            isinstance(definition, str)
+            and definition.strip()
+        ) or (
+            isinstance(senses, list)
+            and any(isinstance(sense, str) and sense.strip() for sense in senses)
+        )
+        if not has_lexical_signal:
+            continue
+        entry = ensure(str(morph))
+        entry.has_dictionary = True
+        entry.uses += 1
+
     return stats
 
 
@@ -872,7 +952,8 @@ def apply_hard_filters(
 
     Filters are applied in order:
 
-    1. Every morph must be supported by clusters or residuals.
+    1. Every morph must be supported by clusters, residuals, attested roots,
+       or dictionary-backed morph slices.
     2. Decompositions with lower coverage are discarded when a higher-coverage
        alternative exists.
     3. When possible, decompositions that use longer, lower-ambiguity morphs
@@ -938,7 +1019,12 @@ def apply_hard_filters(
         stats = support_stats.get(morph.upper())
         if stats is None:
             return False
-        return stats.has_cluster or stats.has_residual
+        return (
+            stats.has_cluster
+            or stats.has_residual
+            or stats.has_attested
+            or stats.has_dictionary
+        )
 
     # ------------------------------------------------------------------
     # Filter 1: every morph must have support.

@@ -2994,6 +2994,7 @@ def test_phrase_report_verbose_includes_definition_trace_details() -> None:
                             "analysis_type": "compositional",
                             "role_hint": "noun",
                             "definition": "comfort",
+                            "morphs": ["BLI", "ORS"],
                             "chosen_in_parse": True,
                             "definition_trace": {
                                 "surface_gloss": "comfort",
@@ -3040,6 +3041,7 @@ def test_phrase_report_verbose_includes_definition_trace_details() -> None:
     assert "Negative-contrast penalties: darkness" in report
     assert "Meta-linguistic rejections: A root denoting comfort as solace." in report
     assert "BLIORS" in report
+    assert "Decomposition: BLI + ORS" in report
     assert "Why this won: Selected cluster-backed evidence survived for this token." in report
 
 
@@ -3174,6 +3176,117 @@ def test_translate_phrase_cli_emits_progress_updates_to_stderr(
     assert "Building and scoring parse candidates..." in captured.err
     assert "Rendering lay translation and footnotes..." not in captured.err
     assert "Done." in captured.err
+
+
+def test_translate_word_cli_emits_progress_updates_to_stderr(capsys, monkeypatch) -> None:
+    """Expose word-translation progress in no-LLM mode for long deterministic work.
+
+    Users previously only saw spinner-style progress for phrase translation. This
+    regression ensures the single-word CLI now emits the same stage boundaries in
+    no-LLM mode so the command no longer looks frozen while it runs.
+    """
+
+    class _FakeWordService:
+        def __enter__(self) -> "_FakeWordService":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def translate_word(self, word: str, **kwargs) -> dict[str, object]:
+            result = {
+                **_word_result(
+                    word.upper(),
+                    _word_candidate(
+                        "I",
+                        analysis_type="dictionary_exact",
+                        score=1.0,
+                        confidence=1.0,
+                        morphs=[word.upper()],
+                    ),
+                ),
+                "variants_queried": [kwargs["variants"][0]],
+            }
+            result["evidence"] = {"attested_definitions": 1}
+            return result
+
+    monkeypatch.setattr(
+        translation_cli.SingleWordTranslationService,
+        "from_config",
+        classmethod(lambda cls, **_kwargs: _FakeWordService()),
+    )
+    monkeypatch.setattr(translation_cli, "_missing_db_paths", lambda _variants: [])
+    monkeypatch.setattr(translation_cli, "_configure_llm_env", lambda _mode: None)
+
+    args = translation_cli.build_parser().parse_args(
+        ["translate-word", "ol", "--variant", "solo", "--no-llm"]
+    )
+
+    exit_code = translation_cli.translate_word_from_args(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Starting variant solo (1/1)..." in captured.err
+    assert "Completed variant solo (1/1)." in captured.err
+    assert "Done." in captured.err
+    assert "Preparing LLM synthesis..." not in captured.err
+
+
+def test_translate_word_cli_reports_variant_boundaries_once(capsys, monkeypatch) -> None:
+    """Show explicit variant boundaries for default dual-variant word translation.
+
+    `translate-word` runs both insight variants by default. This keeps that loop
+    visibly structured and ensures a single final completion line is emitted
+    after both variants finish in no-LLM mode.
+    """
+
+    class _FakeWordService:
+        def __enter__(self) -> "_FakeWordService":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def translate_word(self, word: str, **kwargs) -> dict[str, object]:
+            variant = kwargs["variants"][0]
+            result = {
+                **_word_result(
+                    word.upper(),
+                    _word_candidate(
+                        f"{variant} gloss",
+                        analysis_type="dictionary_exact",
+                        score=1.0,
+                        confidence=1.0,
+                        morphs=[word.upper()],
+                    ),
+                ),
+                "variants_queried": [variant],
+            }
+            result["evidence"] = {"attested_definitions": 1}
+            return result
+
+    monkeypatch.setattr(
+        translation_cli.SingleWordTranslationService,
+        "from_config",
+        classmethod(lambda cls, **_kwargs: _FakeWordService()),
+    )
+    monkeypatch.setattr(translation_cli, "_missing_db_paths", lambda _variants: [])
+    monkeypatch.setattr(translation_cli, "_configure_llm_env", lambda _mode: None)
+
+    args = translation_cli.build_parser().parse_args(
+        ["translate-word", "ol", "--no-llm"]
+    )
+
+    exit_code = translation_cli.translate_word_from_args(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Running 2 translation variants: solo, debate" in captured.err
+    assert "Starting variant solo (1/2)..." in captured.err
+    assert "Completed variant solo (1/2)." in captured.err
+    assert "Starting variant debate (2/2)..." in captured.err
+    assert "Completed variant debate (2/2)." in captured.err
+    assert captured.err.count("Done.") == 1
 
 
 def test_translate_phrase_cli_reports_variant_boundaries_once(
@@ -3955,6 +4068,208 @@ def test_phrase_translation_hides_placeholder_leftovers_when_no_clean_gloss_exis
         match="reached clause rendering without a grounded gloss",
     ):
         service.translate_phrase("nacro", top_k=1, llm=False)
+
+
+def test_phrase_translation_raises_for_missing_token_candidates_without_memory(
+    tmp_path: Path,
+) -> None:
+    """Fail fast when a token has no decomposition candidates and no memory gloss.
+
+    Phrase translation should never emit synthetic unresolved placeholders in
+    user-visible output. If the word pipeline cannot supply any candidates and
+    translation memory has no surviving gloss, this must raise with diagnostics.
+    """
+
+    word_service = FakeWordService(
+        results_by_word={
+            "ARDZA": _word_result("ARDZA"),
+        },
+        dictionary={},
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-unresolved-fallback.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="could not resolve token ARDZA through decomposition",
+    ):
+        service.translate_phrase(
+            "ardza",
+            top_k=1,
+            llm=False,
+            memory_update=False,
+        )
+
+
+def test_translate_word_beam_search_uses_attested_enumerator_when_beam_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fall back to attested enumeration when beam search yields no decompositions.
+
+    Phrase translation forces beam search for token analysis. This regression
+    proves that when beam generation is empty, the word service still recovers
+    decomposition candidates from the singleton-capable attested enumerator.
+    """
+
+    evidence = WordEvidence(word="ARDZA", variants_queried=["solo"])
+    repository = FakeRepository(
+        evidence_by_word={"ARDZA": evidence},
+        support_clusters={
+            "A": _cluster_record("A", "in", cluster_id=11),
+            "RD": _cluster_record("RD", "comfort", cluster_id=12),
+            "ZA": _cluster_record("ZA", "path", cluster_id=13),
+        },
+    )
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine([])
+
+    fallback_decomposition = Decomposition(
+        morphs=["A", "RD", "ZA"],
+        canonicals=["A", "RD", "ZA"],
+        beam_score=1.0,
+        breakdown={
+            "segments": [
+                {"start": 0, "end": 1, "ngram": "A", "canonical": "A"},
+                {"start": 1, "end": 3, "ngram": "RD", "canonical": "RD"},
+                {"start": 3, "end": 5, "ngram": "ZA", "canonical": "ZA"},
+            ],
+            "uncovered": [],
+            "coverage_ratio": 1.0,
+            "residual_ratio": 0.0,
+        },
+        morph_support={"A": "cluster", "RD": "cluster", "ZA": "cluster"},
+    )
+
+    def _fake_enumerator_fallback(
+        _word: str,
+        **_kwargs: object,
+    ) -> tuple[list[Decomposition], dict[str, object]]:
+        return (
+            [copy.deepcopy(fallback_decomposition)],
+            {
+                "enumerator_enabled": True,
+                "enumerator_params": {
+                    "max_partial_per_index": 500,
+                    "max_full_segmentations": 100,
+                    "min_piece_len": 1,
+                },
+                "enumerated_full_count": 1,
+                "enumerated_full_returned": 1,
+                "enumerated_partial_pruned_count": 0,
+                "decomposition_count": 1,
+            },
+        )
+
+    monkeypatch.setattr(
+        service,
+        "_enumerate_attested_full_cover_decompositions",
+        _fake_enumerator_fallback,
+    )
+
+    result = service.translate_word(
+        "ardza",
+        llm=False,
+        use_beam_search=True,
+        top_k=3,
+        evidence_mode=service.EvidenceMode.ALL,
+        allow_whole_word=True,
+    )
+
+    assert result["candidates"]
+    assert result["candidates"][0]["analysis_type"] == "compositional"
+    assert "beam_empty_fallback" in result["diagnostics"]
+    assert result["diagnostics"]["beam_empty_fallback"]["enumerator_enabled"] is True
+    assert result["diagnostics"]["decomposition"]["generated"] == 1
+
+
+def test_translate_word_blind_mode_uses_attested_piece_support_for_aqlo() -> None:
+    """Allow AQLO-style blind decomposition when attested root pieces exist.
+
+    Blind mode used to crash on tokens like AQLO even though attested evidence
+    included root pieces such as A, Q, and LO. This regression keeps the
+    fallback enumerator and hard filters aligned with attested root support.
+    """
+
+    evidence = WordEvidence(
+        word="AQLO",
+        variants_queried=["solo"],
+        attested_definitions=[
+            AttestedDefinition(
+                variant="solo",
+                source_word="AQLO",
+                definition="in",
+                cluster_id=900,
+                root_ngram="A",
+            ),
+            AttestedDefinition(
+                variant="solo",
+                source_word="AQLO",
+                definition="or",
+                cluster_id=901,
+                root_ngram="Q",
+            ),
+            AttestedDefinition(
+                variant="solo",
+                source_word="AQLO",
+                definition="the first",
+                cluster_id=902,
+                root_ngram="LO",
+            ),
+        ],
+        dictionary_morphs={
+            "A": DictionaryMorph(
+                morph="A",
+                definition="in, on, with",
+                senses=["in, on, with"],
+                part_of_speech=None,
+            ),
+            "Q": DictionaryMorph(
+                morph="Q",
+                definition="or",
+                senses=["or"],
+                part_of_speech=None,
+            ),
+            "LO": DictionaryMorph(
+                morph="LO",
+                definition="the first",
+                senses=["the first"],
+                part_of_speech=None,
+            ),
+        },
+    )
+    repository = FakeRepository(
+        evidence_by_word={"AQLO": evidence},
+        support_clusters={},
+    )
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine([])
+
+    result = service.translate_word(
+        "aqlo",
+        llm=False,
+        allow_whole_word=False,
+        use_beam_search=True,
+        top_k=3,
+    )
+
+    assert result["candidates"]
+    assert any(
+        tuple(candidate.get("morphs", [])) == ("A", "Q", "LO")
+        for candidate in result["candidates"]
+    )
+    assert result["diagnostics"]["beam_empty_fallback"]["decomposition_count"] >= 1
+    assert result["diagnostics"]["decomposition"]["generated"] >= 1
 
 
 def test_phrase_translation_raises_for_unresolved_blind_mode_token(
