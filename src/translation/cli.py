@@ -1094,6 +1094,7 @@ def _build_output_payload(
                 "morphs": list(morphs_raw) if isinstance(morphs_raw, (list, tuple)) else [],
                 "score": candidate.get("score"),
                 "breakdown": candidate.get("breakdown"),
+                "decision_trace": candidate.get("decision_trace"),
                 "meanings": list(meanings_raw) if isinstance(meanings_raw, (list, tuple)) else [],
                 "synthesized_definition": candidate.get("synthesized_definition"),
                 "concatenated_meanings": candidate.get("concatenated_meanings"),
@@ -2126,6 +2127,106 @@ def _format_phrase_report(
                                 indent=6,
                             )
                         )
+            lines.append("Token decision table:")
+            for token_payload in token_analyses:
+                if not isinstance(token_payload, dict):
+                    continue
+                token_label = str(token_payload.get("token") or "").upper()
+                phrase_candidates_raw = token_payload.get("candidates")
+                phrase_candidates = (
+                    phrase_candidates_raw
+                    if isinstance(phrase_candidates_raw, list)
+                    else []
+                )
+                if not phrase_candidates:
+                    continue
+                chosen_candidate = next(
+                    (
+                        candidate
+                        for candidate in phrase_candidates
+                        if isinstance(candidate, dict)
+                        and candidate.get("chosen_in_parse")
+                    ),
+                    None,
+                )
+                if chosen_candidate is None:
+                    chosen_candidate = next(
+                        (
+                            candidate
+                            for candidate in phrase_candidates
+                            if isinstance(candidate, dict)
+                        ),
+                        None,
+                    )
+                if not isinstance(chosen_candidate, dict):
+                    continue
+                runner_up_candidate = next(
+                    (
+                        candidate
+                        for candidate in phrase_candidates
+                        if isinstance(candidate, dict)
+                        and candidate is not chosen_candidate
+                    ),
+                    None,
+                )
+                chosen_word_candidate = _match_word_candidate_for_phrase_candidate(
+                    token_payload,
+                    chosen_candidate,
+                )
+                runner_word_candidate = (
+                    _match_word_candidate_for_phrase_candidate(
+                        token_payload,
+                        runner_up_candidate,
+                    )
+                    if isinstance(runner_up_candidate, dict)
+                    else None
+                )
+                chosen_trace = (
+                    chosen_word_candidate.get("decision_trace")
+                    if isinstance(chosen_word_candidate, dict)
+                    else None
+                )
+                chosen_trace = chosen_trace if isinstance(chosen_trace, dict) else {}
+                runner_trace = (
+                    runner_word_candidate.get("decision_trace")
+                    if isinstance(runner_word_candidate, dict)
+                    else None
+                )
+                runner_trace = runner_trace if isinstance(runner_trace, dict) else {}
+
+                summary = (
+                    f"{token_label}: win "
+                    f"{_candidate_morph_label(chosen_candidate)}"
+                )
+                decision_score = chosen_trace.get("decision_score")
+                if isinstance(decision_score, (int, float)):
+                    summary += f" ({float(decision_score):.3f})"
+                if isinstance(runner_up_candidate, dict):
+                    summary += f" over {_candidate_morph_label(runner_up_candidate)}"
+                    runner_score = runner_trace.get("decision_score")
+                    if isinstance(runner_score, (int, float)):
+                        summary += f" ({float(runner_score):.3f})"
+                runner_delta = chosen_trace.get("runner_up_score_delta")
+                if isinstance(runner_delta, (int, float)):
+                    summary += f" | delta {float(runner_delta):.3f}"
+                lines.append(_wrap_text(summary, indent=2, bullet=True))
+
+                selection_reason = chosen_trace.get("selection_reason")
+                if isinstance(selection_reason, str) and selection_reason.strip():
+                    lines.append(
+                        _wrap_text(
+                            "Winner rationale: " + selection_reason.strip(),
+                            indent=6,
+                        )
+                    )
+                rejection_reason = runner_trace.get("rejection_reason")
+                if isinstance(rejection_reason, str) and rejection_reason.strip():
+                    lines.append(
+                        _wrap_text(
+                            "Runner-up rejection: " + rejection_reason.strip(),
+                            indent=6,
+                        )
+                    )
 
     memory_updates = payload.get("memory_updates")
     if isinstance(memory_updates, list) and memory_updates:
@@ -2184,6 +2285,71 @@ def _format_phrase_report(
             lines.append(_wrap_text(prefix + explanation.strip(), indent=0))
 
     return "\n".join(lines)
+
+
+def _candidate_morph_label(candidate: dict[str, object]) -> str:
+    """Render a candidate's morph decomposition in compact `A + B + C` form."""
+
+    morphs = candidate.get("morphs")
+    if not isinstance(morphs, list) or not morphs:
+        return "[unknown]"
+    parts = [str(morph).upper() for morph in morphs if str(morph).strip()]
+    return " + ".join(parts) if parts else "[unknown]"
+
+
+def _match_word_candidate_for_phrase_candidate(
+    token_payload: dict[str, object],
+    phrase_candidate: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Map a phrase-level candidate back to the source word-level candidate.
+
+    The phrase payload keeps two representations for each token:
+    - phrase candidates that include parse-level annotations (`chosen_in_parse`)
+    - the underlying single-word result (`word_result.candidates`) that carries
+      decomposition decision traces.
+
+    Matching these records keeps the verbose token decision table grounded in
+    the same ranking math that selected the candidate.
+    """
+
+    if not isinstance(phrase_candidate, dict):
+        return None
+    word_result = token_payload.get("word_result")
+    if not isinstance(word_result, dict):
+        return None
+    word_candidates_raw = word_result.get("candidates")
+    word_candidates = word_candidates_raw if isinstance(word_candidates_raw, list) else []
+    phrase_rank = phrase_candidate.get("rank")
+    phrase_type = str(phrase_candidate.get("analysis_type") or "")
+    phrase_morphs_raw = phrase_candidate.get("morphs")
+    phrase_morphs = (
+        tuple(str(morph) for morph in phrase_morphs_raw)
+        if isinstance(phrase_morphs_raw, list)
+        else tuple()
+    )
+    for word_candidate in word_candidates:
+        if not isinstance(word_candidate, dict):
+            continue
+        word_rank = word_candidate.get("rank")
+        word_type = str(word_candidate.get("analysis_type") or "")
+        word_morphs_raw = word_candidate.get("morphs")
+        word_morphs = (
+            tuple(str(morph) for morph in word_morphs_raw)
+            if isinstance(word_morphs_raw, list)
+            else tuple()
+        )
+        if (
+            isinstance(phrase_rank, int)
+            and isinstance(word_rank, int)
+            and phrase_rank != word_rank
+        ):
+            continue
+        if phrase_type and word_type and phrase_type != word_type:
+            continue
+        if phrase_morphs and word_morphs and phrase_morphs != word_morphs:
+            continue
+        return word_candidate
+    return None
 
 
 def _wrap_text(text: str, *, indent: int, bullet: bool = False) -> str:

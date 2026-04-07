@@ -132,6 +132,7 @@ class PhraseTokenCandidate:
     role_hint: str
     selected_source: str = "unknown"
     definition_trace: dict[str, object] = field(default_factory=dict)
+    decision_trace: dict[str, object] = field(default_factory=dict)
     chosen_in_parse: bool = False
     morphs: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -699,6 +700,11 @@ class PhraseTranslationService:
                 role_hint=role_hint,
                 selected_source=self._candidate_selected_source(meaning_list),
                 definition_trace=selected_trace,
+                decision_trace=(
+                    dict(candidate.get("decision_trace"))
+                    if isinstance(candidate.get("decision_trace"), Mapping)
+                    else {}
+                ),
                 morphs=[
                     str(morph)
                     for morph in candidate.get("morphs", [])
@@ -1593,6 +1599,25 @@ class PhraseTranslationService:
         if blind_mode_rescue_note:
             parts.append(blind_mode_rescue_note)
         runner_up = PhraseTranslationService._runner_up_candidate(token_payload, candidate)
+        decision_trace = (
+            dict(candidate.decision_trace)
+            if isinstance(candidate.decision_trace, Mapping)
+            else {}
+        )
+        decision_score = decision_trace.get("decision_score")
+        runner_up_delta = decision_trace.get("runner_up_score_delta")
+        selection_reason = decision_trace.get("selection_reason")
+        if isinstance(decision_score, (int, float)):
+            if isinstance(runner_up_delta, (int, float)):
+                parts.append(
+                    "Decision score "
+                    f"{float(decision_score):.3f} (delta {float(runner_up_delta):.3f} "
+                    "vs runner-up)."
+                )
+            else:
+                parts.append(f"Decision score {float(decision_score):.3f}.")
+        if isinstance(selection_reason, str) and selection_reason.strip():
+            parts.append(selection_reason.strip())
         if runner_up is not None:
             parts.append(
                 "Candidate score "

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timezone
 from enum import Enum
+import math
 import numbers
 from pathlib import Path
 from types import TracebackType
@@ -340,6 +341,11 @@ class SingleWordTranslationService:
     """Single-word translation pipeline with optional LLM synthesis (Tasks 4.1/4.2)."""
 
     BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN = 2
+    DECISION_SEMANTIC_WEIGHT = 0.22
+    DECISION_ATTESTATION_WEIGHT = 0.14
+    DECISION_SINGLETON_BURDEN_WEIGHT = 0.08
+    DECISION_FEWER_MORPHS_TIE_MARGIN = 0.10
+    DECISION_SINGLETON_CLEAR_WIN_MARGIN = 0.18
 
     class EvidenceMode(str, Enum):
         ALL = "all"
@@ -1759,12 +1765,19 @@ class SingleWordTranslationService:
         weight_enabled: bool,
         allow_whole_word: bool,
     ) -> list[dict[str, object]]:
-        """Score filtered decompositions and keep the strongest compositional reads.
+        """Score decompositions via an explicit context-weighted decision function.
 
-        Word translation now needs to rescore decompositions twice in blind
-        mode: first for the preferred chunkier beam search, then again when the
-        singleton-capable full-cover fallback injects extra decompositions.
-        Centralizing the scoring and selection logic keeps both passes aligned.
+        Why this exists:
+        decomposition quality is now tuned case-by-case, so ranking must be
+        transparent and stable instead of relying on an opaque blend of legacy
+        scores. This method keeps one explicit decision equation for all
+        compositional reads and records the winning-vs-runner-up traces needed
+        for manual debugging cycles.
+
+        Architecture responsibility:
+        this is the only place where decomposition candidates are turned into a
+        final ordered shortlist. Downstream phrase assembly and CLI reporting
+        consume the decision traces produced here.
         """
 
         ranked: list[tuple[Decomposition, float]] = []
@@ -1854,13 +1867,95 @@ class SingleWordTranslationService:
                 for morphs, result in coherence_results.items()
             }
 
-        reranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
+        strategy_ranked = apply_strategy(ranked, strategy=strategy, evidence=evidence)
+        strategy_scores_by_morphs = {
+            tuple(decomp.morphs): float(score)
+            for decomp, score in strategy_ranked
+        }
+
+        decision_rows: list[dict[str, object]] = []
+        for decomp, legacy_score in ranked:
+            morph_key = tuple(decomp.morphs)
+            base_component = float(
+                strategy_scores_by_morphs.get(morph_key, legacy_score)
+            )
+            semantic_raw = self._decision_semantic_signal(
+                decomp=decomp,
+                coherence_results=coherence_results,
+            )
+            semantic_component = self.DECISION_SEMANTIC_WEIGHT * semantic_raw
+            attestation_raw = self._decision_attestation_signal(
+                decomp=decomp,
+                evidence=evidence,
+            )
+            attestation_component = self.DECISION_ATTESTATION_WEIGHT * attestation_raw
+            singleton_burden_raw = self._decision_singleton_burden_signal(decomp)
+            singleton_burden_component = (
+                self.DECISION_SINGLETON_BURDEN_WEIGHT * singleton_burden_raw
+            )
+            decision_score = (
+                base_component
+                + semantic_component
+                + attestation_component
+                - singleton_burden_component
+            )
+            decision_rows.append(
+                {
+                    "decomposition": decomp,
+                    "morphs": list(decomp.morphs),
+                    "analysis_type": "compositional",
+                    "base_component": base_component,
+                    "semantic_raw": semantic_raw,
+                    "semantic_component": semantic_component,
+                    "attestation_raw": attestation_raw,
+                    "attestation_component": attestation_component,
+                    "singleton_burden_raw": singleton_burden_raw,
+                    "singleton_burden_component": singleton_burden_component,
+                    "decision_score": decision_score,
+                    "morph_count": len(decomp.morphs),
+                    "singleton_count": sum(
+                        1 for morph in decomp.morphs if len(morph) == 1
+                    ),
+                    "tie_break_applied": False,
+                    "tie_break_reason": None,
+                    "selection_reason": "",
+                    "rejection_reason": "",
+                }
+            )
+
+        decision_rows.sort(
+            key=lambda row: float(row.get("decision_score") or 0.0),
+            reverse=True,
+        )
+        decision_rows = self._apply_fewer_morph_tie_breaks(decision_rows)
+        self._finalize_decision_reasons(decision_rows)
+
+        diagnostics["decision_function"] = {
+            "semantic_weight": self.DECISION_SEMANTIC_WEIGHT,
+            "attestation_weight": self.DECISION_ATTESTATION_WEIGHT,
+            "singleton_burden_weight": self.DECISION_SINGLETON_BURDEN_WEIGHT,
+            "fewer_morphs_tie_margin": self.DECISION_FEWER_MORPHS_TIE_MARGIN,
+            "singleton_clear_win_margin": self.DECISION_SINGLETON_CLEAR_WIN_MARGIN,
+            "strategy": strategy,
+        }
+        diagnostics["decision_rows"] = [
+            self._serialize_decision_row(row)
+            for row in decision_rows[: max(3, top_k * 2)]
+        ]
+
         selected = select_top_k(
-            reranked,
+            [
+                (
+                    row["decomposition"],
+                    float(row.get("decision_score") or 0.0),
+                )
+                for row in decision_rows
+            ],
             k=top_k,
             evidence=evidence,
             allow_dictionary=allow_whole_word,
         )
+        self._attach_decision_traces_to_candidates(selected, decision_rows)
         for candidate in selected:
             self._annotate_candidate(
                 candidate,
@@ -1869,6 +1964,289 @@ class SingleWordTranslationService:
             )
             self._attach_candidate_bundle_metadata(candidate)
         return selected
+
+    def _decision_semantic_signal(
+        self,
+        *,
+        decomp: Decomposition,
+        coherence_results: dict[tuple[str, ...], CoherenceResult],
+    ) -> float:
+        """Return the semantic compatibility signal for decision ranking.
+
+        Why this exists:
+        manual decomposition tuning needs a scalar that answers "does this split
+        hang together semantically?" independently from attestation and
+        singleton penalties.
+
+        Architecture responsibility:
+        converts either fasttext-based coherence or score-breakdown fallback
+        values into a normalized [0, 1] signal consumed by the decision
+        function.
+        """
+
+        key = tuple(decomp.morphs)
+        coherence = coherence_results.get(key)
+        if coherence is not None:
+            return max(0.0, min(1.0, float(coherence.score)))
+        breakdown = decomp.score_breakdown if isinstance(decomp.score_breakdown, dict) else {}
+        components = breakdown.get("components")
+        if isinstance(components, dict):
+            definition_coherence = components.get("definition_coherence")
+            if isinstance(definition_coherence, dict):
+                raw = definition_coherence.get("raw")
+                if isinstance(raw, numbers.Real):
+                    # Definition coherence can be negative in edge cases.
+                    return max(0.0, min(1.0, (float(raw) + 1.0) / 2.0))
+        return 0.0
+
+    def _decision_attestation_signal(
+        self,
+        *,
+        decomp: Decomposition,
+        evidence: WordEvidence,
+    ) -> float:
+        """Return a normalized attestation-strength signal for one decomposition.
+
+        Why this exists:
+        decomposition-first behavior still needs to favor morphs grounded in
+        real evidence instead of arbitrary character splits.
+
+        Architecture responsibility:
+        computes a length-weighted attestation/specificity value that can be
+        blended into the explicit decision equation.
+        """
+
+        cluster_morphs = {
+            cluster.ngram.upper()
+            for cluster in evidence.direct_clusters
+            if isinstance(cluster.ngram, str) and cluster.ngram
+        }
+        residual_morphs = {
+            residual.residual.upper()
+            for residual in evidence.residual_semantics
+            if isinstance(residual.residual, str) and residual.residual
+        }
+        hypothesis_morphs = {
+            hypothesis.morph.upper()
+            for hypothesis in evidence.morph_hypotheses
+            if isinstance(hypothesis.morph, str) and hypothesis.morph
+        }
+        definition_counts = evidence.definition_counts or {}
+
+        weighted_total = 0.0
+        total_length = 0.0
+        for morph in decomp.morphs:
+            normalized = str(morph or "").upper()
+            if not normalized:
+                continue
+            length = float(max(1, len(normalized)))
+            total_length += length
+
+            if normalized in cluster_morphs:
+                source_strength = 1.0
+            elif normalized in residual_morphs:
+                source_strength = 0.80
+            elif normalized in hypothesis_morphs:
+                source_strength = 0.60
+            else:
+                source_strength = 0.0
+
+            def_count_raw = definition_counts.get(normalized)
+            if isinstance(def_count_raw, int) and def_count_raw > 0:
+                specificity = 1.0 / (1.0 + math.log1p(float(def_count_raw)))
+            elif source_strength > 0.0:
+                specificity = 0.55
+            else:
+                specificity = 0.0
+
+            weighted_total += length * (0.70 * source_strength + 0.30 * specificity)
+
+        if total_length <= 0:
+            return 0.0
+        return max(0.0, min(1.0, weighted_total / total_length))
+
+    @staticmethod
+    def _decision_singleton_burden_signal(decomp: Decomposition) -> float:
+        """Return how heavily singleton usage should be penalized.
+
+        Why this exists:
+        singletons are sometimes necessary, but singleton-heavy parses should
+        only win when they carry a clear semantic/attestation advantage.
+
+        Architecture responsibility:
+        emits a bounded burden scalar used by the explicit decision function.
+        """
+
+        morphs = [str(morph or "") for morph in decomp.morphs if str(morph or "")]
+        if not morphs:
+            return 0.0
+        singleton_count = sum(1 for morph in morphs if len(morph) == 1)
+        if singleton_count == 0:
+            return 0.0
+        share = singleton_count / float(len(morphs))
+        chain = max(0, singleton_count - 1) * 0.20
+        dominance = 0.25 if singleton_count >= 3 and len(morphs) >= 4 else 0.0
+        return max(0.0, min(2.0, share + chain + dominance))
+
+    def _apply_fewer_morph_tie_breaks(
+        self,
+        rows: Sequence[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Apply the fewer-morph tie-break while preserving clear singleton wins.
+
+        Why this exists:
+        decomposition-first ranking should not drift toward confetti splits when
+        scores are nearly tied, but still must allow singleton-heavy winners
+        when they genuinely outperform alternatives.
+
+        Architecture responsibility:
+        deterministic post-sort pass that documents when tie-break swaps occur.
+        """
+
+        ordered = [dict(row) for row in rows]
+        changed = True
+        while changed:
+            changed = False
+            for index in range(len(ordered) - 1):
+                higher = ordered[index]
+                lower = ordered[index + 1]
+                higher_score = float(higher.get("decision_score") or 0.0)
+                lower_score = float(lower.get("decision_score") or 0.0)
+                delta = higher_score - lower_score
+                higher_morph_count = int(higher.get("morph_count") or 0)
+                lower_morph_count = int(lower.get("morph_count") or 0)
+                if higher_morph_count <= lower_morph_count:
+                    continue
+                if delta > self.DECISION_FEWER_MORPHS_TIE_MARGIN:
+                    continue
+                higher_singleton_count = int(higher.get("singleton_count") or 0)
+                if (
+                    higher_singleton_count >= 2
+                    and higher_singleton_count * 2 >= max(1, higher_morph_count)
+                    and delta >= self.DECISION_SINGLETON_CLEAR_WIN_MARGIN
+                ):
+                    continue
+
+                ordered[index], ordered[index + 1] = lower, higher
+                ordered[index]["tie_break_applied"] = True
+                ordered[index]["tie_break_reason"] = (
+                    "Tie-break preferred fewer morphs "
+                    f"({lower_morph_count} vs {higher_morph_count}) with score delta "
+                    f"{delta:.3f}."
+                )
+                changed = True
+        return ordered
+
+    def _finalize_decision_reasons(self, rows: list[dict[str, object]]) -> None:
+        """Attach winner/runner-up rationale to decision rows.
+
+        Why this exists:
+        manual case-by-case debugging needs deterministic "why winner beat
+        runner-up" text without re-deriving ranking math from raw numbers.
+
+        Architecture responsibility:
+        enriches already-ranked rows with human-readable selection/rejection
+        reasons consumed by JSON traces and verbose CLI output.
+        """
+
+        if not rows:
+            return
+        winner = rows[0]
+        winner_score = float(winner.get("decision_score") or 0.0)
+        runner_up = rows[1] if len(rows) > 1 else None
+        for index, row in enumerate(rows, start=1):
+            row["decision_rank"] = index
+        if runner_up is not None:
+            delta = winner_score - float(runner_up.get("decision_score") or 0.0)
+            winner["runner_up_morphs"] = list(runner_up.get("morphs") or [])
+            winner["runner_up_score_delta"] = delta
+            selection_reason = (
+                "Top decision score "
+                f"{winner_score:.3f} beat runner-up by {delta:.3f}."
+            )
+            tie_break_reason = winner.get("tie_break_reason")
+            if isinstance(tie_break_reason, str) and tie_break_reason.strip():
+                selection_reason += f" {tie_break_reason.strip()}"
+            winner["selection_reason"] = selection_reason
+        else:
+            winner["selection_reason"] = "Only compositional candidate available."
+
+        for row in rows[1:]:
+            delta = winner_score - float(row.get("decision_score") or 0.0)
+            reasons = [f"Lower decision score by {delta:.3f}."]
+            tie_break_reason = winner.get("tie_break_reason")
+            if (
+                isinstance(tie_break_reason, str)
+                and tie_break_reason.strip()
+                and int(row.get("morph_count") or 0) > int(winner.get("morph_count") or 0)
+                and delta <= self.DECISION_FEWER_MORPHS_TIE_MARGIN
+            ):
+                reasons.append("Winner retained by fewer-morph tie-break.")
+            row["rejection_reason"] = " ".join(reasons)
+
+    @staticmethod
+    def _serialize_decision_row(row: dict[str, object]) -> dict[str, object]:
+        """Serialize one decision row for debug-safe JSON output."""
+
+        return {
+            "morphs": list(row.get("morphs") or []),
+            "decision_rank": int(row.get("decision_rank") or 0),
+            "decision_score": float(row.get("decision_score") or 0.0),
+            "base_component": float(row.get("base_component") or 0.0),
+            "semantic_raw": float(row.get("semantic_raw") or 0.0),
+            "semantic_component": float(row.get("semantic_component") or 0.0),
+            "attestation_raw": float(row.get("attestation_raw") or 0.0),
+            "attestation_component": float(row.get("attestation_component") or 0.0),
+            "singleton_burden_raw": float(row.get("singleton_burden_raw") or 0.0),
+            "singleton_burden_component": float(
+                row.get("singleton_burden_component") or 0.0
+            ),
+            "morph_count": int(row.get("morph_count") or 0),
+            "singleton_count": int(row.get("singleton_count") or 0),
+            "tie_break_applied": bool(row.get("tie_break_applied")),
+            "tie_break_reason": row.get("tie_break_reason"),
+            "selection_reason": row.get("selection_reason"),
+            "rejection_reason": row.get("rejection_reason"),
+            "runner_up_morphs": list(row.get("runner_up_morphs") or []),
+            "runner_up_score_delta": (
+                float(row.get("runner_up_score_delta"))
+                if isinstance(row.get("runner_up_score_delta"), numbers.Real)
+                else None
+            ),
+        }
+
+    def _attach_decision_traces_to_candidates(
+        self,
+        candidates: list[dict[str, object]],
+        decision_rows: Sequence[dict[str, object]],
+    ) -> None:
+        """Attach decision traces to selected candidates for debug consumers.
+
+        Why this exists:
+        phrase translation and verbose CLI rendering need direct access to the
+        decision math for the winning and runner-up decompositions.
+
+        Architecture responsibility:
+        maps ranked decision rows onto the selected compositional payloads.
+        """
+
+        decision_map: dict[tuple[str, ...], dict[str, object]] = {}
+        for row in decision_rows:
+            key = tuple(str(morph) for morph in row.get("morphs") or [])
+            if key not in decision_map:
+                decision_map[key] = row
+
+        for candidate in candidates:
+            morphs = candidate.get("morphs")
+            key = (
+                tuple(str(morph) for morph in morphs)
+                if isinstance(morphs, Sequence) and not isinstance(morphs, (str, bytes))
+                else ()
+            )
+            row = decision_map.get(key)
+            if row is None:
+                continue
+            candidate["decision_trace"] = self._serialize_decision_row(row)
 
     def _enumerate_attested_full_cover_decompositions(
         self,

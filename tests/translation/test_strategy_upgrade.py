@@ -1663,6 +1663,342 @@ def test_translate_word_whole_word_enabled_still_allows_whole_word_candidates() 
     )
 
 
+def test_decision_tie_break_prefers_fewer_morphs_without_clear_singleton_margin() -> None:
+    """Prefer chunkier decompositions when singleton-heavy candidates are near ties.
+
+    The context-weighted decision function allows singletons, but near-tied
+    rankings should still default to fewer morphs to avoid confetti-like parses
+    unless the singleton-heavy path wins by a clear margin.
+    """
+
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=FakeRepository(evidence_by_word={}),
+        llm_enabled=False,
+    )
+    singleton_heavy = Decomposition(
+        morphs=["A", "B", "C", "DEFG"],
+        canonicals=["A", "B", "C", "DEFG"],
+        beam_score=0.0,
+        breakdown={"coverage_ratio": 1.0, "residual_ratio": 0.0, "segments": [], "uncovered": []},
+    )
+    compact = Decomposition(
+        morphs=["AB", "CDEFG"],
+        canonicals=["AB", "CDEFG"],
+        beam_score=0.0,
+        breakdown={"coverage_ratio": 1.0, "residual_ratio": 0.0, "segments": [], "uncovered": []},
+    )
+
+    reordered = service._apply_fewer_morph_tie_breaks(
+        [
+            {
+                "decomposition": singleton_heavy,
+                "morphs": list(singleton_heavy.morphs),
+                "decision_score": 2.00,
+                "morph_count": 4,
+                "singleton_count": 3,
+                "tie_break_applied": False,
+                "tie_break_reason": None,
+            },
+            {
+                "decomposition": compact,
+                "morphs": list(compact.morphs),
+                "decision_score": 1.95,
+                "morph_count": 2,
+                "singleton_count": 0,
+                "tie_break_applied": False,
+                "tie_break_reason": None,
+            },
+        ]
+    )
+
+    assert reordered[0]["morphs"] == ["AB", "CDEFG"]
+    assert reordered[0]["tie_break_applied"] is True
+    assert "fewer morphs" in str(reordered[0]["tie_break_reason"]).lower()
+
+
+def test_decision_tie_break_preserves_singleton_winner_with_clear_margin() -> None:
+    """Keep singleton-heavy winners when they beat alternatives by a clear margin."""
+
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=FakeRepository(evidence_by_word={}),
+        llm_enabled=False,
+    )
+    singleton_heavy = Decomposition(
+        morphs=["A", "B", "C", "DEFG"],
+        canonicals=["A", "B", "C", "DEFG"],
+        beam_score=0.0,
+        breakdown={"coverage_ratio": 1.0, "residual_ratio": 0.0, "segments": [], "uncovered": []},
+    )
+    compact = Decomposition(
+        morphs=["AB", "CDEFG"],
+        canonicals=["AB", "CDEFG"],
+        beam_score=0.0,
+        breakdown={"coverage_ratio": 1.0, "residual_ratio": 0.0, "segments": [], "uncovered": []},
+    )
+
+    reordered = service._apply_fewer_morph_tie_breaks(
+        [
+            {
+                "decomposition": singleton_heavy,
+                "morphs": list(singleton_heavy.morphs),
+                "decision_score": 2.30,
+                "morph_count": 4,
+                "singleton_count": 3,
+                "tie_break_applied": False,
+                "tie_break_reason": None,
+            },
+            {
+                "decomposition": compact,
+                "morphs": list(compact.morphs),
+                "decision_score": 2.05,
+                "morph_count": 2,
+                "singleton_count": 0,
+                "tie_break_applied": False,
+                "tie_break_reason": None,
+            },
+        ]
+    )
+
+    assert reordered[0]["morphs"] == ["A", "B", "C", "DEFG"]
+    assert reordered[0]["tie_break_applied"] is False
+
+
+def test_phrase_translation_context_can_flip_same_token_candidate(tmp_path: Path) -> None:
+    """Allow neighboring tokens to flip which decomposition wins for one token.
+
+    Phrase ranking should remain context-sensitive. The same token decomposition
+    can legitimately win in noun-heavy context and lose in verb-heavy context.
+    """
+
+    middle_verb = _word_candidate(
+        "to bind",
+        analysis_type="compositional",
+        score=10.0,
+        confidence=0.72,
+        morphs=["MI", "RX"],
+    )
+    middle_noun = _word_candidate(
+        "light",
+        analysis_type="compositional",
+        score=10.0,
+        confidence=0.72,
+        morphs=["MIR", "X"],
+    )
+    middle_verb["decision_trace"] = {
+        "decision_score": 2.11,
+        "runner_up_score_delta": 0.12,
+        "selection_reason": "Verb decomposition won in noun-heavy relation context.",
+    }
+    middle_noun["decision_trace"] = {
+        "decision_score": 1.99,
+        "rejection_reason": "Lost in noun-heavy context.",
+    }
+
+    word_service = FakeWordService(
+        results_by_word={
+            "NODA": _word_result(
+                "NODA",
+                _word_candidate(
+                    "stone",
+                    analysis_type="dictionary_exact",
+                    score=9.0,
+                    confidence=0.9,
+                    morphs=["NODA"],
+                ),
+            ),
+            "NODB": _word_result(
+                "NODB",
+                _word_candidate(
+                    "earth",
+                    analysis_type="dictionary_exact",
+                    score=9.0,
+                    confidence=0.9,
+                    morphs=["NODB"],
+                ),
+            ),
+            "VERA": _word_result(
+                "VERA",
+                _word_candidate(
+                    "to call",
+                    analysis_type="dictionary_exact",
+                    score=9.0,
+                    confidence=0.9,
+                    morphs=["VERA"],
+                ),
+            ),
+            "VERB": _word_result(
+                "VERB",
+                _word_candidate(
+                    "to bind",
+                    analysis_type="dictionary_exact",
+                    score=9.0,
+                    confidence=0.9,
+                    morphs=["VERB"],
+                ),
+            ),
+            "MIRX": _word_result("MIRX", middle_verb, middle_noun),
+        },
+        dictionary={
+            "noda": {"canonical": "NODA", "pos": "noun"},
+            "nodb": {"canonical": "NODB", "pos": "noun"},
+            "vera": {"canonical": "VERA", "pos": "verb"},
+            "verb": {"canonical": "VERB", "pos": "verb"},
+        },
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-context-flip.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    noun_context = service.translate_phrase("noda mirx nodb", top_k=2, llm=False)
+    verb_context = service.translate_phrase("vera mirx verb", top_k=2, llm=False)
+
+    noun_middle = noun_context["chosen_parse"]["token_choices"][1]["morphs"]
+    verb_middle = verb_context["chosen_parse"]["token_choices"][1]["morphs"]
+    assert noun_middle == ["MI", "RX"]
+    assert verb_middle == ["MIR", "X"]
+
+
+def test_translate_word_exposes_decision_rows_and_candidate_traces_in_json() -> None:
+    """Expose decision-function artifacts for manual decomposition debugging."""
+
+    evidence = WordEvidence(
+        word="CAFOD",
+        variants_queried=["solo"],
+    )
+    repository = FakeRepository(
+        evidence_by_word={"CAFOD": evidence},
+        support_clusters={
+            "CA": _cluster_record("CA", "center", cluster_id=801),
+            "FOD": _cluster_record("FOD", "found", cluster_id=802),
+            "CAF": _cluster_record("CAF", "to govern", cluster_id=803),
+            "OD": _cluster_record("OD", "and", cluster_id=804),
+        },
+    )
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine(
+        [
+            Decomposition(
+                morphs=["CA", "FOD"],
+                canonicals=["CA", "FOD"],
+                beam_score=1.1,
+                breakdown={
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                    "segments": [],
+                    "uncovered": [],
+                },
+                morph_support={"CA": "cluster", "FOD": "cluster"},
+            ),
+            Decomposition(
+                morphs=["CAF", "OD"],
+                canonicals=["CAF", "OD"],
+                beam_score=1.0,
+                breakdown={
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                    "segments": [],
+                    "uncovered": [],
+                },
+                morph_support={"CAF": "cluster", "OD": "cluster"},
+            ),
+        ]
+    )
+
+    result = service.translate_word(
+        "cafod",
+        llm=False,
+        allow_whole_word=False,
+        use_beam_search=True,
+        top_k=2,
+    )
+
+    assert "decision_function" in result["diagnostics"]
+    assert len(result["diagnostics"]["decision_rows"]) >= 2
+    assert "decision_trace" in result["candidates"][0]
+    assert result["candidates"][0]["decision_trace"]["selection_reason"]
+    assert isinstance(
+        result["candidates"][0]["decision_trace"]["runner_up_score_delta"],
+        float,
+    )
+
+
+def test_phrase_report_verbose_includes_token_decision_table() -> None:
+    """Render a compact token decision table alongside the verbose phrase trace."""
+
+    payload = {
+        "phrase": "noda mirx nodb",
+        "variant": "solo",
+        "strategy": "prefer-balance",
+        "llm_enabled": False,
+        "token_analyses": [
+            {
+                "token": "mirx",
+                "candidates": [
+                    {
+                        "rank": 1,
+                        "analysis_type": "compositional",
+                        "morphs": ["MI", "RX"],
+                        "definition": "to bind",
+                        "role_hint": "verb",
+                        "chosen_in_parse": True,
+                        "definition_trace": {},
+                    },
+                    {
+                        "rank": 2,
+                        "analysis_type": "compositional",
+                        "morphs": ["MIR", "X"],
+                        "definition": "light",
+                        "role_hint": "noun",
+                        "chosen_in_parse": False,
+                        "definition_trace": {},
+                    },
+                ],
+                "word_result": {
+                    "candidates": [
+                        {
+                            "rank": 1,
+                            "analysis_type": "compositional",
+                            "morphs": ["MI", "RX"],
+                            "decision_trace": {
+                                "decision_score": 2.110,
+                                "runner_up_score_delta": 0.120,
+                                "selection_reason": "Top decision score 2.110 beat runner-up by 0.120.",
+                            },
+                        },
+                        {
+                            "rank": 2,
+                            "analysis_type": "compositional",
+                            "morphs": ["MIR", "X"],
+                            "decision_trace": {
+                                "decision_score": 1.990,
+                                "rejection_reason": "Lower decision score by 0.120.",
+                            },
+                        },
+                    ]
+                },
+            }
+        ],
+        "parse_candidates": [],
+        "memory_updates": [],
+        "render_warnings": [],
+        "lay_warnings": [],
+    }
+
+    report = translation_cli._format_phrase_report(payload, verbose=True)
+
+    assert "Token decision table:" in report
+    assert "Winner rationale:" in report
+    assert "Runner-up rejection:" in report
+
+
 def test_phrase_translation_known_sentence_uses_clause_like_blind_rendering_in_solo(
     tmp_path: Path,
 ) -> None:
