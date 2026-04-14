@@ -14,6 +14,8 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 def _load_query_model_tool_module():
     """Load the real query-model module with tiny import-time stubs.
@@ -188,3 +190,40 @@ def test_query_model_tool_non_stream_returns_full_response(monkeypatch) -> None:
         "received full response",
         "response complete",
     ]
+
+
+def test_query_model_tool_non_retryable_remote_error_fails_fast(monkeypatch) -> None:
+    """Skip retry sleeps for deterministic remote failures like HTTP 404."""
+
+    query_model_tool_module = _load_query_model_tool_module()
+    monkeypatch.setenv("REMOTE_OPENAI_API_BASE", "https://example.test")
+    monkeypatch.setenv("REMOTE_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("REMOTE_MODEL_NAME", "retired-model")
+
+    class _ModelNotFoundError(RuntimeError):
+        status_code = 404
+
+    attempts = {"count": 0}
+    sleep_calls: list[float] = []
+
+    tool = query_model_tool_module.QueryModelTool(
+        system_prompt="Return JSON only.",
+        use_remote=True,
+        progress_style="silent",
+        remote_attempts=2,
+        local_fallback_enabled=False,
+        stream_response=False,
+    )
+
+    def _raise_not_found(*_args, **_kwargs):
+        attempts["count"] += 1
+        raise _ModelNotFoundError("404 model not found")
+
+    monkeypatch.setattr(tool, "_try_remote_once", _raise_not_found)
+    monkeypatch.setattr(query_model_tool_module.time, "sleep", lambda seconds: sleep_calls.append(float(seconds)))
+
+    with pytest.raises(_ModelNotFoundError):
+        tool._run_remote_with_policy("translate this")
+
+    assert attempts["count"] == 1
+    assert sleep_calls == []

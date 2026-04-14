@@ -26,7 +26,11 @@ DEFAULT_MULTI_SEGMENT_BONUS = 0.25
 # 0.75 per extra char: NAZ (3 chars) gets 1.5 bonus, NA (2 chars) gets 0.75
 DEFAULT_LENGTH_BONUS = 0.75
 DEFAULT_SEGMENT_PENALTY = 0.35
-DEFAULT_SINGLE_CHAR_PENALTY = 2.5
+DEFAULT_SINGLE_CHAR_PENALTY = 8.0
+DEFAULT_CLUSTER_ATTESTATION_BONUS = 10.0
+DEFAULT_SINGLE_CHAR_HIGH_DEFINITION_THRESHOLD = 15
+DEFAULT_SINGLE_CHAR_HIGH_DEFINITION_SCALE = 0.3
+DEFAULT_SINGLE_CHAR_HIGH_DEFINITION_MAX_PENALTY = 6.0
 DEFAULT_EDGE_BONUS = 0.6
 # Ambiguity penalty: penalizes high-TF morphs (more common = more ambiguous)
 # This helps specific morphs (NAZ with 1 definition) beat ambiguous ones (NA with 28)
@@ -38,7 +42,7 @@ DEFAULT_ALLOWED_SINGLETONS = set("abcdefghiklmnopqrstuxyz")
 DEFAULT_SINGLETON_PENALTIES: dict[str, float] = {
     "l": 0.25,  # Very common morpheme
     "i": 0.75,  # Common morpheme
-    # All other letters use DEFAULT_SINGLE_CHAR_PENALTY (2.5)
+    # All other letters use DEFAULT_SINGLE_CHAR_PENALTY (8.0)
 }
 
 # --- Logging setup ---
@@ -61,6 +65,8 @@ class CoverageSegment(TypedDict):
     singleton_penalty: float
     ambiguity_penalty: float
     specificity_penalty: float
+    single_char_specificity_penalty: float
+    cluster_attestation_bonus: float
 
 
 class SegmentScore(TypedDict):
@@ -104,6 +110,7 @@ class MorphemeCandidateFinder:
         allowed_singletons: set[str] | None = None,
         singleton_penalties: dict[str, float] | None = None,
         ambiguity_penalty_scale: float = DEFAULT_AMBIGUITY_PENALTY_SCALE,
+        cluster_attestation_bonus: float = DEFAULT_CLUSTER_ATTESTATION_BONUS,
         n_best: int | None = None,
     ):
         # Connect to ngram SQLite index
@@ -150,6 +157,7 @@ class MorphemeCandidateFinder:
             else dict(DEFAULT_SINGLETON_PENALTIES)
         )
         self.ambiguity_penalty_scale = ambiguity_penalty_scale
+        self.cluster_attestation_bonus = cluster_attestation_bonus
         self.n_best = n_best
 
         # Load the ngram → [(canonical, tf, df), ...] map
@@ -261,6 +269,7 @@ class MorphemeCandidateFinder:
         definition_counts: dict[str, int] | None = None,
         definition_glosses: dict[str, list[tuple[str, float | None]]] | None = None,
         definition_cluster_threshold: float = 0.8,
+        attested_cluster_ngrams: set[str] | None = None,
     ) -> list[
         tuple[
             list[str],
@@ -289,6 +298,11 @@ class MorphemeCandidateFinder:
         tgt = target.lower()
         final = []
         min_len = min_n if min_n is not None else self.min_n
+        attested_cluster_keys = {
+            ngram.strip().lower()
+            for ngram in (attested_cluster_ngrams or set())
+            if isinstance(ngram, str) and ngram.strip()
+        }
 
         cluster_count_cache: dict[str, int] = {}
 
@@ -367,18 +381,36 @@ class MorphemeCandidateFinder:
                         # Fewer definitions = more specific = better
                         # NAZ (1 def) vs NA (28 defs): log1p(1)*0.5=0.35 vs log1p(28)*0.5=1.68
                         specificity_penalty = 0.0
+                        single_char_specificity_penalty = 0.0
+                        def_count = 0
                         if definition_counts:
-                            def_count = definition_counts.get(ng.upper(), 0)
+                            def_count = int(definition_counts.get(ng.upper(), 0) or 0)
                             if def_count > 0:
                                 specificity_penalty = 0.5 * math.log1p(def_count)
+                                if (
+                                    n == 1
+                                    and def_count > DEFAULT_SINGLE_CHAR_HIGH_DEFINITION_THRESHOLD
+                                ):
+                                    single_char_specificity_penalty = min(
+                                        DEFAULT_SINGLE_CHAR_HIGH_DEFINITION_MAX_PENALTY,
+                                        DEFAULT_SINGLE_CHAR_HIGH_DEFINITION_SCALE
+                                        * (def_count - DEFAULT_SINGLE_CHAR_HIGH_DEFINITION_THRESHOLD),
+                                    )
+                        cluster_attestation_bonus = (
+                            self.cluster_attestation_bonus
+                            if ng in attested_cluster_keys
+                            else 0.0
+                        )
                         tfidf = (
                             raw_tfidf
                             + length_bonus
                             + edge_bonus
+                            + cluster_attestation_bonus
                             - segment_penalty
                             - singleton_penalty
                             - ambiguity_penalty
                             - specificity_penalty
+                            - single_char_specificity_penalty
                         )
                         new_path = path + [canon]
                         new_score = score + tfidf
@@ -403,6 +435,8 @@ class MorphemeCandidateFinder:
                             "singleton_penalty": singleton_penalty,
                             "ambiguity_penalty": ambiguity_penalty,
                             "specificity_penalty": specificity_penalty,
+                            "single_char_specificity_penalty": single_char_specificity_penalty,
+                            "cluster_attestation_bonus": cluster_attestation_bonus,
                         }
                         new_beams.append(
                             (

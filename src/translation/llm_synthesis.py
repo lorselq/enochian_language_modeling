@@ -197,6 +197,16 @@ class PhraseRenderBundleResult:
     poetic_translation: str = ""
     poetic_confidence: float = 0.0
     poetic_reasoning: str = ""
+    contextual_lay_translation: str = ""
+    contextual_lay_confidence: float | None = None
+    contextual_lay_reasoning: str = ""
+    contextual_poetic_translation: str = ""
+    contextual_poetic_confidence: float | None = None
+    contextual_poetic_reasoning: str = ""
+    contextual_selected_parse_rank: int = 1
+    contextual_interpretive_translation: str = ""
+    contextual_interpretive_confidence: float | None = None
+    contextual_interpretive_reasoning: str = ""
     interpretive_translation: str = ""
     interpretive_confidence: float = 0.0
     interpretive_reasoning: str = ""
@@ -216,6 +226,16 @@ class PhraseRenderBundleResult:
             "poetic_translation": self.poetic_translation,
             "poetic_confidence": self.poetic_confidence,
             "poetic_reasoning": self.poetic_reasoning,
+            "contextual_lay_translation": self.contextual_lay_translation,
+            "contextual_lay_confidence": self.contextual_lay_confidence,
+            "contextual_lay_reasoning": self.contextual_lay_reasoning,
+            "contextual_poetic_translation": self.contextual_poetic_translation,
+            "contextual_poetic_confidence": self.contextual_poetic_confidence,
+            "contextual_poetic_reasoning": self.contextual_poetic_reasoning,
+            "contextual_selected_parse_rank": self.contextual_selected_parse_rank,
+            "contextual_interpretive_translation": self.contextual_interpretive_translation,
+            "contextual_interpretive_confidence": self.contextual_interpretive_confidence,
+            "contextual_interpretive_reasoning": self.contextual_interpretive_reasoning,
             "interpretive_translation": self.interpretive_translation,
             "interpretive_confidence": self.interpretive_confidence,
             "interpretive_reasoning": self.interpretive_reasoning,
@@ -1039,6 +1059,81 @@ def render_phrase_translation(
         )
 
 
+def refine_unknown_phrase_tokens(
+    parse_payload: dict[str, object],
+    context: dict[str, object],
+) -> dict[str, object]:
+    """Refine ``source=unknown`` token glosses using neighboring token context.
+
+    Phrase translation keeps deterministic parse selection as the source of
+    truth. This optional helper asks the LLM only for lexical replacements of
+    unknown-source tokens and returns index-scoped edits so callers can merge
+    valid replacements without changing parse structure.
+    """
+
+    unknown_tokens = parse_payload.get("unknown_tokens")
+    if not isinstance(unknown_tokens, Sequence) or isinstance(unknown_tokens, (str, bytes)):
+        return {
+            "refinements": [],
+            "reasoning": "No unknown-token payload was provided for contextual refinement.",
+            "warnings": [],
+        }
+    if not unknown_tokens:
+        return {
+            "refinements": [],
+            "reasoning": "No unknown tokens were present in the selected phrase parse.",
+            "warnings": [],
+        }
+
+    prompt = _build_unknown_token_refinement_prompt(parse_payload, context)
+    use_remote = bool(context.get("use_remote", False))
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    tool = QueryModelTool(
+        system_prompt=(
+            "You are a constrained Enochian token gloss refiner. "
+            "Return short lexical replacements only for listed unknown-source tokens "
+            "using neighboring token context. "
+            f"Historical scope: {llm_context}"
+        ),
+        name="Unknown Token Context Refiner",
+        description="Refine unknown token glosses from neighboring context",
+        use_remote=use_remote,
+        progress_style="silent",
+    )
+    _attach_query_logging(tool, context)
+    progress_callback = _tool_progress_callback(context)
+
+    try:
+        _report_render_detail(
+            context,
+            "waiting for unknown-token context refinement"
+            if use_remote
+            else "running local unknown-token refinement",
+        )
+        response = tool._run(
+            prompt=prompt,
+            print_chunks=False,
+            stream_callback=None,
+            progress_callback=progress_callback,
+        )
+        _report_render_detail(context, "validating unknown-token refinement response")
+        parsed = _parse_unknown_token_refinement_response(
+            response.get("response_text", ""),
+            parse_payload=parse_payload,
+        )
+        parsed["raw_response"] = response.get("response_text")
+        return parsed
+    except Exception as exc:
+        _report_render_detail(context, "falling back to deterministic unknown-token glosses")
+        return {
+            "refinements": [],
+            "reasoning": (
+                "Unknown-token context refinement unavailable; keeping deterministic token glosses."
+            ),
+            "warnings": [f"Unknown-token context refinement unavailable. ({exc})"],
+        }
+
+
 def render_phrase_lay_translation(
     parse_payload: dict[str, object],
     context: dict[str, object],
@@ -1195,6 +1290,72 @@ def render_phrase_bundle(
                 or parsed.get("interpretive_reasoning")
                 or "Poetic translation fell back to the grounded lay reading."
             ),
+            contextual_lay_translation=str(
+                parsed.get("contextual_lay_translation")
+                or parsed.get("lay_translation")
+                or skeleton
+            ),
+            contextual_lay_confidence=_safe_float(
+                parsed.get("contextual_lay_confidence"),
+                default=_safe_float(parsed.get("lay_confidence"), default=confidence),
+            ),
+            contextual_lay_reasoning=str(
+                parsed.get("contextual_lay_reasoning")
+                or parsed.get("lay_reasoning")
+                or "Contextual lay translation fell back to the rank-1 grounded reading."
+            ),
+            contextual_poetic_translation=str(
+                parsed.get("contextual_poetic_translation")
+                or parsed.get("contextual_interpretive_translation")
+                or parsed.get("poetic_translation")
+                or parsed.get("interpretive_translation")
+                or parsed.get("lay_translation")
+                or skeleton
+            ),
+            contextual_poetic_confidence=_safe_float(
+                parsed.get("contextual_poetic_confidence")
+                or parsed.get("contextual_interpretive_confidence"),
+                default=_safe_float(
+                    parsed.get("poetic_confidence") or parsed.get("interpretive_confidence"),
+                    default=_safe_float(parsed.get("lay_confidence"), default=confidence),
+                ),
+            ),
+            contextual_poetic_reasoning=str(
+                parsed.get("contextual_poetic_reasoning")
+                or parsed.get("contextual_interpretive_reasoning")
+                or parsed.get("poetic_reasoning")
+                or parsed.get("interpretive_reasoning")
+                or "Contextual poetic translation fell back to the rank-1 poetic reading."
+            ),
+            contextual_selected_parse_rank=(
+                int(parsed.get("contextual_selected_parse_rank"))
+                if isinstance(parsed.get("contextual_selected_parse_rank"), int)
+                and int(parsed.get("contextual_selected_parse_rank")) > 0
+                else 1
+            ),
+            contextual_interpretive_translation=str(
+                parsed.get("contextual_poetic_translation")
+                or parsed.get("contextual_interpretive_translation")
+                or parsed.get("poetic_translation")
+                or parsed.get("interpretive_translation")
+                or parsed.get("lay_translation")
+                or skeleton
+            ),
+            contextual_interpretive_confidence=_safe_float(
+                parsed.get("contextual_poetic_confidence")
+                or parsed.get("contextual_interpretive_confidence"),
+                default=_safe_float(
+                    parsed.get("poetic_confidence") or parsed.get("interpretive_confidence"),
+                    default=_safe_float(parsed.get("lay_confidence"), default=confidence),
+                ),
+            ),
+            contextual_interpretive_reasoning=str(
+                parsed.get("contextual_poetic_reasoning")
+                or parsed.get("contextual_interpretive_reasoning")
+                or parsed.get("poetic_reasoning")
+                or parsed.get("interpretive_reasoning")
+                or "Contextual poetic translation fell back to the rank-1 poetic reading."
+            ),
             interpretive_translation=str(
                 parsed.get("poetic_translation")
                 or parsed.get("interpretive_translation")
@@ -1237,6 +1398,25 @@ def render_phrase_bundle(
                 "Poetic renderer unavailable; using deterministic "
                 f"fallback. ({exc})"
             ),
+            contextual_lay_translation=fallback_lay,
+            contextual_lay_confidence=fallback_confidence,
+            contextual_lay_reasoning=(
+                "Contextual lay renderer unavailable; using rank-1 fallback. "
+                f"({exc})"
+            ),
+            contextual_poetic_translation=fallback_lay,
+            contextual_poetic_confidence=fallback_confidence,
+            contextual_poetic_reasoning=(
+                "Contextual poetic renderer unavailable; using rank-1 fallback. "
+                f"({exc})"
+            ),
+            contextual_selected_parse_rank=1,
+            contextual_interpretive_translation=fallback_lay,
+            contextual_interpretive_confidence=fallback_confidence,
+            contextual_interpretive_reasoning=(
+                "Contextual poetic renderer unavailable; using rank-1 fallback. "
+                f"({exc})"
+            ),
             interpretive_translation=fallback_lay,
             interpretive_confidence=fallback_confidence,
             interpretive_reasoning=(
@@ -1264,12 +1444,19 @@ def _build_phrase_bundle_prompt(
     llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
     schema = json.dumps(
         {
-            "lay_translation": "<plausible, roughly grammatical English sentence or clause that expresses one coherent reading of the phrase>",
+            "lay_translation": "<rank-1-only natural English prose reading>",
             "lay_confidence": 0.0,
-            "lay_reasoning": "<brief note explaining the chosen grounded reading>",
-            "poetic_translation": "<more liberal, more expressive English interpretation that stays grounded in the supplied parse but may reorder and add connective tissue freely>",
+            "lay_reasoning": "<brief note explaining the rank-1 grounded prose reading>",
+            "poetic_translation": "<rank-1-only more expressive prose reading; may reorder/add connective helper words while staying grounded>",
             "poetic_confidence": 0.0,
-            "poetic_reasoning": "<brief note explaining the poetic choices>",
+            "poetic_reasoning": "<brief note explaining the rank-1 poetic choices>",
+            "contextual_selected_parse_rank": 1,
+            "contextual_lay_translation": "<best prose reading chosen from parse ranks 1..3>",
+            "contextual_lay_confidence": 0.0,
+            "contextual_lay_reasoning": "<brief note explaining which parse rank was chosen and why>",
+            "contextual_poetic_translation": "<more expressive contextual prose reading from parse ranks 1..3>",
+            "contextual_poetic_confidence": 0.0,
+            "contextual_poetic_reasoning": "<brief note explaining contextual poetic choices and selected parse rank>",
             "footnoted_translation": "<same short translation with [^1] style markers>",
             "translation_footnotes": [
                 {
@@ -1286,10 +1473,17 @@ def _build_phrase_bundle_prompt(
         {
             "lay_translation": "the holy law still stands",
             "lay_confidence": 0.72,
-            "lay_reasoning": "Chooses one coherent everyday reading while staying anchored to the supplied parse.",
+            "lay_reasoning": "Uses rank-1 token choices only and rewrites them as readable prose.",
             "poetic_translation": "the sacred order still holds firm",
             "poetic_confidence": 0.80,
-            "poetic_reasoning": "Leans into a more expressive paraphrase while preserving the same governing idea.",
+            "poetic_reasoning": "Uses rank-1 choices only but goes further stylistically.",
+            "contextual_selected_parse_rank": 2,
+            "contextual_lay_translation": "the sacred law yet remains in force",
+            "contextual_lay_confidence": 0.77,
+            "contextual_lay_reasoning": "Parse rank 2 produced a cleaner sentence with fewer awkward fragments.",
+            "contextual_poetic_translation": "the holy ordinance endures and will not fail",
+            "contextual_poetic_confidence": 0.83,
+            "contextual_poetic_reasoning": "Chose parse rank 2 for coherence, then elevated diction while preserving meaning.",
             "footnoted_translation": "holy [^1] law [^2] still stands [^3]",
             "translation_footnotes": [
                 {
@@ -1318,22 +1512,29 @@ def _build_phrase_bundle_prompt(
     return "\n".join(
         [
             "ROLE: You are a constrained Enochian lay phrase renderer.",
-            "TASK: Return one grounded lay translation, one more expressive poetic translation, and token footnotes for the supplied parse.",
+            (
+                "TASK: Return four prose outputs and one footnote block: "
+                "(1) rank-1 lay, (2) rank-1 poetic, "
+                "(3) contextual lay from parse ranks 1..3, "
+                "(4) contextual poetic from parse ranks 1..3."
+            ),
             f"HISTORICAL CONTEXT: {llm_context}",
             "CONSTRAINTS:",
-            "- Stay grounded in the supplied token choices, relations, skeleton, semantic cores, and alternates.",
-            "- `lay_translation` must read like normal English, not like a bag of glosses.",
-            "- Treat `lay_translation` as a plausible hypothetical interpretation of what the phrase could mean.",
-            "- You may add helper words, articles, and prepositions when they are needed to make the line feel grammatical.",
+            "- Stay grounded in supplied token choices, relations, skeletons, semantic cores, and alternates.",
+            "- `lay_translation` MUST use rank-1 parse data only (`rank1_parse_payload`) and must read like normal prose English, never partial gloss fragments.",
+            "- `poetic_translation` MUST also use rank-1 parse data only, but can go further stylistically while remaining readable prose.",
+            "- `contextual_lay_translation` may select the best coherent option from `contextual_parse_options` (parse ranks 1..3).",
+            "- `contextual_poetic_translation` may also select from parse ranks 1..3 and push farther stylistically.",
+            "- Set `contextual_selected_parse_rank` to the rank used for contextual outputs.",
+            "- Both lay and poetic outputs are allowed to add helper/filler words (articles, pronouns, auxiliaries, prepositions, connective tissue) when needed for grammatical English.",
             "- Prefer one coherent reading over mirroring the source token order mechanically.",
-            "- Unless the phrase is extremely short, `lay_translation` should not simply copy the technical skeleton word-for-word.",
+            "- Unless the phrase is extremely short, do not simply copy the technical skeleton word-for-word.",
             "- Do not return token-by-token comma lists, stacked prepositional fragments, or glossary dumps.",
             "- Repair awkward fragment chains such as repeated prepositions or noun piles into the most plausible grammatical English you can support.",
-            "- `poetic_translation` should push farther: reorder aggressively when useful, add connective tissue, and smooth hard edges so the phrase reads like compelling English.",
-            "- `poetic_translation` may choose among the supplied supported senses and alternates to produce the most plausible coherent sentence.",
-            "- `poetic_translation` may absorb weak tokens into stronger surrounding phrasing instead of forcing a choppy token-by-token mirror.",
-            "- `poetic_translation` does NOT need to differ from `lay_translation` if the grounded lay sentence is already coherent and expressive.",
+            "- Poetic outputs may reorder aggressively and smooth edges into compelling prose, but cannot invent unsupported token meanings or relations.",
+            "- Poetic outputs do not need to differ from lay outputs when the lay line is already coherent and expressive.",
             "- Return exactly one footnote entry per token choice, in source order.",
+            "- Footnotes MUST stay anchored to rank-1 token choices (`token_choices`) only.",
             "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
             "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
             "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
@@ -1349,6 +1550,151 @@ def _build_phrase_bundle_prompt(
             example,
         ]
     )
+
+
+def _build_unknown_token_refinement_prompt(
+    parse_payload: dict[str, object],
+    context: dict[str, object],
+) -> str:
+    """Build a constrained prompt for unknown-token-only contextual refinement.
+
+    This prompt intentionally limits the LLM to short lexical replacements for
+    listed unknown tokens. The parse skeleton and known neighbor glosses are
+    provided as context, while all structure-changing behavior is prohibited.
+    """
+
+    llm_context = context.get("llm_context") or DEFAULT_LLM_CONTEXT
+    schema = json.dumps(
+        {
+            "refinements": [
+                {
+                    "index": 1,
+                    "token": "TOKEN",
+                    "replacement": "short lexical gloss",
+                    "confidence": 0.0,
+                    "reasoning": "brief grounding note",
+                }
+            ],
+            "reasoning": "overall note",
+        },
+        ensure_ascii=False,
+    )
+    payload = json.dumps(parse_payload, ensure_ascii=False, indent=2)
+    return "\n".join(
+        [
+            "ROLE: You are a constrained unknown-token gloss refiner.",
+            "TASK: Suggest short lexical replacements only for listed unknown tokens.",
+            f"HISTORICAL CONTEXT: {llm_context}",
+            "CONSTRAINTS:",
+            "- Only refine tokens listed under `unknown_tokens`.",
+            "- Preserve token order, parse relations, and sentence structure.",
+            "- Keep each `replacement` to short lexical wording (typically 1-4 words).",
+            "- Do not invent new entities, events, or theological claims.",
+            "- Do not emit source tokens, bracket placeholders, or `unresolved term`.",
+            "- Return STRICT JSON only.",
+            "PARSE PAYLOAD:",
+            payload,
+            "SCHEMA:",
+            schema,
+        ]
+    )
+
+
+def _parse_unknown_token_refinement_response(
+    payload: str,
+    *,
+    parse_payload: dict[str, object],
+) -> dict[str, object]:
+    """Parse and validate unknown-token refinement responses from the LLM."""
+
+    data = _load_json_payload(payload)
+    if data is None:
+        return {
+            "refinements": [],
+            "reasoning": "Unknown-token refiner returned non-JSON output.",
+            "warnings": ["Unknown-token context refinement returned non-JSON output."],
+        }
+
+    unknown_tokens = parse_payload.get("unknown_tokens")
+    listed_tokens = (
+        list(unknown_tokens)
+        if isinstance(unknown_tokens, Sequence) and not isinstance(unknown_tokens, (str, bytes))
+        else []
+    )
+    allowed_indexes: dict[int, str] = {}
+    for item in listed_tokens:
+        if not isinstance(item, Mapping):
+            continue
+        raw_index = item.get("index")
+        token = str(item.get("token") or "").strip().upper()
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        if index > 0 and token:
+            allowed_indexes[index] = token
+
+    raw_refinements = data.get("refinements")
+    refinements: list[dict[str, object]] = []
+    used_indexes: set[int] = set()
+    if isinstance(raw_refinements, Sequence) and not isinstance(raw_refinements, (str, bytes)):
+        for item in raw_refinements:
+            if not isinstance(item, Mapping):
+                continue
+            raw_index = item.get("index")
+            try:
+                index = int(raw_index)
+            except (TypeError, ValueError):
+                continue
+            token = allowed_indexes.get(index)
+            if token is None or index in used_indexes:
+                continue
+
+            replacement_raw = item.get("replacement")
+            if not isinstance(replacement_raw, str) or not replacement_raw.strip():
+                continue
+            cleaned = clean_lexical_gloss(replacement_raw, token=token)
+            if cleaned is None:
+                cleaned = sanitize_human_gloss(replacement_raw, token=token)
+            if not isinstance(cleaned, str) or not cleaned.strip():
+                continue
+            replacement = cleaned.strip()
+            if replacement.upper() == unresolved_token_gloss(token):
+                continue
+            if replacement.lower() in {"unresolved term", token.lower()}:
+                continue
+
+            confidence = _safe_float(item.get("confidence"), default=0.0)
+            reasoning = item.get("reasoning")
+            refinements.append(
+                {
+                    "index": index,
+                    "token": token,
+                    "replacement": replacement,
+                    "confidence": max(0.0, min(1.0, confidence)),
+                    "reasoning": (
+                        reasoning.strip()
+                        if isinstance(reasoning, str) and reasoning.strip()
+                        else "Contextual unknown-token refinement."
+                    ),
+                }
+            )
+            used_indexes.add(index)
+
+    reasoning = data.get("reasoning")
+    return {
+        "refinements": refinements,
+        "reasoning": (
+            reasoning.strip()
+            if isinstance(reasoning, str) and reasoning.strip()
+            else (
+                "Applied contextual unknown-token refinements."
+                if refinements
+                else "No valid unknown-token refinements were returned."
+            )
+        ),
+        "warnings": [],
+    }
 
 
 def _build_phrase_render_prompt(
@@ -1586,6 +1932,22 @@ def _parse_phrase_bundle_response(
             "poetic_reasoning": (
                 "Bundled renderer returned non-JSON output; using deterministic poetic fallback."
             ),
+            "contextual_lay_translation": fallback_lay,
+            "contextual_lay_confidence": 0.5,
+            "contextual_lay_reasoning": (
+                "Bundled renderer returned non-JSON output; using rank-1 lay fallback."
+            ),
+            "contextual_poetic_translation": fallback_lay,
+            "contextual_poetic_confidence": 0.5,
+            "contextual_poetic_reasoning": (
+                "Bundled renderer returned non-JSON output; using rank-1 poetic fallback."
+            ),
+            "contextual_selected_parse_rank": 1,
+            "contextual_interpretive_translation": fallback_lay,
+            "contextual_interpretive_confidence": 0.5,
+            "contextual_interpretive_reasoning": (
+                "Bundled renderer returned non-JSON output; using rank-1 poetic fallback."
+            ),
             "interpretive_translation": fallback_lay,
             "interpretive_confidence": 0.5,
             "interpretive_reasoning": (
@@ -1641,6 +2003,56 @@ def _parse_phrase_bundle_response(
         ),
         lay_translation=lay["rendered_translation"],
     )
+    contextual_selected_rank = _contextual_selected_parse_rank(
+        data.get("contextual_selected_parse_rank"),
+        parse_payload=parse_payload,
+    )
+    contextual_parse_payload = _contextual_parse_payload(
+        parse_payload,
+        parse_rank=contextual_selected_rank,
+    )
+    contextual_lay_payload = json.dumps(
+        {
+            "rendered_translation": data.get("contextual_lay_translation"),
+            "confidence": data.get("contextual_lay_confidence"),
+            "reasoning": data.get("contextual_lay_reasoning"),
+        },
+        ensure_ascii=False,
+    )
+    contextual_lay = _parse_phrase_render_response(
+        contextual_lay_payload,
+        fallback=lay["rendered_translation"] or fallback,
+    )
+    normalized_contextual_lay = _replace_token_placeholders_in_translation(
+        contextual_lay["rendered_translation"],
+        parse_payload=contextual_parse_payload,
+    )
+    if not normalized_contextual_lay.strip():
+        normalized_contextual_lay = lay["rendered_translation"]
+    contextual_poetic_payload = json.dumps(
+        {
+            "rendered_translation": data.get("contextual_poetic_translation")
+            or data.get("contextual_interpretive_translation"),
+            "confidence": data.get("contextual_poetic_confidence")
+            or data.get("contextual_interpretive_confidence"),
+            "reasoning": data.get("contextual_poetic_reasoning")
+            or data.get("contextual_interpretive_reasoning"),
+        },
+        ensure_ascii=False,
+    )
+    contextual_poetic = _parse_phrase_render_response(
+        contextual_poetic_payload,
+        fallback=normalized_poetic or normalized_contextual_lay or fallback,
+    )
+    normalized_contextual_poetic = _normalize_poetic_translation(
+        _replace_token_placeholders_in_translation(
+            contextual_poetic["rendered_translation"],
+            parse_payload=contextual_parse_payload,
+        ),
+        lay_translation=normalized_contextual_lay,
+    )
+    if not normalized_contextual_poetic.strip():
+        normalized_contextual_poetic = normalized_poetic
     return {
         "technical_translation": technical["rendered_translation"],
         "technical_confidence": technical["confidence"],
@@ -1651,12 +2063,76 @@ def _parse_phrase_bundle_response(
         "poetic_translation": normalized_poetic,
         "poetic_confidence": poetic["confidence"],
         "poetic_reasoning": poetic["reasoning"],
+        "contextual_lay_translation": normalized_contextual_lay,
+        "contextual_lay_confidence": contextual_lay["confidence"],
+        "contextual_lay_reasoning": contextual_lay["reasoning"],
+        "contextual_poetic_translation": normalized_contextual_poetic,
+        "contextual_poetic_confidence": contextual_poetic["confidence"],
+        "contextual_poetic_reasoning": contextual_poetic["reasoning"],
+        "contextual_selected_parse_rank": contextual_selected_rank,
+        "contextual_interpretive_translation": normalized_contextual_poetic,
+        "contextual_interpretive_confidence": contextual_poetic["confidence"],
+        "contextual_interpretive_reasoning": contextual_poetic["reasoning"],
         "interpretive_translation": normalized_poetic,
         "interpretive_confidence": poetic["confidence"],
         "interpretive_reasoning": poetic["reasoning"],
         "footnoted_translation": lay["footnoted_translation"],
         "translation_footnotes": lay["translation_footnotes"],
     }
+
+
+def _contextual_selected_parse_rank(
+    value: object,
+    *,
+    parse_payload: Mapping[str, object],
+) -> int:
+    """Choose a valid contextual parse rank from the bundled payload options.
+
+    Contextual phrase rendering may select among parse ranks 1..3. This helper
+    validates model output against the provided options so downstream
+    normalization always has one concrete parse payload to reference.
+    """
+
+    options = parse_payload.get("contextual_parse_options")
+    available: set[int] = set()
+    if isinstance(options, Sequence) and not isinstance(options, (str, bytes)):
+        for option in options:
+            if not isinstance(option, Mapping):
+                continue
+            parse_rank = option.get("parse_rank")
+            if isinstance(parse_rank, int) and parse_rank > 0:
+                available.add(parse_rank)
+    if not available:
+        return 1
+    if isinstance(value, int) and value in available:
+        return value
+    return min(available)
+
+
+def _contextual_parse_payload(
+    parse_payload: Mapping[str, object],
+    *,
+    parse_rank: int,
+) -> dict[str, object]:
+    """Return the parse payload matching ``parse_rank`` for contextual cleanup.
+
+    Contextual lay/poetic outputs may select rank 1..3 parse options. Placeholder
+    replacement and lexical cleanup need the token inventory for the selected
+    parse rank, so this helper resolves that payload deterministically.
+    """
+
+    options = parse_payload.get("contextual_parse_options")
+    if isinstance(options, Sequence) and not isinstance(options, (str, bytes)):
+        for option in options:
+            if not isinstance(option, Mapping):
+                continue
+            option_rank = option.get("parse_rank")
+            if isinstance(option_rank, int) and option_rank == parse_rank:
+                return dict(option)
+    rank1_payload = parse_payload.get("rank1_parse_payload")
+    if isinstance(rank1_payload, Mapping):
+        return dict(rank1_payload)
+    return dict(parse_payload)
 
 
 def _coerce_phrase_footnotes(

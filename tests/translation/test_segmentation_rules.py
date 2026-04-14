@@ -19,6 +19,10 @@ class _DummyFastText:  # pragma: no cover - simple import shim
     def __init__(self, *args, **kwargs):
         self.wv = self
 
+    @classmethod
+    def load(cls, _path: str) -> "_DummyFastText":
+        return cls()
+
     def get_vector(self, _token: str):
         return np.zeros(4)
 
@@ -266,6 +270,8 @@ def test_singleton_penalties_are_per_letter(
     assert DEFAULT_SINGLETON_PENALTIES.get("l", DEFAULT_SINGLE_CHAR_PENALTY) < 1.0
     # I should have moderate penalty
     assert DEFAULT_SINGLETON_PENALTIES.get("i", DEFAULT_SINGLE_CHAR_PENALTY) < 1.5
+    # Global singleton baseline should stay high to prevent noisy one-char splits.
+    assert DEFAULT_SINGLE_CHAR_PENALTY == 8.0
     # Other letters should use the default penalty
     assert "p" not in DEFAULT_SINGLETON_PENALTIES
 
@@ -315,3 +321,92 @@ def test_attested_only_enumerator_respects_cluster_evidence(
     for path in paths:
         assert "ZPSAD" not in path
         assert "NAZPSAD" not in path
+
+
+def test_segment_target_cluster_attestation_bonus_prefers_atomic_cluster(
+    tmp_path: Path,
+    monkeypatched_fasttext: None,
+) -> None:
+    """Cluster attestation bonus should lift atomic DS over D+S splits."""
+
+    ngram_db = tmp_path / "ngram_cluster_bonus.sqlite3"
+    conn = sqlite3.connect(ngram_db)
+    with conn:
+        conn.execute("CREATE TABLE ngrams (ngram TEXT PRIMARY KEY, total_occurrences INTEGER)")
+        conn.execute("CREATE TABLE ngram_membership (ngram TEXT, canonical TEXT)")
+        # Make singleton pieces look stronger than DS before attestation bonus.
+        conn.execute("INSERT INTO ngrams (ngram, total_occurrences) VALUES ('d', 20)")
+        conn.execute("INSERT INTO ngrams (ngram, total_occurrences) VALUES ('s', 20)")
+        conn.execute("INSERT INTO ngrams (ngram, total_occurrences) VALUES ('ds', 1)")
+        conn.execute("INSERT INTO ngram_membership (ngram, canonical) VALUES ('d', 'D')")
+        conn.execute("INSERT INTO ngram_membership (ngram, canonical) VALUES ('s', 'S')")
+        conn.execute("INSERT INTO ngram_membership (ngram, canonical) VALUES ('ds', 'DS')")
+
+    finder = MorphemeCandidateFinder(
+        ngram_db_path=ngram_db,
+        fasttext_model_path=ngram_db,
+        dictionary_entries=[{"canonical": "D", "alternates": []}, {"canonical": "S", "alternates": []}, {"canonical": "DS", "alternates": []}],
+        min_n=1,
+        max_n=2,
+        beam_width=10,
+        length_bonus=0.0,
+        edge_bonus=0.0,
+        segment_penalty=0.0,
+        single_char_penalty=0.0,
+        ambiguity_penalty_scale=0.0,
+    )
+
+    baseline = finder.segment_target("DS")
+    with_bonus = finder.segment_target("DS", attested_cluster_ngrams={"DS"})
+
+    assert baseline
+    assert with_bonus
+    assert baseline[0][0] == ["D", "S"]
+    assert with_bonus[0][0] == ["DS"]
+
+
+def test_segment_target_penalizes_high_definition_singletons_more_aggressively(
+    tmp_path: Path,
+    monkeypatched_fasttext: None,
+) -> None:
+    """One-char morphs with many accepted definitions should lose to DS."""
+
+    ngram_db = tmp_path / "ngram_singleton_specificity.sqlite3"
+    conn = sqlite3.connect(ngram_db)
+    with conn:
+        conn.execute("CREATE TABLE ngrams (ngram TEXT PRIMARY KEY, total_occurrences INTEGER)")
+        conn.execute("CREATE TABLE ngram_membership (ngram TEXT, canonical TEXT)")
+        conn.execute("INSERT INTO ngrams (ngram, total_occurrences) VALUES ('d', 20)")
+        conn.execute("INSERT INTO ngrams (ngram, total_occurrences) VALUES ('s', 20)")
+        conn.execute("INSERT INTO ngrams (ngram, total_occurrences) VALUES ('ds', 1)")
+        conn.execute("INSERT INTO ngram_membership (ngram, canonical) VALUES ('d', 'D')")
+        conn.execute("INSERT INTO ngram_membership (ngram, canonical) VALUES ('s', 'S')")
+        conn.execute("INSERT INTO ngram_membership (ngram, canonical) VALUES ('ds', 'DS')")
+
+    finder = MorphemeCandidateFinder(
+        ngram_db_path=ngram_db,
+        fasttext_model_path=ngram_db,
+        dictionary_entries=[{"canonical": "D", "alternates": []}, {"canonical": "S", "alternates": []}, {"canonical": "DS", "alternates": []}],
+        min_n=1,
+        max_n=2,
+        beam_width=10,
+        length_bonus=0.0,
+        edge_bonus=0.0,
+        segment_penalty=0.0,
+        single_char_penalty=0.0,
+        ambiguity_penalty_scale=0.0,
+    )
+
+    parses = finder.segment_target(
+        "DS",
+        definition_counts={"D": 40, "S": 40, "DS": 1},
+    )
+
+    assert parses
+    assert parses[0][0] == ["DS"]
+    # Verify the per-segment diagnostics capture the additional singleton penalty.
+    ds_segments = parses[0][3]
+    assert all(
+        float(segment.get("single_char_specificity_penalty", 0.0)) == 0.0
+        for segment in ds_segments
+    )

@@ -27,6 +27,7 @@ from .decomposition import (
     Decomposition,
     DecompositionEngine,
     apply_hard_filters,
+    _collect_attested_cluster_ngrams,
     _collect_attested_pieces,
     _build_evidence_ngrams,
     build_decompositions_from_segmentations,
@@ -340,7 +341,7 @@ class InterpretationService:
 class SingleWordTranslationService:
     """Single-word translation pipeline with optional LLM synthesis (Tasks 4.1/4.2)."""
 
-    BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN = 2
+    BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN = 4
     DECISION_SEMANTIC_WEIGHT = 0.22
     DECISION_ATTESTATION_WEIGHT = 0.14
     DECISION_SINGLETON_BURDEN_WEIGHT = 0.08
@@ -824,6 +825,10 @@ class SingleWordTranslationService:
                         definition_counts=definition_counts,
                         definition_glosses=definition_glosses,
                         restrict_to_attested=True,
+                        attested_cluster_ngrams=_collect_attested_cluster_ngrams(
+                            evidence,
+                            evidence_mode=evidence_mode.value,
+                        ),
                     )
                     beam_scoring_applied = True
                     beam_scoring_parse_count = len(parses)
@@ -2364,6 +2369,10 @@ class SingleWordTranslationService:
                 definition_counts=definition_counts,
                 definition_glosses=definition_glosses,
                 restrict_to_attested=True,
+                attested_cluster_ngrams=_collect_attested_cluster_ngrams(
+                    evidence,
+                    evidence_mode=evidence_mode,
+                ),
             )
         except Exception:
             return

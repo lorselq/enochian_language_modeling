@@ -655,6 +655,30 @@ _FUNCTION_ABSTRACT_HINTS: dict[str, set[str]] = {
     "feminine_locative_possessive": {"possession", "possessive", "locative", "relation", "feminine", "referent"},
     "locative": {"locative", "inside", "within", "position", "relation"},
 }
+_BUNDLE_STOPWORD_CLASS_GLOSSES = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "by",
+    "for",
+    "from",
+    "her",
+    "in",
+    "into",
+    "is",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "through",
+    "upon",
+    "which",
+    "with",
+}
 
 
 def compose_semantic_bundle(meanings: Sequence[Mapping[str, object]]) -> dict[str, object]:
@@ -794,7 +818,7 @@ def _infer_function_profile(
                 return profile, canonical
             if hint_lower in normalized_terms:
                 return profile, canonical
-            if hint_lower and hint_lower in raw_lower:
+            if hint_lower and _raw_definition_contains_hint(raw_lower, hint_lower):
                 if profile == "feminine_locative_possessive" and "glory" in raw_lower:
                     continue
                 return profile, canonical
@@ -870,6 +894,7 @@ def _bundle_head_gloss(
         ranked = sorted(
             content_entries,
             key=lambda entry: (
+                not _is_stopword_class_gloss(str(entry.get("head_gloss") or "")),
                 _safe_number(entry.get("quality"), default=0.0),
                 -len(str(entry.get("head_gloss") or "").split()),
             ),
@@ -993,6 +1018,37 @@ def _bundle_gloss_tokens(text: str) -> set[str]:
         for token in re.findall(r"[a-zA-Z][a-zA-Z'-]*", text)
         if token.lower() not in {"a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "is", "of", "on", "or", "that", "the", "to", "through", "upon", "which", "with"}
     }
+
+
+def _is_stopword_class_gloss(text: str) -> bool:
+    """Return whether a gloss is mostly function-word scaffolding.
+
+    Bundle head selection should avoid collapsing onto purely grammatical
+    stopwords when richer lexical candidates survive in the same bundle.
+    """
+
+    tokens = re.findall(r"[a-zA-Z][a-zA-Z'-]*", text.lower())
+    if not tokens:
+        return True
+    return all(token in _BUNDLE_STOPWORD_CLASS_GLOSSES for token in tokens)
+
+
+def _raw_definition_contains_hint(raw_definition: str, hint: str) -> bool:
+    """Match canonical function hints only at token/phrase boundaries.
+
+    Raw-definition scans are useful for function-word normalization, but raw
+    substring checks can misfire on words like ``inherent`` because they
+    contain ``her``. Boundary-aware matching keeps those false positives from
+    collapsing lexical glosses into function shorthand.
+    """
+
+    normalized_hint = " ".join(hint.split()).strip()
+    if not normalized_hint:
+        return False
+    pattern = re.compile(
+        rf"(?<![a-zA-Z]){re.escape(normalized_hint)}(?![a-zA-Z])"
+    )
+    return bool(pattern.search(raw_definition))
 
 
 def _bundle_similarity_score(

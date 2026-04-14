@@ -156,6 +156,10 @@ class DecompositionEngine:
             definition_counts=definition_counts,
             definition_glosses=definition_glosses,
             restrict_to_attested=True,
+            attested_cluster_ngrams=_collect_attested_cluster_ngrams(
+                evidence,
+                evidence_mode=evidence_mode,
+            ),
         )
         diagnostics["parse_count"] = len(parses)
 
@@ -692,6 +696,39 @@ def _collect_attested_pieces(
                 pieces.add(normalized)
 
     return pieces
+
+
+def _collect_attested_cluster_ngrams(
+    evidence: WordEvidence,
+    *,
+    evidence_mode: str | None = "all",
+) -> set[str]:
+    """Return ngrams backed by accepted cluster-family evidence.
+
+    Beam scoring needs an explicit list of cluster-attested morph ngrams so
+    atomic segments such as ``DS`` can receive a stable attestation bonus over
+    noisy singleton splits like ``D + S``.
+    """
+
+    include_clusters = evidence_mode != "residuals-only"
+    if not include_clusters:
+        return set()
+
+    attested: set[str] = set()
+    for cluster in evidence.direct_clusters:
+        ngram = getattr(cluster, "ngram", None)
+        if isinstance(ngram, str):
+            normalized = ngram.strip().upper()
+            if normalized:
+                attested.add(normalized)
+
+    for attested_definition in evidence.attested_definitions:
+        root_ngram = getattr(attested_definition, "root_ngram", None)
+        if isinstance(root_ngram, str):
+            normalized = root_ngram.strip().upper()
+            if normalized:
+                attested.add(normalized)
+    return attested
 
 
 def _build_evidence_ngrams(

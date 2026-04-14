@@ -457,8 +457,8 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         action="store_false",
         help=(
             "Blind retranslation mode: suppress exact dictionary matches, suppress "
-            "whole-word DB anchors longer than 2 characters, and disallow "
-            "single-piece whole-word decompositions. Short 1-2 character DB roots "
+            "whole-word DB anchors longer than 4 characters, and disallow "
+            "single-piece whole-word decompositions. Short 1-4 character DB roots "
             "and non-dictionary provisional exact reads may still appear."
         ),
     )
@@ -532,6 +532,14 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
         help="Historical/context scope for LLM rendering.",
     )
     parser.add_argument(
+        "--llm-unknown-context",
+        action="store_true",
+        help=(
+            "When --llm is enabled, run an additional unknown-token-only context "
+            "refinement pass after parse selection."
+        ),
+    )
+    parser.add_argument(
         "--format",
         choices=["text", "json"],
         default="text",
@@ -582,8 +590,8 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
         action="store_false",
         help=(
             "Blind retranslation mode: suppress exact dictionary matches, suppress "
-            "whole-word DB anchors longer than 2 characters, and disallow "
-            "single-piece whole-word token analyses. Short 1-2 character DB roots "
+            "whole-word DB anchors longer than 4 characters, and disallow "
+            "single-piece whole-word token analyses. Short 1-4 character DB roots "
             "and non-dictionary provisional exact reads may still appear."
         ),
     )
@@ -887,6 +895,7 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
                     top_k=top_k,
                     llm=llm_enabled,
                     llm_context=args.llm_context,
+                    llm_unknown_context=bool(args.llm_unknown_context),
                     memory_update=not bool(args.no_memory_update),
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
@@ -1160,6 +1169,8 @@ def _build_phrase_output_payload(
         "llm_enabled": result.get("llm_enabled"),
         "llm_mode": result.get("llm_mode"),
         "llm_context": result.get("llm_context"),
+        "llm_unknown_context_enabled": result.get("llm_unknown_context_enabled"),
+        "llm_unknown_context_applied": result.get("llm_unknown_context_applied"),
         "token_analyses": result.get("token_analyses", []),
         "parse_candidates": result.get("parse_candidates", []),
         "chosen_parse": result.get("chosen_parse"),
@@ -1173,6 +1184,13 @@ def _build_phrase_output_payload(
         "poetic_translation": result.get("poetic_translation"),
         "poetic_reasoning": result.get("poetic_reasoning"),
         "poetic_confidence": result.get("poetic_confidence"),
+        "contextual_lay_translation": result.get("contextual_lay_translation"),
+        "contextual_lay_reasoning": result.get("contextual_lay_reasoning"),
+        "contextual_lay_confidence": result.get("contextual_lay_confidence"),
+        "contextual_poetic_translation": result.get("contextual_poetic_translation"),
+        "contextual_poetic_reasoning": result.get("contextual_poetic_reasoning"),
+        "contextual_poetic_confidence": result.get("contextual_poetic_confidence"),
+        "contextual_selected_parse_rank": result.get("contextual_selected_parse_rank"),
         "interpretive_translation": result.get("interpretive_translation"),
         "interpretive_reasoning": result.get("interpretive_reasoning"),
         "interpretive_confidence": result.get("interpretive_confidence"),
@@ -1945,6 +1963,52 @@ def _format_phrase_report(
     if isinstance(poetic_reasoning, str) and poetic_reasoning:
         lines.append(
             _wrap_text(f"Poetic reasoning: {poetic_reasoning}", indent=0)
+        )
+
+    contextual_selected_parse_rank = payload.get("contextual_selected_parse_rank")
+    contextual_lay = payload.get("contextual_lay_translation")
+    contextual_poetic = payload.get("contextual_poetic_translation")
+    if isinstance(contextual_lay, str) and contextual_lay:
+        if isinstance(contextual_selected_parse_rank, int) and contextual_selected_parse_rank > 0:
+            lines.append(
+                f"Contextual parse selection (rank 1..3): {contextual_selected_parse_rank}"
+            )
+        lines.append(
+            _wrap_text(
+                f"Contextual lay translation: {contextual_lay}",
+                indent=0,
+            )
+        )
+    contextual_lay_confidence = payload.get("contextual_lay_confidence")
+    if isinstance(contextual_lay_confidence, (int, float)):
+        lines.append(f"Contextual lay confidence: {float(contextual_lay_confidence):.2f}")
+    contextual_lay_reasoning = payload.get("contextual_lay_reasoning")
+    if isinstance(contextual_lay_reasoning, str) and contextual_lay_reasoning:
+        lines.append(
+            _wrap_text(
+                f"Contextual lay reasoning: {contextual_lay_reasoning}",
+                indent=0,
+            )
+        )
+    if isinstance(contextual_poetic, str) and contextual_poetic:
+        lines.append(
+            _wrap_text(
+                f"Contextual poetic translation: {contextual_poetic}",
+                indent=0,
+            )
+        )
+    contextual_poetic_confidence = payload.get("contextual_poetic_confidence")
+    if isinstance(contextual_poetic_confidence, (int, float)):
+        lines.append(
+            f"Contextual poetic confidence: {float(contextual_poetic_confidence):.2f}"
+        )
+    contextual_poetic_reasoning = payload.get("contextual_poetic_reasoning")
+    if isinstance(contextual_poetic_reasoning, str) and contextual_poetic_reasoning:
+        lines.append(
+            _wrap_text(
+                f"Contextual poetic reasoning: {contextual_poetic_reasoning}",
+                indent=0,
+            )
         )
 
     chosen_parse = payload.get("chosen_parse")

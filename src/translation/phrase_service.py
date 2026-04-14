@@ -25,6 +25,7 @@ from .llm_synthesis import (
     PhraseRenderBundleResult,
     PhraseRenderResult,
     _build_phrase_footnote_fallback,
+    refine_unknown_phrase_tokens,
     render_phrase_bundle,
     render_phrase_lay_translation,
     render_phrase_translation,
@@ -36,6 +37,7 @@ from .placeholder_glosses import (
     normalize_semantic_terms,
     sanitize_human_gloss,
     specific_gloss_from_definition_and_semantic_core,
+    unresolved_token_gloss,
 )
 from .repository import WordEvidence
 from .service import SingleWordTranslationService
@@ -182,11 +184,13 @@ class PhraseTranslationService:
         llm_renderer: Callable[[dict[str, object], dict[str, object]], PhraseRenderResult] = render_phrase_translation,
         lay_renderer: Callable[[dict[str, object], dict[str, object]], PhraseRenderResult] = render_phrase_lay_translation,
         bundle_renderer: Callable[[dict[str, object], dict[str, object]], PhraseRenderBundleResult] | None = None,
+        unknown_token_refiner: Callable[[dict[str, object], dict[str, object]], dict[str, object]] | None = refine_unknown_phrase_tokens,
     ) -> None:
         self.word_service = word_service
         self.memory_repository = memory_repository
         self.llm_renderer = llm_renderer
         self.lay_renderer = lay_renderer
+        self.unknown_token_refiner = unknown_token_refiner
         if bundle_renderer is not None:
             self.bundle_renderer = bundle_renderer
         elif (
@@ -243,6 +247,7 @@ class PhraseTranslationService:
         top_k: int = 3,
         llm: bool | None = None,
         llm_context: str | None = None,
+        llm_unknown_context: bool = False,
         memory_update: bool = True,
         evidence_mode: SingleWordTranslationService.EvidenceMode = SingleWordTranslationService.EvidenceMode.ALL,
         weight_enabled: bool = True,
@@ -353,6 +358,41 @@ class PhraseTranslationService:
                 token_payloads=token_payloads,
                 chosen_parse=chosen_parse,
             )
+        llm_logging_context = self._llm_logging_context(active_variants)
+        unknown_context_enabled = llm_enabled and bool(llm_unknown_context)
+        unknown_context_applied = False
+        unknown_context_updates: list[dict[str, object]] = []
+        unknown_context_warnings: list[str] = []
+        if (
+            unknown_context_enabled
+            and chosen_parse is not None
+            and self.unknown_token_refiner is not None
+        ):
+            self._report_progress(
+                progress_reporter,
+                "Refining unknown token glosses with phrase context...",
+                stage_id="unknown_context_refine",
+            )
+            refinement = self._apply_unknown_token_context_refinement(
+                phrase=normalized_phrase,
+                chosen_parse=chosen_parse,
+                llm_context=llm_context,
+                progress_reporter=progress_reporter,
+                llm_logging_context=llm_logging_context,
+            )
+            unknown_context_applied = bool(refinement.get("applied"))
+            raw_updates = refinement.get("updates")
+            if isinstance(raw_updates, list):
+                unknown_context_updates = [
+                    dict(update) for update in raw_updates if isinstance(update, Mapping)
+                ]
+            raw_warnings = refinement.get("warnings")
+            if isinstance(raw_warnings, list):
+                unknown_context_warnings = [
+                    str(warning).strip()
+                    for warning in raw_warnings
+                    if isinstance(warning, str) and warning.strip()
+                ]
 
         rendered_translation = chosen_parse.translation_skeleton if chosen_parse else ""
         render_reasoning = "Algorithmic phrase rendering only."
@@ -368,15 +408,25 @@ class PhraseTranslationService:
         interpretive_reasoning = ""
         interpretive_confidence: float | None = None
         lay_warnings: list[str] = []
+        contextual_lay_translation = lay_translation
+        contextual_lay_reasoning = lay_reasoning
+        contextual_lay_confidence = lay_confidence
+        contextual_poetic_translation = poetic_translation
+        contextual_poetic_reasoning = poetic_reasoning
+        contextual_poetic_confidence: float | None = poetic_confidence
+        contextual_selected_parse_rank = 1
         if chosen_parse is not None:
             render_confidence = self._parse_confidence(chosen_parse)
             lay_confidence = render_confidence
         render_payload = (
-            self._phrase_render_payload(normalized_phrase, chosen_parse)
+            self._phrase_bundle_payload(
+                normalized_phrase,
+                chosen_parse,
+                parse_candidates=parse_candidates,
+            )
             if chosen_parse is not None
             else None
         )
-        llm_logging_context = self._llm_logging_context(active_variants)
         if llm_enabled and render_payload is not None and self.bundle_renderer is not None:
             self._report_progress(
                 progress_reporter,
@@ -409,6 +459,38 @@ class PhraseTranslationService:
             interpretive_translation = bundled.interpretive_translation or poetic_translation
             interpretive_reasoning = bundled.interpretive_reasoning or poetic_reasoning
             interpretive_confidence = bundled.interpretive_confidence or poetic_confidence
+            contextual_lay_translation = (
+                bundled.contextual_lay_translation or lay_translation
+            )
+            contextual_lay_reasoning = (
+                bundled.contextual_lay_reasoning or lay_reasoning
+            )
+            contextual_lay_confidence = (
+                bundled.contextual_lay_confidence
+                if bundled.contextual_lay_confidence is not None
+                else lay_confidence
+            )
+            contextual_poetic_translation = (
+                bundled.contextual_poetic_translation
+                or bundled.contextual_interpretive_translation
+                or poetic_translation
+            )
+            contextual_poetic_reasoning = (
+                bundled.contextual_poetic_reasoning
+                or bundled.contextual_interpretive_reasoning
+                or poetic_reasoning
+            )
+            contextual_poetic_confidence = (
+                bundled.contextual_poetic_confidence
+                or bundled.contextual_interpretive_confidence
+                or poetic_confidence
+            )
+            contextual_selected_parse_rank = (
+                int(bundled.contextual_selected_parse_rank)
+                if isinstance(bundled.contextual_selected_parse_rank, int)
+                and bundled.contextual_selected_parse_rank > 0
+                else 1
+            )
             lay_warnings = list(bundled.warnings)
             footnoted_translation = bundled.footnoted_translation or ""
             raw_footnotes = bundled.translation_footnotes
@@ -537,6 +619,10 @@ class PhraseTranslationService:
                 else None
             ),
             "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+            "llm_unknown_context_enabled": unknown_context_enabled,
+            "llm_unknown_context_applied": unknown_context_applied,
+            "llm_unknown_context_updates": unknown_context_updates,
+            "llm_unknown_context_warnings": unknown_context_warnings,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "token_analyses": token_payloads,
             "parse_candidates": [asdict(candidate) for candidate in parse_candidates],
@@ -551,6 +637,25 @@ class PhraseTranslationService:
             "poetic_translation": poetic_translation,
             "poetic_reasoning": poetic_reasoning,
             "poetic_confidence": poetic_confidence,
+            "contextual_lay_translation": contextual_lay_translation or lay_translation,
+            "contextual_lay_reasoning": contextual_lay_reasoning or lay_reasoning,
+            "contextual_lay_confidence": (
+                contextual_lay_confidence
+                if contextual_lay_confidence is not None
+                else lay_confidence
+            ),
+            "contextual_poetic_translation": (
+                contextual_poetic_translation or poetic_translation
+            ),
+            "contextual_poetic_reasoning": (
+                contextual_poetic_reasoning or poetic_reasoning
+            ),
+            "contextual_poetic_confidence": (
+                contextual_poetic_confidence
+                if contextual_poetic_confidence is not None
+                else poetic_confidence
+            ),
+            "contextual_selected_parse_rank": contextual_selected_parse_rank,
             "interpretive_translation": interpretive_translation,
             "interpretive_reasoning": interpretive_reasoning,
             "interpretive_confidence": interpretive_confidence,
@@ -1847,6 +1952,231 @@ class PhraseTranslationService:
             len(parse.token_choices)
         )
 
+    def _apply_unknown_token_context_refinement(
+        self,
+        *,
+        phrase: str,
+        chosen_parse: PhraseParseCandidate,
+        llm_context: str | None,
+        progress_reporter: PhraseProgressReporter | None,
+        llm_logging_context: Mapping[str, object] | None,
+    ) -> dict[str, object]:
+        """Refine unknown-source token glosses with neighboring phrase context.
+
+        Some tokens survive parse selection with only ``source=unknown``
+        evidence. This optional pass asks the LLM for a constrained lexical
+        gloss using immediate neighbors and then merges only replacements that
+        pass the same lexical-cleanliness gates as deterministic glosses.
+        """
+
+        unknown_indices = [
+            index
+            for index, candidate in enumerate(chosen_parse.token_choices)
+            if self._is_unknown_source_candidate(candidate)
+        ]
+        if not unknown_indices:
+            return {"applied": False, "updates": [], "warnings": []}
+
+        payload = self._unknown_context_refinement_payload(
+            phrase=phrase,
+            chosen_parse=chosen_parse,
+            unknown_indices=unknown_indices,
+        )
+        context = {
+            "phrase": phrase,
+            "llm_context": llm_context or DEFAULT_LLM_CONTEXT,
+            "use_remote": self.word_service.llm_use_remote,
+            "confidence": self._parse_confidence(chosen_parse),
+            "progress_reporter": progress_reporter,
+            "progress_label": "Refining unknown token glosses",
+            "progress_stage_id": "unknown_context_refine",
+            **dict(llm_logging_context or {}),
+        }
+
+        warnings: list[str] = []
+        try:
+            raw_refinement = self.unknown_token_refiner(payload, context)
+        except Exception as exc:
+            warnings.append(
+                "Unknown-token context refinement unavailable; keeping deterministic glosses. "
+                f"({exc})"
+            )
+            return {"applied": False, "updates": [], "warnings": warnings}
+
+        refinements = (
+            raw_refinement.get("refinements")
+            if isinstance(raw_refinement, Mapping)
+            else None
+        )
+        if not isinstance(refinements, Sequence) or isinstance(refinements, (str, bytes)):
+            warnings.append(
+                "Unknown-token context refinement returned no valid replacements."
+            )
+            return {"applied": False, "updates": [], "warnings": warnings}
+
+        allowed_indexes = {index + 1 for index in unknown_indices}
+        used_indexes: set[int] = set()
+        updates: list[dict[str, object]] = []
+
+        for entry in refinements:
+            if not isinstance(entry, Mapping):
+                continue
+            raw_index = entry.get("index")
+            try:
+                index = int(raw_index)
+            except (TypeError, ValueError):
+                continue
+            if (
+                index not in allowed_indexes
+                or index in used_indexes
+                or index <= 0
+                or index > len(chosen_parse.token_choices)
+            ):
+                continue
+
+            candidate = chosen_parse.token_choices[index - 1]
+            token = (candidate.token or "").strip().upper()
+            replacement = self._normalize_unknown_context_replacement(
+                entry.get("replacement"),
+                token=token,
+            )
+            if replacement is None:
+                continue
+
+            previous_definition = candidate.definition
+            if (
+                isinstance(previous_definition, str)
+                and previous_definition.strip()
+                and previous_definition.strip() != replacement
+                and previous_definition.strip() not in candidate.alternates
+            ):
+                candidate.alternates = [previous_definition.strip(), *candidate.alternates]
+
+            candidate.definition = replacement
+            if candidate.raw_definition is None:
+                candidate.raw_definition = replacement
+
+            trace = dict(candidate.definition_trace)
+            trace["unknown_context_refined"] = True
+            trace["unknown_context_original_definition"] = previous_definition
+            trace["unknown_context_replacement"] = replacement
+            reasoning = entry.get("reasoning")
+            if isinstance(reasoning, str) and reasoning.strip():
+                trace["unknown_context_reasoning"] = reasoning.strip()
+            confidence_raw = entry.get("confidence")
+            if isinstance(confidence_raw, (int, float)):
+                trace["unknown_context_confidence"] = float(confidence_raw)
+            candidate.definition_trace = trace
+
+            updates.append(
+                {
+                    "index": index,
+                    "token": token,
+                    "replacement": replacement,
+                    "previous_definition": previous_definition,
+                }
+            )
+            used_indexes.add(index)
+
+        if not updates:
+            warnings.append(
+                "Unknown-token context refinement returned replacements that did not pass lexical validation."
+            )
+            return {"applied": False, "updates": [], "warnings": warnings}
+
+        chosen_parse.translation_skeleton = self._translation_skeleton(
+            tokenize_words(phrase),
+            chosen_parse.token_choices,
+            chosen_parse.relations,
+        )
+        return {"applied": True, "updates": updates, "warnings": warnings}
+
+    @classmethod
+    def _unknown_context_refinement_payload(
+        cls,
+        *,
+        phrase: str,
+        chosen_parse: PhraseParseCandidate,
+        unknown_indices: Sequence[int],
+    ) -> dict[str, object]:
+        """Build the constrained unknown-token payload for contextual refinement."""
+
+        unknown_tokens: list[dict[str, object]] = []
+        for index in unknown_indices:
+            candidate = chosen_parse.token_choices[index]
+            left_candidate = (
+                chosen_parse.token_choices[index - 1]
+                if index > 0
+                else None
+            )
+            right_candidate = (
+                chosen_parse.token_choices[index + 1]
+                if index + 1 < len(chosen_parse.token_choices)
+                else None
+            )
+            token = (candidate.token or "").strip().upper()
+            current_gloss = cls._human_facing_candidate_gloss(candidate)
+            unknown_tokens.append(
+                {
+                    "index": index + 1,
+                    "token": token,
+                    "current_gloss": current_gloss or unresolved_token_gloss(token),
+                    "left_neighbor_gloss": (
+                        cls._human_facing_candidate_gloss(left_candidate)
+                        if left_candidate is not None
+                        else None
+                    ),
+                    "right_neighbor_gloss": (
+                        cls._human_facing_candidate_gloss(right_candidate)
+                        if right_candidate is not None
+                        else None
+                    ),
+                    "alternates": list(candidate.alternates[:3]),
+                    "role_hint": candidate.role_hint,
+                }
+            )
+        return {
+            "phrase": phrase,
+            "translation_skeleton": chosen_parse.translation_skeleton,
+            "unknown_tokens": unknown_tokens,
+            "token_count": len(chosen_parse.token_choices),
+        }
+
+    @staticmethod
+    def _normalize_unknown_context_replacement(
+        value: object,
+        *,
+        token: str,
+    ) -> str | None:
+        """Normalize candidate unknown-token replacements through lexical gates."""
+
+        if not isinstance(value, str) or not value.strip():
+            return None
+        cleaned = clean_lexical_gloss(value, token=token)
+        if cleaned is None:
+            cleaned = PhraseTranslationService._human_facing_definition(value, token=token)
+        if cleaned is None:
+            return None
+        normalized = cleaned.strip()
+        if not normalized:
+            return None
+        lowered = normalized.lower()
+        if lowered in {"unresolved term", token.lower()}:
+            return None
+        if normalized.upper() == unresolved_token_gloss(token):
+            return None
+        return normalized
+
+    @staticmethod
+    def _is_unknown_source_candidate(candidate: PhraseTokenCandidate) -> bool:
+        """Return whether a phrase candidate still depends on unknown provenance."""
+
+        selected_source = (
+            str(candidate.selected_source or "").strip().lower()
+            or str(candidate.definition_trace.get("selected_source") or "").strip().lower()
+        )
+        return selected_source in {"", "unknown"}
+
     @staticmethod
     def _phrase_render_payload(
         phrase: str,
@@ -1866,6 +2196,7 @@ class PhraseTranslationService:
             token_choices.append(
                 {
                     "token": candidate.token,
+                    "selected_source": candidate.selected_source,
                     "definition": candidate.definition,
                     "surface_gloss": trace.get("surface_gloss") or candidate.definition,
                     "bundle_surface_gloss": candidate.bundle_surface_gloss,
@@ -1890,4 +2221,51 @@ class PhraseTranslationService:
             "token_choices": token_choices,
             "relations": [asdict(relation) for relation in chosen_parse.relations],
             "score": chosen_parse.score,
+        }
+
+    @staticmethod
+    def _phrase_bundle_payload(
+        phrase: str,
+        chosen_parse: PhraseParseCandidate,
+        *,
+        parse_candidates: Sequence[PhraseParseCandidate],
+    ) -> dict[str, object]:
+        """Build the dual-track payload used by bundled phrase LLM rendering.
+
+        The LLM bundle now serves two related but distinct render tasks:
+        1) rank-1 strict phrasing that stays locked to the chosen parse; and
+        2) contextual phrasing that may choose among top-ranked parse options.
+        Keeping both tracks in one payload lets one model request produce both
+        outputs while preserving deterministic footnotes on the rank-1 parse.
+        """
+
+        rank1_payload = PhraseTranslationService._phrase_render_payload(
+            phrase,
+            chosen_parse,
+        )
+        contextual_options: list[dict[str, object]] = []
+        for candidate in list(parse_candidates)[:3]:
+            if not isinstance(candidate, PhraseParseCandidate):
+                continue
+            option_payload = PhraseTranslationService._phrase_render_payload(
+                phrase,
+                candidate,
+            )
+            contextual_options.append(
+                {
+                    "parse_rank": int(candidate.rank),
+                    **option_payload,
+                }
+            )
+        if not contextual_options:
+            contextual_options.append(
+                {
+                    "parse_rank": 1,
+                    **rank1_payload,
+                }
+            )
+        return {
+            **rank1_payload,
+            "rank1_parse_payload": rank1_payload,
+            "contextual_parse_options": contextual_options,
         }

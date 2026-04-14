@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sqlite3 /home/lorselq/dev/python/enochian_language_modeling/src/enochian_lm/root_extraction/interpretation/debate_derived_definitions.sqlite3 \".tables\")",
+      "Bash(python3 -c \"import sqlite3; print\\('sqlite3 available'\\)\")",
+      "Bash(python3 -)",
+      "Bash(python3 -c ':*)"
+    ]
+  }
+}

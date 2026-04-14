@@ -109,8 +109,17 @@ def get_fasttext_model(model_path: Path | str | None = None) -> FastTextWrapper:
         if _FASTTEXT_MODEL is not None and _FASTTEXT_PATH == desired_path:
             return _FASTTEXT_MODEL
 
-        # Load gensim FastText model and wrap it
-        base_model = FastText.load(desired_path)
+        # Load gensim FastText model and wrap it.
+        #
+        # Some lightweight test shims expose a FastText-like class without a
+        # `.load(...)` classmethod. In that constrained case we instantiate the
+        # shim directly so higher-level translation tests can still run without
+        # pulling the heavy model artifact.
+        loader = getattr(FastText, "load", None)
+        if callable(loader):
+            base_model = loader(desired_path)
+        else:  # pragma: no cover - exercised only in dependency-shim test setups
+            base_model = FastText()
         wrapped = FastTextWrapper(base_model)
 
         _FASTTEXT_MODEL = wrapped
@@ -223,20 +232,57 @@ def cluster_definitions(
         raise ValueError("Scores must match the number of definitions.")
 
     embedder = model or get_sentence_transformer(model_name)
-    embeddings: list[np.ndarray | None] = []
-    for definition in definitions:
+    embeddings: list[np.ndarray | None] = [None] * len(definitions)
+    uncached_indices: list[int] = []
+    uncached_texts: list[str] = []
+
+    for index, definition in enumerate(definitions):
+        if not definition:
+            continue
         key = (model_name, definition)
         cached = _SENTENCE_EMBED_CACHE.get(key)
         if cached is not None:
-            embeddings.append(cached)
+            embeddings[index] = cached
             continue
-        if not definition:
-            embeddings.append(None)
-            continue
-        encoded = embedder.encode(definition, normalize_embeddings=True)
-        embedding = np.array(encoded, dtype=float)
-        _SENTENCE_EMBED_CACHE[key] = embedding
-        embeddings.append(embedding)
+        uncached_indices.append(index)
+        uncached_texts.append(definition)
+
+    if uncached_texts:
+        encoded_batch = embedder.encode(
+            uncached_texts,
+            normalize_embeddings=True,
+        )
+
+        encoded_rows: list[object] | None = None
+        if len(uncached_texts) == 1:
+            encoded_rows = [encoded_batch]
+        elif isinstance(encoded_batch, np.ndarray):
+            if encoded_batch.ndim == 2 and encoded_batch.shape[0] == len(uncached_texts):
+                encoded_rows = [encoded_batch[row_index] for row_index in range(encoded_batch.shape[0])]
+        elif isinstance(encoded_batch, Sequence) and not isinstance(encoded_batch, (str, bytes)):
+            encoded_sequence = list(encoded_batch)
+            if (
+                len(encoded_sequence) == len(uncached_texts)
+                and encoded_sequence
+                and isinstance(encoded_sequence[0], (Sequence, np.ndarray))
+                and not isinstance(encoded_sequence[0], (str, bytes))
+            ):
+                encoded_rows = encoded_sequence
+
+        # Some lightweight test doubles still return one vector for list input.
+        # Fall back to per-string encode in that case while keeping production
+        # models on the batched path above.
+        if encoded_rows is None:
+            encoded_rows = [
+                embedder.encode(text, normalize_embeddings=True)
+                for text in uncached_texts
+            ]
+
+        for index, encoded in zip(uncached_indices, encoded_rows, strict=False):
+            embedding = np.array(encoded, dtype=float)
+            key = (model_name, definitions[index])
+            _SENTENCE_EMBED_CACHE[key] = embedding
+            embeddings[index] = embedding
 
     clusters: list[dict[str, object]] = []
     for idx, embedding in enumerate(embeddings):

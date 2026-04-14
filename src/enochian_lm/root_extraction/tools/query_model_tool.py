@@ -710,6 +710,23 @@ class QueryModelTool(BaseTool):
 
         return float(min(62, max(2, 2 ** max(1, attempt_number))))
 
+    @staticmethod
+    def _is_non_retryable_remote_error(exc: Exception) -> bool:
+        """Return whether a remote failure should fail fast without retries.
+
+        Model-not-found and auth/validation failures (for example HTTP 404 from
+        a retired provider model) are deterministic until configuration changes,
+        so retrying them only adds latency without improving success odds.
+        """
+
+        status_code = getattr(exc, "status_code", None)
+        if not isinstance(status_code, int):
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+        if not isinstance(status_code, int):
+            return False
+        return status_code in {400, 401, 403, 404, 405, 422}
+
     def _run_remote_with_policy(
         self,
         prompt: str,
@@ -763,6 +780,18 @@ class QueryModelTool(BaseTool):
                 )
             except Exception as exc:
                 last_exc = exc
+                if self._is_non_retryable_remote_error(exc):
+                    self._emit_progress_event(
+                        {
+                            "state": "remote failure is non-retryable",
+                            "attempt": attempt,
+                            "max_attempts": self._remote_attempts,
+                            "source": "remote",
+                            "warning": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+                    self._print_connection_retry(exc)
+                    break
                 if attempt >= self._remote_attempts:
                     break
                 retry_delay_seconds = self._remote_retry_delay_seconds(attempt)

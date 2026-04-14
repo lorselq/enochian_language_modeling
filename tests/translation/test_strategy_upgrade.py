@@ -167,6 +167,7 @@ from translation import strategies as translation_strategies
 from translation import scoring as translation_scoring
 from translation import service as translation_service_module
 from translation.memory import TranslationMemoryRepository
+from translation.placeholder_glosses import _definition_span_candidates
 from translation.phrase_service import PhraseTranslationService
 from translation import cli as translation_cli
 from translation.repository import (
@@ -699,7 +700,7 @@ def test_translate_word_no_whole_word_suppresses_dictionary_exact_and_prefers_sp
     )
     blind = result["diagnostics"]["blind_retranslation"]
     assert blind["enabled"] is True
-    assert blind["short_root_max_len"] == 2
+    assert blind["short_root_max_len"] == 4
     assert any(
         "suppressed exact dictionary match for MICAOLZ" in note
         for note in blind["suppressed"]
@@ -1063,6 +1064,54 @@ def test_extract_definition_candidates_prefers_semantic_core_over_verbose_defini
     assert candidates["CAOSGO"][0]["negative_contrast_penalties"] == []
 
 
+def test_extract_definition_candidates_fall_back_when_semantic_core_is_meta_linguistic() -> None:
+    """Meta-linguistic semantic cores should not block lexical fallback glosses.
+
+    Cluster payloads can carry useful lexical quotes in the definition text
+    even when `semantic_core` itself is analysis language like `relativizer`.
+    This regression keeps those lexical quotes reachable for user-facing glosses.
+    """
+
+    evidence = WordEvidence(
+        word="DS",
+        variants_queried=["solo"],
+        direct_clusters=[
+            _cluster_record(
+                "DS",
+                (
+                    "DS is a derivational morpheme that functions as a relativizer. "
+                    "As an independent word, it means 'which' or 'that' in relative clauses."
+                ),
+                cluster_id=94,
+                semantic_core=["relativizer"],
+            )
+        ],
+    )
+
+    candidates = extract_definition_candidates(
+        ["DS"],
+        evidence,
+        max_per_morph=5,
+        allow_dictionary=False,
+    )
+
+    assert candidates["DS"]
+    assert candidates["DS"][0]["definition"] == "which"
+    assert candidates["DS"][0]["surface_gloss_strategy"] == "cleaned_definition"
+
+
+def test_definition_span_candidates_prioritize_first_sentence_fragment() -> None:
+    """Definition span extraction should place sentence one ahead of later commentary."""
+
+    candidates = _definition_span_candidates(
+        "I am. Forms denote being in temporal relation and grammatical context.",
+        token="ZIRDO",
+    )
+
+    assert candidates
+    assert candidates[0] == "I am"
+
+
 def test_extract_definition_candidates_can_promote_specific_definition_span() -> None:
     """A semantically aligned definition span may outrank the bare semantic core.
 
@@ -1389,6 +1438,48 @@ def test_compose_semantic_bundle_keeps_ordered_morph_cores_in_one_word_reading()
     assert bundle["bundle_surface_candidates"][0] == "earth"
     assert bundle["bundle_function_profile"] == "content"
     assert bundle["bundle_coherence_score"] > 0.3
+
+
+def test_compose_semantic_bundle_avoids_function_false_positive_from_substring_hints() -> None:
+    """Do not classify lexical glosses as function words via substring collisions.
+
+    Raw-definition matching should use token boundaries so `her` inside
+    `inherent` does not incorrectly collapse a content gloss to the feminine
+    possessive function profile.
+    """
+
+    meanings = [
+        {
+            "morph": "ZOR",
+            "definition": "inherent radiance",
+            "raw_definition": "The inherent radiance and force of presence.",
+            "surface_gloss": "inherent radiance",
+            "semantic_core_terms": ["radiance", "presence"],
+            "negative_contrast": [],
+            "provenance": "cluster",
+            "anchor_strength": 1.0,
+            "definition_trace": {"selected_quality": 0.82},
+        }
+    ]
+
+    bundle = compose_semantic_bundle(meanings)
+
+    assert bundle["bundle_function_profile"] == "content"
+    assert bundle["bundle_head_gloss"] == "inherent radiance"
+
+
+def test_bundle_head_gloss_deprioritizes_stopword_class_candidates() -> None:
+    """Prefer lexical content heads even when stopword glosses have higher quality."""
+
+    head = translation_strategies._bundle_head_gloss(
+        content_entries=[
+            {"head_gloss": "in", "quality": 0.95},
+            {"head_gloss": "existence", "quality": 0.40},
+        ],
+        function_entries=[],
+    )
+
+    assert head == "existence"
 
 
 def test_translate_word_blind_mode_reserves_whole_word_reads_when_bundle_is_usable() -> None:
@@ -2606,6 +2697,289 @@ def test_phrase_translation_without_llm_skips_all_phrase_renderers(tmp_path: Pat
     assert result["translation_footnotes"][1]["source_token"] == "CICASB"
 
 
+def test_phrase_translation_unknown_context_refiner_stays_disabled_when_flag_is_off(
+    tmp_path: Path,
+) -> None:
+    """Do not run unknown-token context refinement unless explicitly requested."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "ZORGE": _word_result(
+                "ZORGE",
+                _word_candidate(
+                    "mystery term",
+                    analysis_type="compositional",
+                    score=9.0,
+                    confidence=0.41,
+                    morphs=["ZORGE"],
+                    provenance="unknown",
+                ),
+            )
+        }
+    )
+    word_service.llm_enabled = True
+    memory = TranslationMemoryRepository(tmp_path / "phrase-unknown-context-off.sqlite3")
+    refiner_calls: list[dict[str, object]] = []
+
+    def _unknown_refiner(
+        parse_payload: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        refiner_calls.append({"payload": parse_payload, "context": context})
+        return {
+            "refinements": [
+                {
+                    "index": 1,
+                    "token": "ZORGE",
+                    "replacement": "hidden counsel",
+                    "confidence": 0.72,
+                    "reasoning": "Neighbor context supports counsel-like reading.",
+                }
+            ]
+        }
+
+    def _stub_renderer(
+        parse_payload: dict[str, object],
+        _context: dict[str, object],
+    ) -> PhraseRenderResult:
+        skeleton = str(parse_payload.get("translation_skeleton") or "").strip()
+        return PhraseRenderResult(
+            rendered_translation=skeleton,
+            confidence=0.65,
+            reasoning="Stub renderer.",
+        )
+
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+        llm_renderer=_stub_renderer,
+        lay_renderer=_stub_renderer,
+        bundle_renderer=None,
+        unknown_token_refiner=_unknown_refiner,
+    )
+
+    result = service.translate_phrase(
+        "zorge",
+        top_k=1,
+        llm=True,
+        llm_unknown_context=False,
+    )
+
+    assert refiner_calls == []
+    assert result["llm_unknown_context_enabled"] is False
+    assert result["llm_unknown_context_applied"] is False
+    assert result["chosen_parse"]["token_choices"][0]["definition"] == "mystery term"
+
+
+def test_phrase_translation_unknown_context_refiner_merges_valid_replacement(
+    tmp_path: Path,
+) -> None:
+    """Apply unknown-token context replacements only when lexical validation passes."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "ZORGE": _word_result(
+                "ZORGE",
+                _word_candidate(
+                    "mystery term",
+                    analysis_type="compositional",
+                    score=9.0,
+                    confidence=0.41,
+                    morphs=["ZORGE"],
+                    provenance="unknown",
+                ),
+            )
+        }
+    )
+    word_service.llm_enabled = True
+    memory = TranslationMemoryRepository(tmp_path / "phrase-unknown-context-on.sqlite3")
+    refiner_calls: list[dict[str, object]] = []
+
+    def _unknown_refiner(
+        parse_payload: dict[str, object],
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        refiner_calls.append({"payload": parse_payload, "context": context})
+        return {
+            "refinements": [
+                {
+                    "index": 1,
+                    "token": "ZORGE",
+                    "replacement": "hidden counsel",
+                    "confidence": 0.72,
+                    "reasoning": "Neighbor context supports counsel-like reading.",
+                }
+            ],
+            "reasoning": "Applied contextual unknown-token refinement.",
+        }
+
+    def _stub_renderer(
+        parse_payload: dict[str, object],
+        _context: dict[str, object],
+    ) -> PhraseRenderResult:
+        skeleton = str(parse_payload.get("translation_skeleton") or "").strip()
+        return PhraseRenderResult(
+            rendered_translation=skeleton,
+            confidence=0.65,
+            reasoning="Stub renderer.",
+        )
+
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+        llm_renderer=_stub_renderer,
+        lay_renderer=_stub_renderer,
+        bundle_renderer=None,
+        unknown_token_refiner=_unknown_refiner,
+    )
+
+    result = service.translate_phrase(
+        "zorge",
+        top_k=1,
+        llm=True,
+        llm_unknown_context=True,
+    )
+
+    assert len(refiner_calls) == 1
+    assert result["llm_unknown_context_enabled"] is True
+    assert result["llm_unknown_context_applied"] is True
+    assert result["llm_unknown_context_updates"][0]["replacement"] == "hidden counsel"
+    assert result["chosen_parse"]["token_choices"][0]["definition"] == "hidden counsel"
+    assert result["rendered_translation"] == "hidden counsel"
+    assert result["lay_translation"] == "hidden counsel"
+
+
+def test_phrase_translation_unknown_context_refiner_skips_when_no_unknown_tokens(
+    tmp_path: Path,
+) -> None:
+    """Do not call unknown-token refinement when chosen parse has no unknown sources."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "MAD": _word_result(
+                "MAD",
+                _word_candidate(
+                    "holy",
+                    analysis_type="dictionary_exact",
+                    score=10.0,
+                    confidence=0.9,
+                    morphs=["MAD"],
+                    provenance="cluster",
+                ),
+            )
+        },
+        dictionary={"mad": {"canonical": "MAD", "pos": "adj"}},
+    )
+    word_service.llm_enabled = True
+    memory = TranslationMemoryRepository(tmp_path / "phrase-unknown-context-skip.sqlite3")
+
+    def _unexpected_refiner(
+        _parse_payload: dict[str, object],
+        _context: dict[str, object],
+    ) -> dict[str, object]:
+        raise AssertionError("Unknown-token refiner should not run without unknown-source tokens.")
+
+    def _stub_renderer(
+        parse_payload: dict[str, object],
+        _context: dict[str, object],
+    ) -> PhraseRenderResult:
+        skeleton = str(parse_payload.get("translation_skeleton") or "").strip()
+        return PhraseRenderResult(
+            rendered_translation=skeleton,
+            confidence=0.65,
+            reasoning="Stub renderer.",
+        )
+
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+        llm_renderer=_stub_renderer,
+        lay_renderer=_stub_renderer,
+        bundle_renderer=None,
+        unknown_token_refiner=_unexpected_refiner,
+    )
+
+    result = service.translate_phrase(
+        "mad",
+        top_k=1,
+        llm=True,
+        llm_unknown_context=True,
+    )
+
+    assert result["llm_unknown_context_enabled"] is True
+    assert result["llm_unknown_context_applied"] is False
+    assert result["chosen_parse"]["token_choices"][0]["definition"] == "holy"
+
+
+def test_phrase_translation_unknown_context_refiner_rejects_invalid_replacements(
+    tmp_path: Path,
+) -> None:
+    """Keep deterministic glosses when unknown-token replacements fail lexical checks."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "ZORGE": _word_result(
+                "ZORGE",
+                _word_candidate(
+                    "mystery term",
+                    analysis_type="compositional",
+                    score=9.0,
+                    confidence=0.41,
+                    morphs=["ZORGE"],
+                    provenance="unknown",
+                ),
+            )
+        }
+    )
+    word_service.llm_enabled = True
+    memory = TranslationMemoryRepository(tmp_path / "phrase-unknown-context-invalid.sqlite3")
+
+    def _invalid_refiner(
+        _parse_payload: dict[str, object],
+        _context: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "refinements": [
+                {"index": 1, "token": "ZORGE", "replacement": "[ZORGE]"},
+            ]
+        }
+
+    def _stub_renderer(
+        parse_payload: dict[str, object],
+        _context: dict[str, object],
+    ) -> PhraseRenderResult:
+        skeleton = str(parse_payload.get("translation_skeleton") or "").strip()
+        return PhraseRenderResult(
+            rendered_translation=skeleton,
+            confidence=0.65,
+            reasoning="Stub renderer.",
+        )
+
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+        llm_renderer=_stub_renderer,
+        lay_renderer=_stub_renderer,
+        bundle_renderer=None,
+        unknown_token_refiner=_invalid_refiner,
+    )
+
+    result = service.translate_phrase(
+        "zorge",
+        top_k=1,
+        llm=True,
+        llm_unknown_context=True,
+    )
+
+    assert result["llm_unknown_context_enabled"] is True
+    assert result["llm_unknown_context_applied"] is False
+    assert result["chosen_parse"]["token_choices"][0]["definition"] == "mystery term"
+    assert any(
+        "did not pass lexical validation" in warning
+        for warning in result["llm_unknown_context_warnings"]
+    )
+
+
 def test_translate_word_no_llm_only_uses_local_only_embedding_loader(monkeypatch) -> None:
     """Deterministic translation should never trigger network-backed embedder loads."""
 
@@ -3226,8 +3600,11 @@ def test_phrase_bundle_prompt_requests_grammatical_hypothetical_reading() -> Non
         {},
     )
 
-    assert "plausible hypothetical interpretation" in prompt.lower()
-    assert "not like a bag of glosses" in prompt.lower()
+    assert "rank-1 parse data only (`rank1_parse_payload`)" in prompt
+    assert "contextual_parse_options" in prompt
+    assert "contextual_selected_parse_rank" in prompt
+    assert "must read like normal prose english" in prompt.lower()
+    assert "helper/filler words" in prompt.lower()
     assert "ornaments of brightness" in prompt.lower()
 
 
@@ -3997,7 +4374,7 @@ def test_parse_phrase_bundle_response_allows_poetic_copy_of_technical() -> None:
     matches the technical sentence exactly.
     """
 
-    parse_payload = {
+    rank1_payload = {
         "phrase": "mad caf prac",
         "translation_skeleton": "holy rule abides",
         "token_choices": [
@@ -4028,6 +4405,46 @@ def test_parse_phrase_bundle_response_allows_poetic_copy_of_technical() -> None:
         ],
         "relations": [],
         "score": 1.0,
+    }
+    parse_payload = {
+        **rank1_payload,
+        "rank1_parse_payload": rank1_payload,
+        "contextual_parse_options": [
+            {"parse_rank": 1, **rank1_payload},
+            {
+                "parse_rank": 2,
+                "phrase": "mad caf prac",
+                "translation_skeleton": "sacred ordinance endures",
+                "token_choices": [
+                    {
+                        "token": "MAD",
+                        "definition": "sacred",
+                        "raw_definition": "sacred",
+                        "analysis_type": "dictionary_exact",
+                        "role_hint": "modifier",
+                        "alternates": [],
+                    },
+                    {
+                        "token": "CAF",
+                        "definition": "ordinance",
+                        "raw_definition": "ordinance",
+                        "analysis_type": "compositional",
+                        "role_hint": "noun",
+                        "alternates": [],
+                    },
+                    {
+                        "token": "PRAC",
+                        "definition": "endures",
+                        "raw_definition": "endures",
+                        "analysis_type": "compositional",
+                        "role_hint": "verb",
+                        "alternates": [],
+                    },
+                ],
+                "relations": [],
+                "score": 0.95,
+            },
+        ],
     }
 
     parsed = _parse_phrase_bundle_response(
@@ -4069,6 +4486,9 @@ def test_parse_phrase_bundle_response_allows_poetic_copy_of_technical() -> None:
     assert parsed["lay_translation"] == "the holy law still stands"
     assert parsed["poetic_translation"] == "holy rule abides"
     assert parsed["interpretive_translation"] == "holy rule abides"
+    assert parsed["contextual_selected_parse_rank"] == 1
+    assert parsed["contextual_lay_translation"] == "the holy law still stands"
+    assert parsed["contextual_poetic_translation"] == "holy rule abides"
 
 
 def test_parse_phrase_bundle_response_replaces_raw_token_placeholders() -> None:
@@ -4079,7 +4499,7 @@ def test_parse_phrase_bundle_response_replaces_raw_token_placeholders() -> None:
     already present in the parse payload before the CLI prints the line.
     """
 
-    parse_payload = {
+    rank1_payload = {
         "phrase": "vansax naz",
         "translation_skeleton": "circle of stars and rectangular prism",
         "token_choices": [
@@ -4102,6 +4522,11 @@ def test_parse_phrase_bundle_response_replaces_raw_token_placeholders() -> None:
         ],
         "relations": [],
         "score": 1.0,
+    }
+    parse_payload = {
+        **rank1_payload,
+        "rank1_parse_payload": rank1_payload,
+        "contextual_parse_options": [{"parse_rank": 1, **rank1_payload}],
     }
 
     parsed = _parse_phrase_bundle_response(
@@ -4140,6 +4565,144 @@ def test_parse_phrase_bundle_response_replaces_raw_token_placeholders() -> None:
     assert "rectangular prism" in parsed["lay_translation"]
     assert "[VANSAX]" not in parsed["interpretive_translation"]
     assert "[NAZ]" not in parsed["interpretive_translation"]
+
+
+def test_parse_phrase_bundle_response_selects_contextual_parse_rank_and_fallbacks() -> None:
+    """Parse contextual fields and keep rank-1 fallback when contextual fields are missing."""
+
+    rank1_payload = {
+        "phrase": "mad caf",
+        "translation_skeleton": "holy law",
+        "token_choices": [
+            {
+                "token": "MAD",
+                "definition": "holy",
+                "raw_definition": "holy",
+                "analysis_type": "dictionary_exact",
+                "role_hint": "modifier",
+                "alternates": [],
+            },
+            {
+                "token": "CAF",
+                "definition": "law",
+                "raw_definition": "law",
+                "analysis_type": "compositional",
+                "role_hint": "noun",
+                "alternates": [],
+            },
+        ],
+        "relations": [],
+        "score": 1.0,
+    }
+    rank2_payload = {
+        "phrase": "mad caf",
+        "translation_skeleton": "sacred ordinance",
+        "token_choices": [
+            {
+                "token": "MAD",
+                "definition": "sacred",
+                "raw_definition": "sacred",
+                "analysis_type": "dictionary_exact",
+                "role_hint": "modifier",
+                "alternates": [],
+            },
+            {
+                "token": "CAF",
+                "definition": "ordinance",
+                "raw_definition": "ordinance",
+                "analysis_type": "compositional",
+                "role_hint": "noun",
+                "alternates": [],
+            },
+        ],
+        "relations": [],
+        "score": 0.98,
+    }
+    parse_payload = {
+        **rank1_payload,
+        "rank1_parse_payload": rank1_payload,
+        "contextual_parse_options": [
+            {"parse_rank": 1, **rank1_payload},
+            {"parse_rank": 2, **rank2_payload},
+        ],
+    }
+
+    contextual = _parse_phrase_bundle_response(
+        json.dumps(
+            {
+                "lay_translation": "the holy law",
+                "lay_confidence": 0.72,
+                "lay_reasoning": "Rank-1 prose.",
+                "poetic_translation": "the holy law stands",
+                "poetic_confidence": 0.79,
+                "poetic_reasoning": "Rank-1 poetic prose.",
+                "contextual_selected_parse_rank": 2,
+                "contextual_lay_translation": "the [CAF] remains",
+                "contextual_lay_confidence": 0.76,
+                "contextual_lay_reasoning": "Rank 2 fits nearby phrasing.",
+                "contextual_poetic_translation": "the [CAF] endures in sacred force",
+                "contextual_poetic_confidence": 0.83,
+                "contextual_poetic_reasoning": "Rank 2 keeps coherence and tone.",
+                "footnoted_translation": "holy [^1] law [^2]",
+                "translation_footnotes": [
+                    {
+                        "index": 1,
+                        "source_token": "MAD",
+                        "rendered_text": "holy",
+                        "explanation": "Rank-1 sacred sense.",
+                    },
+                    {
+                        "index": 2,
+                        "source_token": "CAF",
+                        "rendered_text": "law",
+                        "explanation": "Rank-1 governing sense.",
+                    },
+                ],
+            }
+        ),
+        fallback="holy law",
+        parse_payload=parse_payload,
+    )
+
+    assert contextual["contextual_selected_parse_rank"] == 2
+    assert "ordinance" in contextual["contextual_lay_translation"]
+    assert "ordinance" in contextual["contextual_poetic_translation"]
+    assert contextual["translation_footnotes"][1]["rendered_text"] == "law"
+
+    fallback = _parse_phrase_bundle_response(
+        json.dumps(
+            {
+                "lay_translation": "the holy law",
+                "lay_confidence": 0.72,
+                "lay_reasoning": "Rank-1 prose.",
+                "poetic_translation": "the holy law stands",
+                "poetic_confidence": 0.79,
+                "poetic_reasoning": "Rank-1 poetic prose.",
+                "contextual_selected_parse_rank": 9,
+                "footnoted_translation": "holy [^1] law [^2]",
+                "translation_footnotes": [
+                    {
+                        "index": 1,
+                        "source_token": "MAD",
+                        "rendered_text": "holy",
+                        "explanation": "Rank-1 sacred sense.",
+                    },
+                    {
+                        "index": 2,
+                        "source_token": "CAF",
+                        "rendered_text": "law",
+                        "explanation": "Rank-1 governing sense.",
+                    },
+                ],
+            }
+        ),
+        fallback="holy law",
+        parse_payload=parse_payload,
+    )
+
+    assert fallback["contextual_selected_parse_rank"] == 1
+    assert fallback["contextual_lay_translation"] == "the holy law"
+    assert fallback["contextual_poetic_translation"] == "the holy law stands"
 
 
 def test_translate_phrase_uses_bundle_renderer_once_when_llm_enabled(
@@ -4203,6 +4766,13 @@ def test_translate_phrase_uses_bundle_renderer_once_when_llm_enabled(
             poetic_translation="the sacred order stands firm",
             poetic_confidence=0.83,
             poetic_reasoning="Expressive render.",
+            contextual_lay_translation="the sacred ordinance stands",
+            contextual_lay_confidence=0.79,
+            contextual_lay_reasoning="Rank 2 reads more coherently.",
+            contextual_poetic_translation="the sacred ordinance endures in power",
+            contextual_poetic_confidence=0.86,
+            contextual_poetic_reasoning="Rank 2 gives stronger flow.",
+            contextual_selected_parse_rank=2,
             interpretive_translation="the sacred order stands firm",
             interpretive_confidence=0.83,
             interpretive_reasoning="Expressive render.",
@@ -4242,8 +4812,16 @@ def test_translate_phrase_uses_bundle_renderer_once_when_llm_enabled(
     assert result["rendered_translation"] == "holy rule"
     assert result["lay_translation"] == "holy rule"
     assert result["poetic_translation"] == "the sacred order stands firm"
+    assert result["contextual_lay_translation"] == "the sacred ordinance stands"
+    assert result["contextual_poetic_translation"] == "the sacred ordinance endures in power"
+    assert result["contextual_selected_parse_rank"] == 2
     assert result["interpretive_translation"] == "the sacred order stands firm"
     assert result["footnoted_translation"] == "holy [^1] rule [^2]"
+    payload = bundle_calls[0]["payload"]
+    assert isinstance(payload, dict)
+    assert "rank1_parse_payload" in payload
+    assert "contextual_parse_options" in payload
+    assert payload["token_choices"] == payload["rank1_parse_payload"]["token_choices"]
 
 
 def test_phrase_bundle_prompt_requests_grounded_and_poetic_renders() -> None:
@@ -4262,12 +4840,52 @@ def test_phrase_bundle_prompt_requests_grounded_and_poetic_renders() -> None:
 
     lowered = prompt.lower()
     assert "poetic_translation" in prompt
-    assert "lay_translation` should not simply copy the technical skeleton" in prompt
+    assert "rank1_parse_payload" in prompt
+    assert "contextual_parse_options" in prompt
+    assert "contextual_selected_parse_rank" in prompt
+    assert "must read like normal prose english" in lowered
+    assert "helper/filler words" in lowered
     assert "never emit raw source tokens or bracket placeholders" in lowered
     assert "do not emit `unresolved term`" in lowered
     assert "repair awkward fragment chains" in lowered
     assert "reorder aggressively" in lowered
-    assert "does not need to differ" in lowered
+    assert "do not need to differ" in lowered
+
+
+def test_phrase_report_prints_rank1_and_contextual_tracks() -> None:
+    """Render both rank-1 and contextual sections in phrase text output."""
+
+    report = translation_cli._format_phrase_report(
+        {
+            "phrase": "mad caf",
+            "variant": "solo",
+            "strategy": "prefer-balance",
+            "llm_enabled": True,
+            "lay_translation_mode": "bundle",
+            "rendered_translation": "holy law",
+            "render_confidence": 0.72,
+            "render_reasoning": "Deterministic skeleton.",
+            "lay_translation": "the holy law",
+            "lay_confidence": 0.79,
+            "lay_reasoning": "Rank-1 prose.",
+            "poetic_translation": "the holy law endures",
+            "poetic_confidence": 0.83,
+            "poetic_reasoning": "Rank-1 poetic prose.",
+            "contextual_selected_parse_rank": 2,
+            "contextual_lay_translation": "the sacred ordinance stands",
+            "contextual_lay_confidence": 0.81,
+            "contextual_lay_reasoning": "Rank 2 gave clearer coherence.",
+            "contextual_poetic_translation": "the sacred ordinance endures in power",
+            "contextual_poetic_confidence": 0.86,
+            "contextual_poetic_reasoning": "Rank 2 chosen for stronger prose flow.",
+        }
+    )
+
+    assert "Lay translation: the holy law" in report
+    assert "Poetic translation: the holy law endures" in report
+    assert "Contextual parse selection (rank 1..3): 2" in report
+    assert "Contextual lay translation: the sacred ordinance stands" in report
+    assert "Contextual poetic translation: the sacred ordinance endures in power" in report
 
 
 def test_translate_word_demotes_residual_placeholder_anchor_below_composition() -> None:
@@ -5243,6 +5861,17 @@ def test_translation_cli_accepts_plural_no_whole_words_alias_for_phrase() -> Non
     assert args.allow_whole_word is False
 
 
+def test_translation_cli_accepts_llm_unknown_context_flag_for_phrase() -> None:
+    """Expose the optional unknown-token context refinement switch on phrase CLI."""
+
+    parser = translation_cli.build_parser()
+    args = parser.parse_args(
+        ["translate-phrase", "ol sonf vorsg", "--llm-unknown-context"]
+    )
+
+    assert args.llm_unknown_context is True
+
+
 def test_translation_cli_accepts_plural_no_whole_words_alias_for_word() -> None:
     """Keep the single-word parser aligned with the phrase parser's flag alias."""
     parser = translation_cli.build_parser()
@@ -5270,9 +5899,9 @@ def test_translation_cli_help_describes_blind_retranslation_semantics() -> None:
 
     assert "Blind retranslation mode" in word_help
     assert "suppress exact dictionary" in word_help
-    assert "Short 1-2 character DB roots" in word_help
+    assert "Short 1-4 character DB roots" in word_help
     assert "Blind retranslation mode" in phrase_help
-    assert "whole-word DB anchors longer than 2" in phrase_help
+    assert "whole-word DB anchors longer than 4" in phrase_help
 
 
 def test_candidate_finder_segment_target_uses_precomputed_definition_counts_without_reclustering(

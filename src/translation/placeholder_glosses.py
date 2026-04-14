@@ -48,6 +48,7 @@ _CLAUSE_SPLIT_RE = re.compile(
     r"denoting|signifying|underlying)\b"
 )
 _QUOTED_PHRASE_RE = re.compile(r"[\"'`](.{1,48}?)[\"'`]")
+_FIRST_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _GLOSS_STOPWORDS = {
     "a",
     "an",
@@ -253,7 +254,7 @@ def surface_gloss_from_sources(
     if specific_gloss is not None:
         return specific_gloss, "semantic_core_guided_definition"
     semantic_gloss = semantic_core_gloss(semantic_terms)
-    if semantic_gloss is not None:
+    if semantic_gloss is not None and not is_meta_linguistic_gloss(semantic_gloss):
         return semantic_gloss, "semantic_core"
     cleaned = clean_lexical_gloss(definition, token=token)
     if cleaned is not None:
@@ -382,7 +383,11 @@ def _definition_span_candidates(text: object, *, token: str | None = None) -> li
     if not normalized:
         return []
 
-    fragments: list[str] = [normalized, _strip_meta_scaffolding(normalized)]
+    first_sentence = _definition_first_sentence(normalized)
+    fragments: list[str] = []
+    if first_sentence is not None:
+        fragments.append(first_sentence)
+    fragments.extend([normalized, _strip_meta_scaffolding(normalized)])
     quoted = _quoted_gloss_candidate(normalized)
     if quoted is not None:
         fragments.append(quoted)
@@ -426,6 +431,23 @@ def _definition_span_candidates(text: object, *, token: str | None = None) -> li
         seen.add(key)
         normalized_candidates.append(candidate)
     return normalized_candidates
+
+
+def _definition_first_sentence(text: str) -> str | None:
+    """Return the leading sentence so lexical selection sees the primary gloss first.
+
+    Multi-sentence glossary definitions usually place the shortest lexical
+    meaning in sentence one and reserve later sentences for commentary. Keeping
+    that opening sentence at the front of the candidate list helps
+    semantic-core span scoring break ties toward user-facing meanings.
+    """
+
+    sentence = _FIRST_SENTENCE_SPLIT_RE.split(text, maxsplit=1)[0].strip()
+    if not sentence:
+        return None
+    if sentence.endswith((".", "!", "?")):
+        sentence = sentence[:-1].strip()
+    return sentence or None
 
 
 def _normalize_definition_span_candidate(
