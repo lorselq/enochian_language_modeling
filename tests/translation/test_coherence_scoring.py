@@ -31,7 +31,10 @@ sys.modules.setdefault("gensim", gensim_module)
 sys.modules.setdefault("gensim.utils", gensim_utils)
 sys.modules.setdefault("gensim.models", gensim_models)
 
-sentence_module = types.ModuleType("sentence_transformers")
+sentence_module = sys.modules.setdefault(
+    "sentence_transformers",
+    types.ModuleType("sentence_transformers"),
+)
 
 
 class _DummySentenceTransformer:  # pragma: no cover - simple import shim
@@ -40,7 +43,11 @@ class _DummySentenceTransformer:  # pragma: no cover - simple import shim
 
 
 sentence_module.SentenceTransformer = _DummySentenceTransformer  # type: ignore[attr-defined]
-sys.modules.setdefault("sentence_transformers", sentence_module)
+sentence_module.util = getattr(  # type: ignore[attr-defined]
+    sentence_module,
+    "util",
+    types.SimpleNamespace(cos_sim=lambda *_args, **_kwargs: [[1.0]]),
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 

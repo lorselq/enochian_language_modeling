@@ -541,7 +541,6 @@ class QueryModelTool(BaseTool):
                 ],
                 temperature=0.2,
                 stream=self._stream_response,
-                seed=93,
             )
             progress_state["state"] = (
                 "waiting for first token"
@@ -647,7 +646,6 @@ class QueryModelTool(BaseTool):
                     ],
                     temperature=0.2,
                     stream=False,
-                    seed=93,
                 )
                 response_text = (non_stream.choices[0].message.content or "").strip()
             except Exception as exc:

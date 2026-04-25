@@ -18,7 +18,9 @@ from .placeholder_glosses import (
     clean_lexical_gloss,
     gloss_overlaps_negative_contrast,
     is_meta_linguistic_gloss,
+    is_numeric_meta_gloss,
     normalize_semantic_terms,
+    numeric_meta_gloss_matches_token,
     semantic_core_gloss,
     surface_gloss_from_sources,
 )
@@ -51,7 +53,8 @@ def apply_strategy(
             strategy=strategy_key,
             support_counts=support_counts,
         )
-        reranked.append((decomp, base + bonus))
+        penalty = _numeric_meta_decomposition_penalty(decomp=decomp, evidence=evidence)
+        reranked.append((decomp, base + bonus - penalty))
 
     reranked.sort(key=lambda pair: pair[1], reverse=True)
     return reranked
@@ -84,6 +87,49 @@ def _strategy_bonus(
         return 0.5 * chunkiness - 0.2 * _length_variance(decomp.morphs)
 
     return 0.0
+
+
+def _numeric_meta_decomposition_penalty(
+    *,
+    decomp: Decomposition,
+    evidence: WordEvidence,
+) -> float:
+    """Discourage multi-letter dictionary number chunks inside larger words.
+
+    Numeric entries like ``AF = digits 19`` are useful diagnostics, but they
+    should not make ``AFFA`` stop at ``AF + FA`` when smaller non-numeric
+    pieces can explain the word. Exact whole-token number readings remain
+    unpenalized so legitimate number words can still surface.
+    """
+
+    target = str(getattr(evidence, "word", "") or "").upper()
+    penalty = 0.0
+    for morph in decomp.morphs:
+        normalized = (morph or "").upper()
+        if not normalized or len(normalized) <= 1:
+            continue
+        entry = evidence.dictionary_morphs.get(normalized)
+        if entry is None:
+            continue
+        definitions = [
+            value
+            for value in [entry.definition, *entry.senses]
+            if isinstance(value, str) and value.strip()
+        ]
+        numeric_definition = next(
+            (definition for definition in definitions if is_numeric_meta_gloss(definition)),
+            None,
+        )
+        if numeric_definition is None:
+            continue
+        if (
+            len(decomp.morphs) == 1
+            and normalized == target
+            and numeric_meta_gloss_matches_token(numeric_definition, token=target)
+        ):
+            continue
+        penalty += 4.0
+    return penalty
 
 
 def _compile_support_counts(evidence: WordEvidence) -> dict[str, int]:
@@ -368,6 +414,12 @@ def _meaning_from_evidence(
         semantic_core_terms: Sequence[str] | None = None,
         negative_contrast: Sequence[str] | None = None,
     ) -> None:
+        if _should_suppress_numeric_meta_gloss(
+            definition,
+            morph=morph,
+            evidence=evidence,
+        ):
+            return
         surface_gloss, strategy = surface_gloss_from_sources(
             semantic_core=list(semantic_core_terms or []),
             definition=definition,
@@ -890,12 +942,18 @@ def _bundle_head_gloss(
     gloss when the bundle is purely grammatical.
     """
 
-    if content_entries:
+    lexical_function_entries = [
+        entry
+        for entry in function_entries
+        if not _is_stopword_class_gloss(str(entry.get("head_gloss") or ""))
+    ]
+    head_entries = [*content_entries, *lexical_function_entries]
+    if head_entries:
         ranked = sorted(
-            content_entries,
+            head_entries,
             key=lambda entry: (
                 not _is_stopword_class_gloss(str(entry.get("head_gloss") or "")),
-                _safe_number(entry.get("quality"), default=0.0),
+                _bundle_content_head_score(entry),
                 -len(str(entry.get("head_gloss") or "").split()),
             ),
             reverse=True,
@@ -909,6 +967,21 @@ def _bundle_head_gloss(
         if isinstance(head_gloss, str) and head_gloss.strip():
             return head_gloss.strip()
     return None
+
+
+def _bundle_content_head_score(entry: Mapping[str, object]) -> float:
+    """Score content heads while giving stable roots a small edge over singletons.
+
+    Single-letter roots can be legitimate support morphs, but in a compound
+    like ``A + F + FA`` the longer content root is usually the semantic head.
+    This modest length bonus lets ``FA = boundedness`` beat a slightly higher
+    quality singleton gloss without broadly drowning out evidence quality.
+    """
+
+    quality = _safe_number(entry.get("quality"), default=0.0)
+    morph = str(entry.get("morph") or "")
+    length_bonus = 0.15 * min(max(len(morph) - 1, 0), 2)
+    return quality + length_bonus
 
 
 def _bundle_function_profile(
@@ -1509,6 +1582,12 @@ def _collect_definition_candidates(
         raw_definition = payload.get("raw_definition")
         if not isinstance(raw_definition, str):
             raw_definition = payload.get("definition")
+        if _should_suppress_numeric_meta_gloss(
+            raw_definition,
+            morph=morph,
+            evidence=evidence,
+        ):
+            return
         semantic_core_terms = normalize_semantic_terms(payload.get("semantic_core_terms"))
         negative_contrast = normalize_semantic_terms(payload.get("negative_contrast"))
         definition, strategy = surface_gloss_from_sources(
@@ -1761,13 +1840,59 @@ def _definition_suppression_notes(
 ) -> list[str]:
     """Describe blind-mode dictionary filtering for one morph trace."""
 
-    if allow_dictionary or evidence is None or evidence.dictionary_morphs.get(morph) is None:
+    if evidence is None:
         return []
+    notes: list[str] = []
+    entry = evidence.dictionary_morphs.get(morph)
+    if entry is None:
+        return notes
+    numeric_sources = [
+        text
+        for text in [entry.definition, *entry.senses]
+        if isinstance(text, str)
+        and _should_suppress_numeric_meta_gloss(
+            text,
+            morph=morph,
+            evidence=evidence,
+        )
+    ]
+    if numeric_sources:
+        notes.append(
+            "Suppressed numeric dictionary gloss for "
+            f"{morph} because it is not an exact whole-token number reading."
+        )
+    if allow_dictionary:
+        return notes
     if blind_dictionary_fallback:
-        return [
+        notes.append(
             f"Blind mode reintroduced dictionary evidence for {morph} because no non-dictionary definition survived."
-        ]
-    return [f"Blind mode suppressed dictionary-backed definition candidates for {morph}."]
+        )
+        return notes
+    notes.append(f"Blind mode suppressed dictionary-backed definition candidates for {morph}.")
+    return notes
+
+
+def _should_suppress_numeric_meta_gloss(
+    definition: object,
+    *,
+    morph: str,
+    evidence: WordEvidence,
+) -> bool:
+    """Return whether a numeric dictionary-style gloss is unsafe to display.
+
+    Decomposition can encounter numeric dictionary entries as submorph evidence
+    while translating a larger token. Those entries remain useful diagnostics,
+    but only exact whole-token number readings with matching digit count should
+    become visible lexical definitions.
+    """
+
+    if not is_numeric_meta_gloss(definition):
+        return False
+    target = str(getattr(evidence, "word", "") or "").upper()
+    normalized_morph = (morph or "").upper()
+    if not target or normalized_morph != target:
+        return True
+    return not numeric_meta_gloss_matches_token(definition, token=target)
 
 
 def _candidate_quality(candidate: dict[str, object]) -> float:

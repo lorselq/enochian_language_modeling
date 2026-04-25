@@ -24,17 +24,27 @@ from .llm_synthesis import (
     DEFAULT_LLM_CONTEXT,
     PhraseRenderBundleResult,
     PhraseRenderResult,
+    _build_footnoted_translation,
     _build_phrase_footnote_fallback,
     refine_unknown_phrase_tokens,
     render_phrase_bundle,
     render_phrase_lay_translation,
     render_phrase_translation,
 )
+from .fnp import (
+    PhraseFNPAnalysis,
+    analyze_phrase_fnp_sequence,
+    phrase_fnp_analysis,
+    role_hint_from_fnp,
+)
 from .memory import TranslationMemoryRepository
 from .placeholder_glosses import (
     clean_lexical_gloss,
     is_meta_linguistic_gloss,
+    is_numeric_meta_gloss,
+    numeric_meta_digits,
     normalize_semantic_terms,
+    numeric_meta_gloss_matches_token,
     sanitize_human_gloss,
     specific_gloss_from_definition_and_semantic_core,
     unresolved_token_gloss,
@@ -103,6 +113,25 @@ _WEAK_PRIMARY_RESCUE_GLOSSES = {
 }
 
 
+def _safe_number(value: object, *, default: float) -> float:
+    """Coerce payload values into floats at phrase-service boundaries.
+
+    Phrase translation consumes real word-service payloads and compact test
+    doubles. This helper keeps optional FNP fields tolerant of missing or
+    stringified numeric values without spreading try/except blocks through the
+    parser.
+    """
+
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
 class PhraseProgressReporter(Protocol):
     """Describe the phrase-stage status interface used by the CLI renderer.
 
@@ -149,6 +178,12 @@ class PhraseTokenCandidate:
     dictionary_rescue_note: str | None = None
     weak_fallback_gloss: str | None = None
     weak_fallback_note: str | None = None
+    fnp_profile: dict[str, float] = field(default_factory=dict)
+    fnp_function: str = "unknown"
+    fnp_function_hypotheses: list[dict[str, object]] = field(default_factory=list)
+    fnp_confidence: float = 0.0
+    fnp_warnings: list[str] = field(default_factory=list)
+    head_analysis: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -171,6 +206,10 @@ class PhraseParseCandidate:
     token_choices: list[PhraseTokenCandidate] = field(default_factory=list)
     relations: list[PhraseRelation] = field(default_factory=list)
     translation_skeleton: str = ""
+    phrase_function_sequence: list[dict[str, object]] = field(default_factory=list)
+    grammar_score: float = 0.0
+    grammar_evidence: list[str] = field(default_factory=list)
+    grammar_warnings: list[str] = field(default_factory=list)
 
 
 class PhraseTranslationService:
@@ -239,6 +278,72 @@ class PhraseTranslationService:
         self.close()
 
     def translate_phrase(
+        self,
+        phrase: str,
+        *,
+        variants: Iterable[str] | None = None,
+        strategy: str = "prefer-balance",
+        top_k: int = 3,
+        llm: bool | None = None,
+        llm_context: str | None = None,
+        llm_unknown_context: bool = False,
+        memory_update: bool = True,
+        evidence_mode: SingleWordTranslationService.EvidenceMode = SingleWordTranslationService.EvidenceMode.ALL,
+        weight_enabled: bool = True,
+        allow_whole_word: bool = True,
+        progress_reporter: PhraseProgressReporter | None = None,
+    ) -> dict[str, object]:
+        """Translate one phrase, splitting semicolon/colon clauses first.
+
+        Semicolons and colons mark strong clause boundaries in the source
+        material. Translating each clause independently prevents long phrases
+        from inventing relations across those boundaries, then this wrapper
+        composes the clause results back into the existing top-level payload.
+        """
+
+        normalized_phrase = (phrase or "").strip()
+        if not normalized_phrase:
+            raise ValueError("Phrase must be a non-empty string.")
+        clauses = self._split_phrase_clauses(normalized_phrase)
+        if len(clauses) > 1:
+            clause_results = [
+                self._translate_phrase_single_clause(
+                    clause,
+                    variants=variants,
+                    strategy=strategy,
+                    top_k=top_k,
+                    llm=llm,
+                    llm_context=llm_context,
+                    llm_unknown_context=llm_unknown_context,
+                    memory_update=memory_update,
+                    evidence_mode=evidence_mode,
+                    weight_enabled=weight_enabled,
+                    allow_whole_word=allow_whole_word,
+                    progress_reporter=progress_reporter,
+                )
+                for clause in clauses
+            ]
+            return self._compose_clause_results(
+                normalized_phrase,
+                clauses,
+                clause_results,
+            )
+        return self._translate_phrase_single_clause(
+            normalized_phrase,
+            variants=variants,
+            strategy=strategy,
+            top_k=top_k,
+            llm=llm,
+            llm_context=llm_context,
+            llm_unknown_context=llm_unknown_context,
+            memory_update=memory_update,
+            evidence_mode=evidence_mode,
+            weight_enabled=weight_enabled,
+            allow_whole_word=allow_whole_word,
+            progress_reporter=progress_reporter,
+        )
+
+    def _translate_phrase_single_clause(
         self,
         phrase: str,
         *,
@@ -672,6 +777,390 @@ class PhraseTranslationService:
             "memory_updates": memory_updates,
         }
 
+    @staticmethod
+    def _split_phrase_clauses(phrase: str) -> list[str]:
+        """Split phrase text on punctuation currently treated as clause breaks.
+
+        The phrase parser scores adjacent tokens as possible relations. Treating
+        semicolons, colons, and commas as hard boundaries prevents unrelated
+        long-clause segments from influencing one another until the translator
+        grows a punctuation-free sentence-boundary inference layer.
+        """
+
+        clauses = [
+            part.strip()
+            for part in re.split(r"[;:,]", phrase)
+            if tokenize_words(part)
+        ]
+        return clauses or [phrase.strip()]
+
+    @staticmethod
+    def _compose_clause_results(
+        phrase: str,
+        clauses: Sequence[str],
+        clause_results: Sequence[Mapping[str, object]],
+    ) -> dict[str, object]:
+        """Compose independently translated clauses into one phrase payload.
+
+        Single-clause output remains unchanged, but multi-clause phrases need a
+        backward-compatible top-level result. This aggregator concatenates the
+        visible translations, offsets token relation indices and footnotes, and
+        keeps each clause payload under ``clause_translations`` for diagnostics.
+        """
+
+        if not clause_results:
+            raise ValueError("At least one clause result is required.")
+
+        combined = copy.deepcopy(dict(clause_results[0]))
+        tokens: list[str] = []
+        token_analyses: list[dict[str, object]] = []
+        token_choices: list[dict[str, object]] = []
+        relations: list[dict[str, object]] = []
+        phrase_function_sequence: list[dict[str, object]] = []
+        grammar_evidence: list[str] = []
+        grammar_warnings: list[str] = []
+        score = 0.0
+        grammar_score = 0.0
+        token_offset = 0
+        footnote_offset = 0
+        footnotes: list[dict[str, object]] = []
+        footnoted_parts: list[str] = []
+        clause_payloads: list[dict[str, object]] = []
+
+        for clause_index, result in enumerate(clause_results, start=1):
+            clause_result = copy.deepcopy(dict(result))
+            clause_result["clause_index"] = clause_index
+            clause_result["clause_phrase"] = clauses[clause_index - 1]
+            clause_payloads.append(clause_result)
+
+            clause_tokens = [
+                str(token)
+                for token in result.get("tokens", [])
+                if isinstance(token, str)
+            ]
+            tokens.extend(clause_tokens)
+
+            raw_token_analyses = result.get("token_analyses")
+            if isinstance(raw_token_analyses, Sequence) and not isinstance(
+                raw_token_analyses,
+                (str, bytes),
+            ):
+                token_analyses.extend(
+                    copy.deepcopy(
+                        [
+                            dict(analysis)
+                            for analysis in raw_token_analyses
+                            if isinstance(analysis, Mapping)
+                        ]
+                    )
+                )
+
+            chosen_parse = result.get("chosen_parse")
+            if isinstance(chosen_parse, Mapping):
+                score += _safe_number(chosen_parse.get("score"), default=0.0)
+                grammar_score += _safe_number(
+                    chosen_parse.get("grammar_score"),
+                    default=0.0,
+                )
+                raw_choices = chosen_parse.get("token_choices")
+                if isinstance(raw_choices, Sequence) and not isinstance(
+                    raw_choices,
+                    (str, bytes),
+                ):
+                    token_choices.extend(
+                        copy.deepcopy(
+                            [
+                                dict(choice)
+                                for choice in raw_choices
+                                if isinstance(choice, Mapping)
+                            ]
+                        )
+                    )
+                raw_relations = chosen_parse.get("relations")
+                if isinstance(raw_relations, Sequence) and not isinstance(
+                    raw_relations,
+                    (str, bytes),
+                ):
+                    for relation in raw_relations:
+                        if not isinstance(relation, Mapping):
+                            continue
+                        shifted = dict(relation)
+                        shifted["left_index"] = int(
+                            _safe_number(shifted.get("left_index"), default=0.0)
+                        ) + token_offset
+                        shifted["right_index"] = int(
+                            _safe_number(shifted.get("right_index"), default=0.0)
+                        ) + token_offset
+                        relations.append(shifted)
+                raw_sequence = chosen_parse.get("phrase_function_sequence")
+                if isinstance(raw_sequence, Sequence) and not isinstance(
+                    raw_sequence,
+                    (str, bytes),
+                ):
+                    phrase_function_sequence.extend(
+                        copy.deepcopy(
+                            [
+                                dict(item)
+                                for item in raw_sequence
+                                if isinstance(item, Mapping)
+                            ]
+                        )
+                    )
+                grammar_evidence.extend(
+                    str(item)
+                    for item in chosen_parse.get("grammar_evidence", [])
+                    if isinstance(item, str) and item.strip()
+                )
+                grammar_warnings.extend(
+                    str(item)
+                    for item in chosen_parse.get("grammar_warnings", [])
+                    if isinstance(item, str) and item.strip()
+                )
+
+            clause_notes = PhraseTranslationService._renumber_clause_footnotes(
+                result.get("translation_footnotes"),
+                offset=footnote_offset,
+            )
+            if clause_notes:
+                footnotes.extend(clause_notes)
+                footnoted_parts.append(_build_footnoted_translation(clause_notes))
+                footnote_offset += len(clause_notes)
+
+            token_offset += len(clause_tokens)
+
+        translation_skeleton = PhraseTranslationService._join_clause_texts(
+            [
+                str(
+                    (result.get("chosen_parse") or {}).get("translation_skeleton")
+                    if isinstance(result.get("chosen_parse"), Mapping)
+                    else ""
+                )
+                for result in clause_results
+            ]
+        )
+        aggregate_parse = {
+            "rank": 1,
+            "score": score,
+            "token_choices": token_choices,
+            "relations": relations,
+            "translation_skeleton": translation_skeleton,
+            "phrase_function_sequence": phrase_function_sequence,
+            "grammar_score": grammar_score,
+            "grammar_evidence": PhraseTranslationService._unique_strings(
+                grammar_evidence
+            ),
+            "grammar_warnings": PhraseTranslationService._unique_strings(
+                grammar_warnings
+            ),
+        }
+
+        combined.update(
+            {
+                "phrase": phrase,
+                "tokens": tokens,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "token_analyses": token_analyses,
+                "parse_candidates": [aggregate_parse],
+                "chosen_parse": aggregate_parse,
+                "rendered_translation": PhraseTranslationService._join_clause_field(
+                    clause_results,
+                    "rendered_translation",
+                ),
+                "render_reasoning": (
+                    f"Composed from {len(clause_results)} independently translated "
+                    "clauses; no parse relations cross semicolon/colon boundaries."
+                ),
+                "render_confidence": PhraseTranslationService._average_clause_confidence(
+                    clause_results,
+                    "render_confidence",
+                ),
+                "render_warnings": PhraseTranslationService._unique_strings(
+                    PhraseTranslationService._flatten_clause_list_field(
+                        clause_results,
+                        "render_warnings",
+                    )
+                ),
+                "lay_translation": PhraseTranslationService._join_clause_field(
+                    clause_results,
+                    "lay_translation",
+                ),
+                "lay_reasoning": (
+                    f"Composed from {len(clause_results)} independently rendered "
+                    "lay clauses."
+                ),
+                "lay_confidence": PhraseTranslationService._average_clause_confidence(
+                    clause_results,
+                    "lay_confidence",
+                ),
+                "poetic_translation": PhraseTranslationService._join_clause_field(
+                    clause_results,
+                    "poetic_translation",
+                ),
+                "poetic_reasoning": (
+                    f"Composed from {len(clause_results)} independently rendered "
+                    "poetic clauses."
+                ),
+                "poetic_confidence": PhraseTranslationService._average_clause_confidence(
+                    clause_results,
+                    "poetic_confidence",
+                ),
+                "contextual_lay_translation": PhraseTranslationService._join_clause_field(
+                    clause_results,
+                    "contextual_lay_translation",
+                ),
+                "contextual_lay_reasoning": (
+                    f"Composed from {len(clause_results)} independently translated "
+                    "contextual clauses."
+                ),
+                "contextual_lay_confidence": PhraseTranslationService._average_clause_confidence(
+                    clause_results,
+                    "contextual_lay_confidence",
+                ),
+                "contextual_poetic_translation": PhraseTranslationService._join_clause_field(
+                    clause_results,
+                    "contextual_poetic_translation",
+                ),
+                "contextual_poetic_reasoning": (
+                    f"Composed from {len(clause_results)} independently translated "
+                    "contextual poetic clauses."
+                ),
+                "contextual_poetic_confidence": PhraseTranslationService._average_clause_confidence(
+                    clause_results,
+                    "contextual_poetic_confidence",
+                ),
+                "contextual_selected_parse_rank": 1,
+                "interpretive_translation": PhraseTranslationService._join_clause_field(
+                    clause_results,
+                    "interpretive_translation",
+                ),
+                "interpretive_reasoning": (
+                    f"Composed from {len(clause_results)} independently translated "
+                    "interpretive clauses."
+                ),
+                "interpretive_confidence": PhraseTranslationService._average_clause_confidence(
+                    clause_results,
+                    "interpretive_confidence",
+                ),
+                "lay_warnings": PhraseTranslationService._unique_strings(
+                    PhraseTranslationService._flatten_clause_list_field(
+                        clause_results,
+                        "lay_warnings",
+                    )
+                ),
+                "footnoted_translation": PhraseTranslationService._join_clause_texts(
+                    footnoted_parts
+                ),
+                "translation_footnotes": footnotes,
+                "llm_unknown_context_applied": any(
+                    bool(result.get("llm_unknown_context_applied"))
+                    for result in clause_results
+                ),
+                "llm_unknown_context_updates": PhraseTranslationService._flatten_clause_list_field(
+                    clause_results,
+                    "llm_unknown_context_updates",
+                ),
+                "llm_unknown_context_warnings": PhraseTranslationService._unique_strings(
+                    PhraseTranslationService._flatten_clause_list_field(
+                        clause_results,
+                        "llm_unknown_context_warnings",
+                    )
+                ),
+                "memory_updates": PhraseTranslationService._flatten_clause_list_field(
+                    clause_results,
+                    "memory_updates",
+                ),
+                "clause_translations": clause_payloads,
+            }
+        )
+        return combined
+
+    @staticmethod
+    def _join_clause_field(
+        results: Sequence[Mapping[str, object]],
+        field: str,
+    ) -> str:
+        """Join a text field from clause payloads using phrase-level separators."""
+
+        return PhraseTranslationService._join_clause_texts(
+            [
+                str(result.get(field) or "").strip()
+                for result in results
+                if str(result.get(field) or "").strip()
+            ]
+        )
+
+    @staticmethod
+    def _join_clause_texts(parts: Sequence[str]) -> str:
+        """Join non-empty clause text fragments in a stable display form."""
+
+        return "; ".join(part.strip() for part in parts if part.strip())
+
+    @staticmethod
+    def _average_clause_confidence(
+        results: Sequence[Mapping[str, object]],
+        field: str,
+    ) -> float | None:
+        """Average numeric confidence fields across independently rendered clauses."""
+
+        values = [
+            float(value)
+            for result in results
+            for value in [result.get(field)]
+            if isinstance(value, (int, float))
+        ]
+        if not values:
+            return None
+        return sum(values) / len(values)
+
+    @staticmethod
+    def _flatten_clause_list_field(
+        results: Sequence[Mapping[str, object]],
+        field: str,
+    ) -> list[object]:
+        """Flatten list-valued diagnostic fields from all clause payloads."""
+
+        flattened: list[object] = []
+        for result in results:
+            value = result.get(field)
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                flattened.extend(copy.deepcopy(list(value)))
+        return flattened
+
+    @staticmethod
+    def _unique_strings(values: Sequence[object]) -> list[str]:
+        """Deduplicate diagnostic strings without changing their first-seen order."""
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            normalized = value.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            unique.append(normalized)
+        return unique
+
+    @staticmethod
+    def _renumber_clause_footnotes(
+        notes: object,
+        *,
+        offset: int,
+    ) -> list[dict[str, object]]:
+        """Offset one clause's footnote indices into the aggregate phrase space."""
+
+        if not isinstance(notes, Sequence) or isinstance(notes, (str, bytes)):
+            return []
+        renumbered: list[dict[str, object]] = []
+        for local_index, note in enumerate(notes, start=1):
+            if not isinstance(note, Mapping):
+                continue
+            copied = copy.deepcopy(dict(note))
+            copied["index"] = offset + local_index
+            renumbered.append(copied)
+        return renumbered
+
     def _prewarm_phrase_evidence(
         self,
         *,
@@ -694,6 +1183,7 @@ class PhraseTranslationService:
             "_prewarm_clustered_definition_counts",
             None,
         )
+        prewarm_fnp = getattr(repository, "prewarm_root_fnp_profiles", None)
         if not callable(prewarm) or not callable(substring_candidates):
             return
 
@@ -713,6 +1203,8 @@ class PhraseTranslationService:
                 variants=variants,
                 evidence_mode=evidence_mode,
             )
+        if callable(prewarm_fnp):
+            prewarm_fnp(morphs, variants=variants)
 
     def _token_candidates_from_word_result(
         self,
@@ -755,6 +1247,7 @@ class PhraseTranslationService:
                 ).strip(),
             }
             primary_definition = self._candidate_definition(
+                token,
                 candidate,
                 meaning_list,
                 bundle,
@@ -786,6 +1279,21 @@ class PhraseTranslationService:
                 or selected_trace.get("dictionary_rescue_note")
                 or ""
             ).strip() or None
+            fnp_profile = self._candidate_fnp_profile(candidate)
+            fnp_confidence = _safe_number(candidate.get("fnp_confidence"), default=0.0)
+            fnp_function = str(candidate.get("inferred_word_function") or "unknown")
+            fnp_function_hypotheses = self._candidate_fnp_hypotheses(candidate)
+            fnp_warnings = [
+                str(warning)
+                for warning in candidate.get("fnp_warnings", [])
+                if isinstance(warning, str)
+            ]
+            head_analysis_raw = candidate.get("head_analysis")
+            head_analysis = (
+                dict(head_analysis_raw)
+                if isinstance(head_analysis_raw, Mapping)
+                else {}
+            )
             role_hint = self._infer_role_hint(
                 token,
                 candidate,
@@ -835,6 +1343,12 @@ class PhraseTranslationService:
                 blind_mode_rescue_note=blind_mode_rescue_note,
                 dictionary_rescue_gloss=dictionary_rescue_gloss,
                 dictionary_rescue_note=dictionary_rescue_note,
+                fnp_profile=fnp_profile,
+                fnp_function=fnp_function,
+                fnp_function_hypotheses=fnp_function_hypotheses,
+                fnp_confidence=fnp_confidence,
+                fnp_warnings=fnp_warnings,
+                head_analysis=head_analysis,
             )
             if (
                 not allow_whole_word
@@ -1111,6 +1625,12 @@ class PhraseTranslationService:
                     dictionary_rescue_note=dictionary_rescue_note,
                     weak_fallback_gloss=weak_fallback_gloss,
                     weak_fallback_note=weak_fallback_note,
+                    fnp_profile={},
+                    fnp_function="unknown",
+                    fnp_function_hypotheses=[],
+                    fnp_confidence=0.0,
+                    fnp_warnings=[],
+                    head_analysis={},
                 )
             ]
         return []
@@ -1124,7 +1644,14 @@ class PhraseTranslationService:
     ) -> list[PhraseParseCandidate]:
         """Beam-search whole-phrase candidate parses from token analyses."""
         beams: list[dict[str, object]] = [
-            {"score": 0.0, "token_choices": [], "relations": []}
+            {
+                "score": 0.0,
+                "token_choices": [],
+                "relations": [],
+                "grammar_score": 0.0,
+                "grammar_evidence": [],
+                "grammar_warnings": [],
+            }
         ]
         beam_width = max(6, top_k * 4)
 
@@ -1135,16 +1662,32 @@ class PhraseTranslationService:
                 previous = chosen[-1] if chosen else None
                 for candidate in token_candidates:
                     relations = list(beam["relations"])
+                    grammar_evidence = list(beam.get("grammar_evidence") or [])
+                    grammar_warnings = list(beam.get("grammar_warnings") or [])
+                    grammar_score = float(beam.get("grammar_score") or 0.0)
                     score = (
                         float(beam["score"])
                         + candidate.score
                         + (candidate.confidence * 5.0)
                         + (candidate.bundle_coherence_score * 2.0)
                     )
+                    singleton_count = sum(1 for morph in candidate.morphs if len(morph) == 1)
+                    if singleton_count > 2:
+                        score -= 0.45 * (singleton_count - 2)
                     if previous is not None:
                         relation = self._relation_between(previous, candidate, index - 1, index)
                         relations.append(relation)
                         score += relation.score
+                        transition = analyze_phrase_fnp_sequence(
+                            [
+                                self._phrase_fnp_for_candidate(previous),
+                                self._phrase_fnp_for_candidate(candidate),
+                            ]
+                        )
+                        grammar_score += transition.grammar_score
+                        score += transition.grammar_score
+                        grammar_evidence.extend(transition.grammar_evidence)
+                        grammar_warnings.extend(transition.grammar_warnings)
                     if candidate.analysis_type == "provisional" and not candidate.definition:
                         score -= 2.0
                     if candidate.blind_mode_whole_word_rescue:
@@ -1154,6 +1697,9 @@ class PhraseTranslationService:
                             "score": score,
                             "token_choices": [*chosen, candidate],
                             "relations": relations,
+                            "grammar_score": grammar_score,
+                            "grammar_evidence": grammar_evidence,
+                            "grammar_warnings": grammar_warnings,
                         }
                     )
             next_beams.sort(key=lambda item: float(item["score"]), reverse=True)
@@ -1170,6 +1716,9 @@ class PhraseTranslationService:
             )
             score -= unresolved * 1.5
             skeleton = self._translation_skeleton(tokens, token_choices, relations)
+            sequence_analysis = analyze_phrase_fnp_sequence(
+                [self._phrase_fnp_for_candidate(candidate) for candidate in token_choices]
+            )
             parses.append(
                 PhraseParseCandidate(
                     rank=idx,
@@ -1177,6 +1726,10 @@ class PhraseTranslationService:
                     token_choices=token_choices,
                     relations=relations,
                     translation_skeleton=skeleton,
+                    phrase_function_sequence=sequence_analysis.phrase_function_sequence,
+                    grammar_score=sequence_analysis.grammar_score,
+                    grammar_evidence=sequence_analysis.grammar_evidence,
+                    grammar_warnings=sequence_analysis.grammar_warnings,
                 )
             )
         parses.sort(key=lambda item: item.score, reverse=True)
@@ -1251,7 +1804,21 @@ class PhraseTranslationService:
         meanings: Sequence[object],
     ) -> str:
         """Infer a coarse syntactic role for a token candidate."""
+        analysis_type = str(candidate.get("analysis_type") or "")
         dictionary_entry = self.word_service.candidate_finder.dictionary.get(token.lower())
+        if dictionary_entry is not None and analysis_type == "dictionary_exact":
+            pos = dictionary_entry.get("pos")
+            normalized = self._normalize_role_from_pos(pos)
+            if normalized is not None:
+                return normalized
+
+        fnp_role = role_hint_from_fnp(
+            str(candidate.get("inferred_word_function") or ""),
+            _safe_number(candidate.get("fnp_confidence"), default=0.0),
+        )
+        if fnp_role is not None:
+            return fnp_role
+
         if dictionary_entry is not None:
             pos = dictionary_entry.get("pos")
             normalized = self._normalize_role_from_pos(pos)
@@ -1294,7 +1861,6 @@ class PhraseTranslationService:
             return "relational"
         if any(marker in definition for marker in ("-like", "able ", "ing ", "ed ")):
             return "modifier"
-        analysis_type = str(candidate.get("analysis_type") or "")
         if analysis_type == "dictionary_exact":
             return "noun"
         return "noun"
@@ -1347,10 +1913,28 @@ class PhraseTranslationService:
 
     @staticmethod
     def _candidate_definition(
+        token: str,
         candidate: Mapping[str, object],
         meanings: Sequence[object],
         bundle: Mapping[str, object],
     ) -> str | None:
+        quantity_gloss = PhraseTranslationService._candidate_numeric_quantity_gloss(
+            token,
+            candidate,
+            meanings,
+        )
+        if quantity_gloss is not None:
+            return quantity_gloss
+        exact_token = PhraseTranslationService._is_exact_token_candidate(token, candidate)
+        bundle_profile = str(bundle.get("bundle_function_profile") or "").strip()
+        if not exact_token and bundle_profile not in _FUNCTION_PROFILE_CANONICAL_GLOSSES:
+            bundled_definition = PhraseTranslationService._candidate_bundle_definition(
+                token,
+                bundle,
+                exact_token=exact_token,
+            )
+            if bundled_definition is not None:
+                return bundled_definition
         for meaning in meanings:
             if not isinstance(meaning, dict):
                 continue
@@ -1366,7 +1950,13 @@ class PhraseTranslationService:
                     negative_contrast=negative_contrast,
                 )
                 cleaned = PhraseTranslationService._human_facing_definition(
-                    specific or surface_gloss
+                    specific or surface_gloss,
+                    token=token,
+                    exact_token=PhraseTranslationService._is_exact_token_meaning(
+                        token,
+                        candidate,
+                        meaning,
+                    ),
                 )
                 if cleaned is not None:
                     return cleaned
@@ -1378,28 +1968,140 @@ class PhraseTranslationService:
                     negative_contrast=negative_contrast,
                 )
                 cleaned = PhraseTranslationService._human_facing_definition(
-                    specific or definition
+                    specific or definition,
+                    token=token,
+                    exact_token=PhraseTranslationService._is_exact_token_meaning(
+                        token,
+                        candidate,
+                        meaning,
+                    ),
                 )
                 if cleaned is not None:
                     return cleaned
-        bundle_surface = bundle.get("bundle_surface_gloss")
-        if isinstance(bundle_surface, str) and bundle_surface.strip():
-            cleaned_bundle_surface = PhraseTranslationService._human_facing_definition(
-                bundle_surface
-            )
-            if cleaned_bundle_surface is not None:
-                return cleaned_bundle_surface
-        bundle_head = bundle.get("bundle_head_gloss")
-        if isinstance(bundle_head, str) and bundle_head.strip():
-            cleaned_bundle_head = PhraseTranslationService._human_facing_definition(
-                bundle_head
-            )
-            if cleaned_bundle_head is not None:
-                return cleaned_bundle_head
+        bundled_definition = PhraseTranslationService._candidate_bundle_definition(
+            token,
+            bundle,
+            exact_token=exact_token,
+        )
+        if bundled_definition is not None:
+            return bundled_definition
         weak_concatenation = PhraseTranslationService._weak_compositional_gloss(candidate)
         if weak_concatenation is not None:
             return weak_concatenation
         return None
+
+    @staticmethod
+    def _candidate_bundle_definition(
+        token: str,
+        bundle: Mapping[str, object],
+        *,
+        exact_token: bool,
+    ) -> str | None:
+        """Prefer the bundle's selected head when a token has multiple morphs.
+
+        Morph-order fallbacks are useful diagnostics, but phrase translation
+        needs the semantic head of a decomposition. This lets ``A + F + FA`` use
+        ``FA``'s boundedness as the token gloss instead of the first support
+        morph.
+        """
+
+        for key in ("bundle_surface_gloss", "bundle_head_gloss"):
+            value = bundle.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            cleaned = PhraseTranslationService._human_facing_definition(
+                value,
+                token=token,
+                exact_token=exact_token,
+            )
+            if cleaned is not None:
+                return cleaned
+        return None
+
+    @staticmethod
+    def _candidate_numeric_quantity_gloss(
+        token: str,
+        candidate: Mapping[str, object],
+        meanings: Sequence[object],
+    ) -> str | None:
+        """Render one-digit quantity compounds without accepting numeric shortcuts.
+
+        A token like ``ONAZPSAD`` may legitimately read as a one-digit numeral
+        plus a lexical head (``5 swords``). By requiring exactly one singleton
+        numeric morph and a separate non-numeric gloss, this path still rejects
+        ``AF = digits 19`` as a shortcut inside ``AFFA`` and lets ``FA`` carry
+        the human-facing meaning.
+        """
+
+        morphs = candidate.get("morphs")
+        if not isinstance(morphs, Sequence) or isinstance(morphs, (str, bytes)):
+            return None
+        cleaned_morphs = [
+            str(morph).upper()
+            for morph in morphs
+            if isinstance(morph, str) and morph.strip()
+        ]
+        if len(cleaned_morphs) <= 1:
+            return None
+
+        numeric_values: list[tuple[str, str]] = []
+        lexical_heads: list[str] = []
+        for meaning in meanings:
+            if not isinstance(meaning, Mapping):
+                continue
+            morph = str(meaning.get("morph") or "").upper()
+            definitions = meaning.get("definitions")
+            raw_values = [
+                meaning.get("surface_gloss"),
+                meaning.get("definition"),
+                *(
+                    definitions
+                    if isinstance(definitions, list)
+                    else []
+                ),
+            ]
+            numeric_value = next(
+                (
+                    numeric_meta_digits(value)
+                    for value in raw_values
+                    if is_numeric_meta_gloss(value)
+                ),
+                None,
+            )
+            if numeric_value is not None:
+                numeric_values.append((morph, numeric_value))
+                continue
+
+            semantic_core = meaning.get("semantic_core") or meaning.get(
+                "semantic_core_terms"
+            )
+            negative_contrast = meaning.get("negative_contrast")
+            for value in raw_values:
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                specific = specific_gloss_from_definition_and_semantic_core(
+                    semantic_core=semantic_core,
+                    definition=value,
+                    negative_contrast=negative_contrast,
+                )
+                cleaned = PhraseTranslationService._human_facing_definition(
+                    specific or value,
+                    token=token,
+                    exact_token=False,
+                )
+                if cleaned is not None:
+                    lexical_heads.append(cleaned)
+                    break
+
+        if len(numeric_values) != 1 or not lexical_heads:
+            return None
+        numeric_morph, digits = numeric_values[0]
+        if len(digits) != 1 or len(numeric_morph) != 1:
+            return None
+        if sum(1 for morph in cleaned_morphs if len(morph) == 1) != 1:
+            return None
+        head = lexical_heads[-1]
+        return f"{digits} {head}".strip()
 
     @staticmethod
     def _candidate_raw_definition(meanings: Sequence[object]) -> str | None:
@@ -1463,6 +2165,46 @@ class PhraseTranslationService:
         return "unknown"
 
     @staticmethod
+    def _candidate_fnp_profile(candidate: Mapping[str, object]) -> dict[str, float]:
+        """Normalize word-level FNP axes for phrase-token payloads."""
+
+        raw_profile = candidate.get("candidate_fnp_profile")
+        if not isinstance(raw_profile, Mapping):
+            return {}
+        profile: dict[str, float] = {}
+        for key in ("nounness", "modifier", "verbness"):
+            if key in raw_profile:
+                profile[key] = _safe_number(raw_profile.get(key), default=0.0)
+        return profile
+
+    @staticmethod
+    def _candidate_fnp_hypotheses(
+        candidate: Mapping[str, object],
+    ) -> list[dict[str, object]]:
+        """Normalize ranked FNP hypotheses from a word candidate."""
+
+        raw_hypotheses = candidate.get("candidate_function_hypotheses")
+        if not isinstance(raw_hypotheses, Sequence) or isinstance(
+            raw_hypotheses,
+            (str, bytes),
+        ):
+            return []
+        normalized: list[dict[str, object]] = []
+        for hypothesis in raw_hypotheses:
+            if not isinstance(hypothesis, Mapping):
+                continue
+            label = str(hypothesis.get("label") or "").strip()
+            if not label:
+                continue
+            normalized.append(
+                {
+                    "label": label,
+                    "score": _safe_number(hypothesis.get("score"), default=0.0),
+                }
+            )
+        return normalized
+
+    @staticmethod
     def _candidate_definition_trace(meanings: Sequence[object]) -> dict[str, object]:
         for meaning in meanings:
             if not isinstance(meaning, Mapping):
@@ -1477,6 +2219,7 @@ class PhraseTranslationService:
         definition: str | None,
         *,
         token: str | None = None,
+        exact_token: bool = False,
     ) -> str | None:
         """Filter raw diagnostic residue out of phrase-facing token glosses.
 
@@ -1487,6 +2230,10 @@ class PhraseTranslationService:
         """
         cleaned = sanitize_human_gloss(definition, token=token)
         if cleaned is None:
+            return None
+        if is_numeric_meta_gloss(cleaned):
+            if exact_token and numeric_meta_gloss_matches_token(cleaned, token=token):
+                return cleaned
             return None
         if PhraseTranslationService._is_phrase_meta_gloss(cleaned):
             return None
@@ -1505,14 +2252,7 @@ class PhraseTranslationService:
         lowered = " ".join(definition.lower().split())
         if is_meta_linguistic_gloss(lowered):
             return True
-        numeric_markers = (
-            "enochian word for",
-            "digits ",
-            "number ",
-            "numeral ",
-            "letter ",
-        )
-        return any(marker in lowered for marker in numeric_markers)
+        return is_numeric_meta_gloss(lowered)
 
     @staticmethod
     def _human_facing_candidate_gloss(candidate: PhraseTokenCandidate) -> str | None:
@@ -1526,7 +2266,11 @@ class PhraseTranslationService:
             candidate.weak_fallback_gloss,
             *candidate.alternates,
         ):
-            cleaned = PhraseTranslationService._human_facing_definition(value)
+            cleaned = PhraseTranslationService._human_facing_definition(
+                value,
+                token=candidate.token,
+                exact_token=PhraseTranslationService._is_exact_phrase_candidate(candidate),
+            )
             if cleaned is not None:
                 return cleaned
         for entry in candidate.semantic_bundle:
@@ -1542,11 +2286,56 @@ class PhraseTranslationService:
                 or (
                     str(entry.get("surface_gloss") or entry.get("head_gloss") or "").strip()
                     or None
-                )
+                ),
+                token=candidate.token,
+                exact_token=PhraseTranslationService._is_exact_phrase_candidate(candidate),
             )
             if cleaned is not None:
                 return cleaned
         return None
+
+    @staticmethod
+    def _is_exact_token_candidate(
+        token: str,
+        candidate: Mapping[str, object],
+    ) -> bool:
+        """Return whether a serialized candidate is an exact whole-token read.
+
+        Numeric dictionary diagnostics are safe to display only when the chosen
+        evidence describes the complete source token, not a submorph inside a
+        larger decomposition. This predicate keeps that distinction local to
+        phrase-facing cleanup.
+        """
+
+        normalized_token = token.upper()
+        morphs = candidate.get("morphs")
+        if not isinstance(morphs, Sequence) or isinstance(morphs, (str, bytes)):
+            return False
+        cleaned_morphs = [
+            str(morph).upper()
+            for morph in morphs
+            if isinstance(morph, str) and morph.strip()
+        ]
+        return cleaned_morphs == [normalized_token]
+
+    @staticmethod
+    def _is_exact_token_meaning(
+        token: str,
+        candidate: Mapping[str, object],
+        meaning: Mapping[str, object],
+    ) -> bool:
+        """Return whether one meaning row belongs to an exact-token candidate."""
+
+        if not PhraseTranslationService._is_exact_token_candidate(token, candidate):
+            return False
+        morph = str(meaning.get("morph") or "").upper()
+        return morph == token.upper()
+
+    @staticmethod
+    def _is_exact_phrase_candidate(candidate: PhraseTokenCandidate) -> bool:
+        """Return whether a phrase candidate represents one whole token."""
+
+        return [morph.upper() for morph in candidate.morphs] == [candidate.token.upper()]
 
     def _annotate_chosen_parse_traces(
         self,
@@ -1897,15 +2686,21 @@ class PhraseTranslationService:
                 return "in her"
             return "her"
 
+        if human_facing is not None:
+            return human_facing
         preferred = (
             candidate.bundle_surface_gloss
             or candidate.bundle_head_gloss
             or candidate.definition
         )
         if isinstance(preferred, str) and preferred.strip():
-            return preferred.strip()
-        if human_facing is not None:
-            return human_facing
+            cleaned_preferred = PhraseTranslationService._human_facing_definition(
+                preferred,
+                token=token,
+                exact_token=PhraseTranslationService._is_exact_phrase_candidate(candidate),
+            )
+            if cleaned_preferred is not None:
+                return cleaned_preferred
         raise RuntimeError(
             f"Phrase token {token.upper()} reached clause rendering without a grounded gloss."
         )
@@ -1950,6 +2745,18 @@ class PhraseTranslationService:
             return 0.0
         return sum(candidate.confidence for candidate in parse.token_choices) / float(
             len(parse.token_choices)
+        )
+
+    @staticmethod
+    def _phrase_fnp_for_candidate(candidate: PhraseTokenCandidate) -> PhraseFNPAnalysis:
+        """Return the compact FNP token summary used by phrase grammar scoring."""
+
+        return phrase_fnp_analysis(
+            token=candidate.token,
+            label=candidate.fnp_function,
+            confidence=candidate.fnp_confidence,
+            profile=candidate.fnp_profile,
+            warnings=candidate.fnp_warnings,
         )
 
     def _apply_unknown_token_context_refinement(
@@ -2198,7 +3005,7 @@ class PhraseTranslationService:
                     "token": candidate.token,
                     "selected_source": candidate.selected_source,
                     "definition": candidate.definition,
-                    "surface_gloss": trace.get("surface_gloss") or candidate.definition,
+                    "surface_gloss": candidate.definition or trace.get("surface_gloss"),
                     "bundle_surface_gloss": candidate.bundle_surface_gloss,
                     "bundle_head_gloss": candidate.bundle_head_gloss,
                     "bundle_function_profile": candidate.bundle_function_profile,
@@ -2213,6 +3020,12 @@ class PhraseTranslationService:
                     "alternates": list(candidate.alternates[:3]),
                     "analysis_type": candidate.analysis_type,
                     "role_hint": candidate.role_hint,
+                    "fnp_profile": dict(candidate.fnp_profile),
+                    "fnp_function": candidate.fnp_function,
+                    "fnp_function_hypotheses": list(candidate.fnp_function_hypotheses),
+                    "fnp_confidence": candidate.fnp_confidence,
+                    "fnp_warnings": list(candidate.fnp_warnings),
+                    "head_analysis": dict(candidate.head_analysis),
                 }
             )
         return {
@@ -2220,6 +3033,10 @@ class PhraseTranslationService:
             "translation_skeleton": chosen_parse.translation_skeleton,
             "token_choices": token_choices,
             "relations": [asdict(relation) for relation in chosen_parse.relations],
+            "phrase_function_sequence": list(chosen_parse.phrase_function_sequence),
+            "grammar_score": chosen_parse.grammar_score,
+            "grammar_evidence": list(chosen_parse.grammar_evidence),
+            "grammar_warnings": list(chosen_parse.grammar_warnings),
             "score": chosen_parse.score,
         }
 

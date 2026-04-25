@@ -30,6 +30,11 @@ _META_LINGUISTIC_MARKERS = (
     "reference",
     "subordinate clause",
 )
+_NUMERIC_META_GLOSS_RE = re.compile(
+    r"\b(?:enochian\s+word\s+for\s+the\s+)?"
+    r"(?:digits?|numbers?|numerals?)\s*['\"]?([0-9]+)['\"]?",
+    re.IGNORECASE,
+)
 _DESCRIPTOR_PREFIXES = {
     "physical",
     "terrestrial",
@@ -178,6 +183,66 @@ def is_meta_linguistic_gloss(text: object) -> bool:
     return normalized.startswith(("a root ", "the root ", "root denoting "))
 
 
+def numeric_meta_digit_count(text: object) -> int | None:
+    """Return the digit-count claim embedded in a numeric dictionary gloss.
+
+    Translation uses dictionary number entries as diagnostics, but phrase
+    rendering should only display them for exact numeric words. Centralizing the
+    count extraction lets candidate selection and renderer fallbacks apply the
+    same "digit count must match token length" rule without duplicating regexes.
+    """
+
+    if not isinstance(text, str):
+        return None
+    match = _NUMERIC_META_GLOSS_RE.search(" ".join(text.strip().split()))
+    if match is None:
+        return None
+    digits = match.group(1)
+    return len(digits) if digits else None
+
+
+def numeric_meta_digits(text: object) -> str | None:
+    """Return the digit string embedded in a numeric dictionary gloss.
+
+    Most numeric meta glosses should stay diagnostic-only, but quantity
+    compositions such as a one-digit numeral plus a noun need the value itself
+    rather than the dictionary's explanatory wrapper.
+    """
+
+    if not isinstance(text, str):
+        return None
+    match = _NUMERIC_META_GLOSS_RE.search(" ".join(text.strip().split()))
+    if match is None:
+        return None
+    digits = match.group(1)
+    return digits if digits else None
+
+
+def is_numeric_meta_gloss(text: object) -> bool:
+    """Return whether ``text`` is a numeric dictionary diagnostic gloss.
+
+    Number entries such as ``the Enochian word for the digits 19`` are useful
+    when the whole token is genuinely a number, but they are not lexical meaning
+    for a submorph inside a larger phrase token like AFFA.
+    """
+
+    return numeric_meta_digit_count(text) is not None
+
+
+def numeric_meta_gloss_matches_token(text: object, *, token: str | None) -> bool:
+    """Return whether a numeric meta gloss can describe this exact token.
+
+    Enochian number glosses are only human-displayable when the number of
+    digits equals the source token length. Callers still decide whether the
+    gloss is attached to the exact whole token; this helper enforces the stable
+    length rule.
+    """
+
+    count = numeric_meta_digit_count(text)
+    normalized = (token or "").strip()
+    return count is not None and bool(normalized) and count == len(normalized)
+
+
 def clean_lexical_gloss(text: object, *, token: str | None = None) -> str | None:
     """Extract a lexical gloss from verbose definition prose.
 
@@ -189,6 +254,8 @@ def clean_lexical_gloss(text: object, *, token: str | None = None) -> str | None
 
     sanitized = sanitize_human_gloss(text, token=token)
     if sanitized is None:
+        return None
+    if is_numeric_meta_gloss(sanitized):
         return None
 
     normalized = re.sub(r"(?is)\busage:\s*`[^`]*`", "", sanitized).strip()
@@ -229,6 +296,8 @@ def clean_lexical_gloss(text: object, *, token: str | None = None) -> str | None
         trimmed = trimmed[3:].strip()
 
     if not trimmed:
+        return None
+    if is_numeric_meta_gloss(trimmed):
         return None
     if is_meta_linguistic_gloss(trimmed):
         return None
@@ -609,6 +678,8 @@ def _normalize_term(value: object) -> str | None:
     cleaned = re.sub(r"\s+", " ", value.strip().strip("\"'`")).strip(" ,;-")
     cleaned = re.sub(r"\s*\[[^\]]+\]", "", cleaned).strip(" ,;-")
     if not cleaned:
+        return None
+    if is_numeric_meta_gloss(cleaned):
         return None
     if is_meta_linguistic_gloss(cleaned):
         return None

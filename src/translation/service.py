@@ -7,7 +7,7 @@ import math
 import numbers
 from pathlib import Path
 from types import TracebackType
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TypeVar
 
 import numpy as np
@@ -34,6 +34,12 @@ from .decomposition import (
     enumerate_attested_segmentations_with_diagnostics,
     _normalize_beam_scores,
 )
+from .fnp import (
+    CandidateFNPAnalysis,
+    RootFNPProfile,
+    analyze_candidate_fnp,
+    candidate_analysis_payload,
+)
 from .llm_synthesis import (
     ConsensusSynthesisResult,
     SynthesisResult,
@@ -47,6 +53,8 @@ from .placeholder_glosses import (
     candidate_has_placeholder_gloss,
     candidate_is_placeholder_anchor,
     candidate_is_residual_placeholder_anchor,
+    is_numeric_meta_gloss,
+    numeric_meta_gloss_matches_token,
 )
 from .repository import (
     ClusterRecord,
@@ -341,6 +349,7 @@ class InterpretationService:
 class SingleWordTranslationService:
     """Single-word translation pipeline with optional LLM synthesis (Tasks 4.1/4.2)."""
 
+    FNP_DECISION_WEIGHT = 0.08
     BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN = 4
     DECISION_SEMANTIC_WEIGHT = 0.22
     DECISION_ATTESTATION_WEIGHT = 0.14
@@ -659,9 +668,10 @@ class SingleWordTranslationService:
 
             # Fetch accepted definition counts for all possible substrings
             # This is used to penalize ambiguous morphs (many definitions) during beam search
-            all_substrings = self._substring_candidates(
+            all_substrings = set(self._substring_candidates(
                 normalized, include_singletons=True
-            )
+            ))
+            all_substrings.add(normalized)
             definition_counts: dict[str, int] = {}
             if evidence_mode != self.EvidenceMode.RESIDUALS_ONLY:
                 definition_counts = self.repository.fetch_accepted_definition_counts(
@@ -686,6 +696,10 @@ class SingleWordTranslationService:
 
             evidence.definition_counts = definition_counts
             evidence.definition_glosses = definition_glosses
+            root_fnp_profiles = self._fetch_root_fnp_profiles(
+                all_substrings,
+                variants=active_variants,
+            )
             exact_candidates, blind_suppression_notes = self._collect_exact_word_candidates(
                 normalized,
                 evidence,
@@ -693,6 +707,11 @@ class SingleWordTranslationService:
             )
             for candidate in exact_candidates:
                 self._attach_candidate_bundle_metadata(candidate)
+                self._attach_candidate_fnp_metadata(
+                    candidate,
+                    evidence=evidence,
+                    root_fnp_profiles=root_fnp_profiles,
+                )
 
             attested_pieces = _collect_attested_pieces(
                 evidence, evidence_mode=evidence_mode.value
@@ -747,6 +766,49 @@ class SingleWordTranslationService:
                         evidence_mode=evidence_mode.value,
                     )
                 )
+                if self._has_numeric_meta_shortcut_decomposition(
+                    decompositions,
+                    evidence=evidence,
+                    word=normalized,
+                ):
+                    numeric_segmentations, numeric_enum_diag = (
+                        enumerate_attested_segmentations_with_diagnostics(
+                            normalized,
+                            attested_pieces,
+                            max_partial_per_index=DEFAULT_MAX_PARTIAL_PER_INDEX,
+                            max_full_segmentations=DEFAULT_MAX_FULL_SEGMENTATIONS,
+                            min_piece_len=1,
+                        )
+                    )
+                    if not allow_whole_word and len(normalized) > 1:
+                        numeric_segmentations = [
+                            segmentation
+                            for segmentation in numeric_segmentations
+                            if not (
+                                len(segmentation) == 1
+                                and segmentation[0].upper() == normalized
+                            )
+                        ]
+                    expanded = build_decompositions_from_segmentations(
+                        normalized,
+                        numeric_segmentations,
+                        candidate_finder=self.candidate_finder,
+                        evidence=evidence,
+                        evidence_mode=evidence_mode.value,
+                    )
+                    if expanded:
+                        decompositions = self._merge_decompositions(
+                            decompositions,
+                            expanded,
+                        )
+                    diagnostics["numeric_meta_expansion"] = {
+                        "enabled": True,
+                        "enumerated_full_count": numeric_enum_diag.get(
+                            "enumerated_full_count"
+                        ),
+                        "returned_count": len(numeric_segmentations),
+                        "merged_decomposition_count": len(decompositions),
+                    }
             else:
                 max_partial = DEFAULT_MAX_PARTIAL_PER_INDEX
                 max_full = DEFAULT_MAX_FULL_SEGMENTATIONS
@@ -968,6 +1030,7 @@ class SingleWordTranslationService:
                 top_k=top_k,
                 weight_enabled=weight_enabled,
                 allow_whole_word=allow_whole_word,
+                root_fnp_profiles=root_fnp_profiles,
             )
             blind_full_cover_candidates = [
                 candidate
@@ -1032,6 +1095,7 @@ class SingleWordTranslationService:
                         top_k=top_k,
                         weight_enabled=weight_enabled,
                         allow_whole_word=allow_whole_word,
+                        root_fnp_profiles=root_fnp_profiles,
                     )
                     blind_full_cover_candidates = [
                         candidate
@@ -1100,6 +1164,7 @@ class SingleWordTranslationService:
                         top_k=top_k,
                         weight_enabled=weight_enabled,
                         allow_whole_word=allow_whole_word,
+                        root_fnp_profiles=root_fnp_profiles,
                     )
                     blind_full_cover_candidates = [
                         candidate
@@ -1118,6 +1183,11 @@ class SingleWordTranslationService:
             )
             for candidate in provisional_candidates:
                 self._attach_candidate_bundle_metadata(candidate)
+                self._attach_candidate_fnp_metadata(
+                    candidate,
+                    evidence=evidence,
+                    root_fnp_profiles=root_fnp_profiles,
+                )
             exact_candidates, provisional_candidates, decomposition_priority_notes = (
                 self._apply_blind_decomposition_priority(
                     word=normalized,
@@ -1154,6 +1224,12 @@ class SingleWordTranslationService:
                 provisional_candidates,
                 top_k=top_k,
             )
+            for candidate in candidate_pool:
+                self._attach_candidate_fnp_metadata(
+                    candidate,
+                    evidence=evidence,
+                    root_fnp_profiles=root_fnp_profiles,
+                )
 
             llm_enabled = self.llm_enabled if llm is None else bool(llm)
             llm_progress = self._build_llm_progress_plan(
@@ -1232,6 +1308,7 @@ class SingleWordTranslationService:
                         "fallback_mode": fallback_mode,
                         "fallback_min_coverage_ratio": fallback_min_coverage,
                     },
+                    "fnp_profile_count": len(root_fnp_profiles),
                 },
             }
         finally:
@@ -1759,6 +1836,110 @@ class SingleWordTranslationService:
                 trace["blind_mode_rescue_note"] = blind_mode_rescue_note
             meaning["definition_trace"] = trace
 
+    def _fetch_root_fnp_profiles(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None,
+    ) -> dict[str, RootFNPProfile]:
+        """Read root-level FNP profiles when the repository supports them.
+
+        FNP is an optional structural prior over existing evidence. This helper
+        keeps the word pipeline compatible with tests and older repositories
+        while using the richer SQLite views whenever they are present.
+        """
+
+        fetch_profiles = getattr(self.repository, "fetch_root_fnp_profiles", None)
+        if not callable(fetch_profiles):
+            return {}
+        try:
+            return dict(fetch_profiles(morphs, variants=variants))
+        except Exception:
+            return {}
+
+    def _attach_candidate_fnp_metadata(
+        self,
+        candidate: dict[str, object],
+        *,
+        evidence: WordEvidence,
+        root_fnp_profiles: Mapping[str, RootFNPProfile],
+    ) -> None:
+        """Attach deterministic FNP analysis to a serialized word candidate.
+
+        Exact, provisional, and compositional candidates all share the same
+        public payload shape. This post-processing step lets non-compositional
+        candidates receive FNP debug fields without changing how they were
+        discovered or scored.
+        """
+
+        if candidate.get("candidate_fnp_profile") is not None:
+            return
+        if not root_fnp_profiles:
+            return
+        morphs_raw = candidate.get("morphs")
+        morphs = [
+            str(morph).upper()
+            for morph in morphs_raw
+            if isinstance(morph, str) and morph.strip()
+        ] if isinstance(morphs_raw, Sequence) and not isinstance(morphs_raw, (str, bytes)) else []
+        if not morphs:
+            return
+        if not any(morph in root_fnp_profiles for morph in morphs):
+            return
+        analysis = analyze_candidate_fnp(
+            word=evidence.word,
+            morphs=morphs,
+            root_profiles=root_fnp_profiles,
+            morph_support=self._candidate_support_by_morph(candidate),
+            meaning_quality=self._candidate_meaning_quality_by_morph(candidate),
+        )
+        candidate.update(candidate_analysis_payload(analysis))
+
+    @staticmethod
+    def _candidate_support_by_morph(
+        candidate: Mapping[str, object],
+    ) -> dict[str, str]:
+        """Collect per-morph provenance labels already carried by a candidate."""
+
+        support: dict[str, str] = {}
+        meanings = candidate.get("meanings")
+        if not isinstance(meanings, Sequence) or isinstance(meanings, (str, bytes)):
+            return support
+        for meaning in meanings:
+            if not isinstance(meaning, Mapping):
+                continue
+            morph = str(meaning.get("morph") or "").upper()
+            provenance = str(meaning.get("provenance") or "").strip()
+            if morph and provenance:
+                support[morph] = provenance
+        return support
+
+    @staticmethod
+    def _candidate_meaning_quality_by_morph(
+        candidate: Mapping[str, object],
+    ) -> dict[str, float]:
+        """Collect selected-definition quality values for FNP head analysis."""
+
+        qualities: dict[str, float] = {}
+        meanings = candidate.get("meanings")
+        if not isinstance(meanings, Sequence) or isinstance(meanings, (str, bytes)):
+            return qualities
+        for meaning in meanings:
+            if not isinstance(meaning, Mapping):
+                continue
+            morph = str(meaning.get("morph") or "").upper()
+            if not morph:
+                continue
+            trace = meaning.get("definition_trace")
+            if isinstance(trace, Mapping):
+                selected_quality = trace.get("selected_quality")
+                if isinstance(selected_quality, numbers.Real):
+                    qualities[morph] = float(selected_quality)
+                    continue
+            anchor_strength = meaning.get("anchor_strength")
+            if isinstance(anchor_strength, numbers.Real):
+                qualities[morph] = float(anchor_strength)
+
     def _select_compositional_candidates(
         self,
         filtered: Sequence[Decomposition],
@@ -1769,6 +1950,7 @@ class SingleWordTranslationService:
         top_k: int,
         weight_enabled: bool,
         allow_whole_word: bool,
+        root_fnp_profiles: Mapping[str, RootFNPProfile] | None = None,
     ) -> list[dict[str, object]]:
         """Score decompositions via an explicit context-weighted decision function.
 
@@ -1879,6 +2061,7 @@ class SingleWordTranslationService:
         }
 
         decision_rows: list[dict[str, object]] = []
+        active_fnp_profiles = dict(root_fnp_profiles or {})
         for decomp, legacy_score in ranked:
             morph_key = tuple(decomp.morphs)
             base_component = float(
@@ -1898,10 +2081,19 @@ class SingleWordTranslationService:
             singleton_burden_component = (
                 self.DECISION_SINGLETON_BURDEN_WEIGHT * singleton_burden_raw
             )
+            fnp_analysis = analyze_candidate_fnp(
+                word=evidence.word,
+                morphs=decomp.morphs,
+                root_profiles=active_fnp_profiles,
+                morph_support=decomp.morph_support,
+            )
+            fnp_raw = float(fnp_analysis.fnp_raw)
+            fnp_component = self.FNP_DECISION_WEIGHT * fnp_raw
             decision_score = (
                 base_component
                 + semantic_component
                 + attestation_component
+                + fnp_component
                 - singleton_burden_component
             )
             decision_rows.append(
@@ -1914,6 +2106,12 @@ class SingleWordTranslationService:
                     "semantic_component": semantic_component,
                     "attestation_raw": attestation_raw,
                     "attestation_component": attestation_component,
+                    "fnp_raw": fnp_raw,
+                    "fnp_component": fnp_component,
+                    "attachment_fit_score": fnp_analysis.attachment_fit_score,
+                    "local_fnp_score": fnp_analysis.local_fnp_score,
+                    "uncertainty_penalty": fnp_analysis.uncertainty_penalty,
+                    "candidate_fnp_analysis": fnp_analysis,
                     "singleton_burden_raw": singleton_burden_raw,
                     "singleton_burden_component": singleton_burden_component,
                     "decision_score": decision_score,
@@ -1938,6 +2136,7 @@ class SingleWordTranslationService:
         diagnostics["decision_function"] = {
             "semantic_weight": self.DECISION_SEMANTIC_WEIGHT,
             "attestation_weight": self.DECISION_ATTESTATION_WEIGHT,
+            "fnp_weight": self.FNP_DECISION_WEIGHT,
             "singleton_burden_weight": self.DECISION_SINGLETON_BURDEN_WEIGHT,
             "fewer_morphs_tie_margin": self.DECISION_FEWER_MORPHS_TIE_MARGIN,
             "singleton_clear_win_margin": self.DECISION_SINGLETON_CLEAR_WIN_MARGIN,
@@ -2202,6 +2401,11 @@ class SingleWordTranslationService:
             "semantic_component": float(row.get("semantic_component") or 0.0),
             "attestation_raw": float(row.get("attestation_raw") or 0.0),
             "attestation_component": float(row.get("attestation_component") or 0.0),
+            "fnp_raw": float(row.get("fnp_raw") or 0.0),
+            "fnp_component": float(row.get("fnp_component") or 0.0),
+            "attachment_fit_score": float(row.get("attachment_fit_score") or 0.0),
+            "local_fnp_score": float(row.get("local_fnp_score") or 0.0),
+            "uncertainty_penalty": float(row.get("uncertainty_penalty") or 0.0),
             "singleton_burden_raw": float(row.get("singleton_burden_raw") or 0.0),
             "singleton_burden_component": float(
                 row.get("singleton_burden_component") or 0.0
@@ -2252,6 +2456,9 @@ class SingleWordTranslationService:
             if row is None:
                 continue
             candidate["decision_trace"] = self._serialize_decision_row(row)
+            analysis = row.get("candidate_fnp_analysis")
+            if isinstance(analysis, CandidateFNPAnalysis):
+                candidate.update(candidate_analysis_payload(analysis))
 
     def _enumerate_attested_full_cover_decompositions(
         self,
@@ -2718,6 +2925,67 @@ class SingleWordTranslationService:
                 candidates.add(word_upper[start:end])
         # Sort by length descending (prefer longer morphs), then alphabetically
         return sorted(candidates, key=lambda s: (-len(s), s))
+
+    @staticmethod
+    def _has_numeric_meta_shortcut_decomposition(
+        decompositions: Sequence[Decomposition],
+        *,
+        evidence: WordEvidence,
+        word: str,
+    ) -> bool:
+        """Return whether beam search accepted a numeric dictionary shortcut.
+
+        Beam search starts with longer chunks, which is usually sensible but
+        wrong for entries such as ``AF = digits 19`` inside ``AFFA``. Detecting
+        that case lets the service add singleton-aware attested segmentations
+        so smaller semantic pieces can compete before hard filtering and final
+        ranking.
+        """
+
+        target = word.upper()
+        for decomp in decompositions:
+            for morph in decomp.morphs:
+                if SingleWordTranslationService._is_numeric_meta_shortcut_morph(
+                    morph,
+                    evidence=evidence,
+                    target=target,
+                    morph_count=len(decomp.morphs),
+                ):
+                    return True
+        return False
+
+    @staticmethod
+    def _is_numeric_meta_shortcut_morph(
+        morph: str,
+        *,
+        evidence: WordEvidence,
+        target: str,
+        morph_count: int,
+    ) -> bool:
+        """Identify multi-letter numeric morphs that should decompose further."""
+
+        normalized = (morph or "").upper()
+        if len(normalized) <= 1:
+            return False
+        entry = evidence.dictionary_morphs.get(normalized)
+        if entry is None:
+            return False
+        definitions = [
+            value
+            for value in [entry.definition, *entry.senses]
+            if isinstance(value, str) and value.strip()
+        ]
+        numeric_definition = next(
+            (definition for definition in definitions if is_numeric_meta_gloss(definition)),
+            None,
+        )
+        if numeric_definition is None:
+            return False
+        return not (
+            morph_count == 1
+            and normalized == target
+            and numeric_meta_gloss_matches_token(numeric_definition, token=target)
+        )
 
     @staticmethod
     def _merge_decompositions(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+import importlib
 
 import numpy as np
 
@@ -25,6 +26,11 @@ sentence_module = sys.modules.setdefault(
     "sentence_transformers",
     types.ModuleType("sentence_transformers"),
 )
+sentence_module.util = getattr(  # type: ignore[attr-defined]
+    sentence_module,
+    "util",
+    types.SimpleNamespace(cos_sim=lambda *_args, **_kwargs: [[1.0]]),
+)
 
 
 class _DummySentenceTransformer:  # pragma: no cover - import shim only
@@ -36,7 +42,14 @@ sentence_module.SentenceTransformer = _DummySentenceTransformer  # type: ignore[
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from enochian_lm.root_extraction.utils import embeddings as embeddings_module
+_EMBEDDINGS_MODULE = "enochian_lm.root_extraction.utils.embeddings"
+if (
+    _EMBEDDINGS_MODULE in sys.modules
+    and not hasattr(sys.modules[_EMBEDDINGS_MODULE], "_SENTENCE_EMBED_CACHE")
+):
+    sys.modules.pop(_EMBEDDINGS_MODULE)
+
+embeddings_module = importlib.import_module(_EMBEDDINGS_MODULE)
 
 
 class _BatchEmbedder:

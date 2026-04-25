@@ -85,6 +85,11 @@ def _install_dependency_shims() -> None:
         "sentence_transformers",
         types.ModuleType("sentence_transformers"),
     )
+    sentence_module.util = getattr(  # type: ignore[attr-defined]
+        sentence_module,
+        "util",
+        types.SimpleNamespace(cos_sim=lambda *_args, **_kwargs: [[1.0]]),
+    )
 
     class _DummySentenceTransformer:
         """Return a predictable embedding vector for definition clustering."""
@@ -148,6 +153,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from enochian_lm.common.config import get_config_paths
 from enochian_lm.root_extraction.utils import candidate_finder as root_candidate_finder_module
 from translation.decomposition import Decomposition
+from translation.fnp import (
+    RootFNPObservation,
+    RootFNPProfile,
+    aggregate_root_fnp_profile,
+    analyze_candidate_fnp,
+)
 from translation.llm_synthesis import (
     _build_phrase_bundle_prompt,
     PhraseRenderBundleResult,
@@ -236,6 +247,7 @@ class FakeRepository:
         evidence_by_word: dict[str, WordEvidence],
         support_clusters: dict[str, ClusterRecord] | None = None,
         rejected_morphs: set[str] | None = None,
+        root_fnp_profiles: dict[str, RootFNPProfile] | None = None,
     ) -> None:
         self.variants = ["solo"]
         self._evidence_by_word = {
@@ -247,6 +259,11 @@ class FakeRepository:
             for morph, record in (support_clusters or {}).items()
         }
         self._rejected_morphs = {morph.upper() for morph in (rejected_morphs or set())}
+        self._root_fnp_profiles = {
+            morph.upper(): copy.deepcopy(profile)
+            for morph, profile in (root_fnp_profiles or {}).items()
+        }
+        self.fnp_prewarm_calls: list[set[str]] = []
 
     def close(self) -> None:
         """Mirror the real repository cleanup surface."""
@@ -296,6 +313,19 @@ class FakeRepository:
     ) -> dict[str, list[tuple[str, float | None]]]:
         """Keep definition clustering inert for these orchestration tests."""
         return {}
+
+    def fetch_root_fnp_profiles(self, morphs, variants=None) -> dict[str, RootFNPProfile]:
+        """Return requested deterministic FNP profiles for service integration tests."""
+        requested = {str(morph).upper() for morph in morphs if morph}
+        return {
+            morph: copy.deepcopy(profile)
+            for morph, profile in self._root_fnp_profiles.items()
+            if morph in requested
+        }
+
+    def prewarm_root_fnp_profiles(self, morphs, variants=None) -> None:
+        """Record phrase-service FNP prewarm calls without touching SQLite."""
+        self.fnp_prewarm_calls.append({str(morph).upper() for morph in morphs if morph})
 
     def fasttext_diagnostics(self) -> dict[str, object]:
         """Return empty model diagnostics for stable assertions."""
@@ -407,6 +437,59 @@ def _residual_record(
     )
 
 
+def _fnp_profile(
+    root: str,
+    *,
+    nounness: float,
+    modifier: float,
+    verbness: float,
+    definition: str,
+    confidence: float = 0.9,
+    prefix: float = 0.2,
+    suffix: float = 0.2,
+    free: float = 0.6,
+    observed_prefix_count: int = 0,
+    observed_suffix_count: int = 0,
+    observed_infix_count: int = 0,
+    observed_free_count: int = 1,
+    semantic_core: list[str] | None = None,
+    decoding_guide: str | None = None,
+) -> RootFNPProfile:
+    """Build a compact root FNP profile for service-level tests.
+
+    The production repository aggregates these profiles from SQLite. Tests use
+    this helper to supply the same typed shape without depending on the large
+    debate database.
+    """
+
+    profile = aggregate_root_fnp_profile(
+        root,
+        [
+            RootFNPObservation(
+                root=root,
+                variant="solo",
+                source_cluster_id=1,
+                nounness=nounness,
+                modifier=modifier,
+                verbness=verbness,
+                confidence=confidence,
+                definition=definition,
+                semantic_core_terms=list(semantic_core or [definition]),
+                decoding_guide=decoding_guide,
+                attachment_prefix_likelihood=prefix,
+                attachment_suffix_likelihood=suffix,
+                attachment_free_likelihood=free,
+                observed_prefix_count=observed_prefix_count,
+                observed_suffix_count=observed_suffix_count,
+                observed_infix_count=observed_infix_count,
+                observed_free_count=observed_free_count,
+            )
+        ],
+    )
+    assert profile is not None
+    return profile
+
+
 def _word_candidate(
     definition: str | None,
     *,
@@ -430,6 +513,14 @@ def _word_candidate(
     blind_mode_whole_word_rescue: bool = False,
     blind_mode_rescue_note: str | None = None,
     concatenated_meanings: str | None = None,
+    root_fnp_profiles: dict[str, object] | None = None,
+    candidate_fnp_profile: dict[str, float] | None = None,
+    candidate_function_hypotheses: list[dict[str, object]] | None = None,
+    inferred_word_function: str | None = None,
+    fnp_confidence: float | None = None,
+    head_analysis: dict[str, object] | None = None,
+    fnp_evidence: list[str] | None = None,
+    fnp_warnings: list[str] | None = None,
 ) -> dict[str, object]:
     """Build a translation candidate payload in the service's public schema."""
     surface = morphs or ["TOKEN"]
@@ -472,7 +563,7 @@ def _word_candidate(
                 },
             }
         ]
-    return {
+    candidate: dict[str, object] = {
         "rank": 1,
         "analysis_type": analysis_type,
         "morphs": list(surface),
@@ -489,6 +580,18 @@ def _word_candidate(
         "blind_mode_rescue_note": blind_mode_rescue_note,
         "concatenated_meanings": concatenated_meanings,
     }
+    if candidate_fnp_profile is not None:
+        candidate["root_fnp_profiles"] = dict(root_fnp_profiles or {})
+        candidate["candidate_fnp_profile"] = dict(candidate_fnp_profile)
+        candidate["candidate_function_hypotheses"] = list(
+            candidate_function_hypotheses or []
+        )
+        candidate["inferred_word_function"] = inferred_word_function or "mixed_or_uncertain"
+        candidate["fnp_confidence"] = fnp_confidence if fnp_confidence is not None else 0.0
+        candidate["head_analysis"] = dict(head_analysis or {})
+        candidate["fnp_evidence"] = list(fnp_evidence or [])
+        candidate["fnp_warnings"] = list(fnp_warnings or [])
+    return candidate
 
 
 def _word_result(
@@ -512,6 +615,99 @@ def _word_result(
         "fallback_morphs": list(fallback_morphs or []),
         "diagnostics": {},
     }
+
+
+def _phrase_meaning(
+    morph: str,
+    definition: str,
+    *,
+    provenance: str = "cluster",
+    semantic_core: list[str] | None = None,
+) -> dict[str, object]:
+    """Build a phrase candidate meaning row for focused renderer regressions.
+
+    The phrase-service tests below need precise morph-by-morph payloads without
+    invoking the full decomposition stack. This helper mirrors the public
+    meaning schema enough for bundle selection, numeric suppression, and
+    footnote fallback assertions to exercise the production code paths.
+    """
+
+    terms = list(semantic_core or ([] if provenance == "dictionary" else [definition]))
+    return {
+        "morph": morph,
+        "canonical": morph,
+        "definition": definition,
+        "definitions": [definition],
+        "raw_definition": definition,
+        "provenance": provenance,
+        "anchor_strength": 1.0,
+        "semantic_core": terms,
+        "semantic_core_terms": terms,
+        "negative_contrast": [],
+        "surface_gloss": definition,
+        "surface_gloss_strategy": "cleaned_definition",
+        "definition_trace": {
+            "selected_definition": definition,
+            "raw_selected_definition": definition,
+            "selected_source": provenance,
+            "selected_quality": 1.0,
+            "selected_semantic_core": terms,
+            "selected_negative_contrast": [],
+            "surface_gloss": definition,
+            "surface_gloss_strategy": "cleaned_definition",
+            "runner_ups": [],
+            "suppressed": [],
+            "blind_dictionary_fallback": False,
+            "negative_contrast_penalties": [],
+            "meta_linguistic_rejections": [],
+        },
+    }
+
+
+def _phrase_candidate_for_gloss(
+    token: str,
+    gloss: str,
+    *,
+    morphs: list[str] | None = None,
+    meanings: list[dict[str, object]] | None = None,
+    score: float = 10.0,
+) -> dict[str, object]:
+    """Create a word-service candidate with bundle fields aligned to one gloss.
+
+    These regressions focus on phrase assembly rather than candidate discovery,
+    so this helper supplies the bundle head explicitly when a test needs the
+    phrase layer to choose the semantic focus of a multi-morph token.
+    """
+
+    candidate_meanings = meanings or [_phrase_meaning(token, gloss)]
+    return _word_candidate(
+        gloss,
+        analysis_type="compositional",
+        score=score,
+        confidence=0.82,
+        morphs=morphs or [token],
+        meanings=candidate_meanings,
+        semantic_bundle=[
+            {
+                "morph": str(meaning["morph"]),
+                "surface_gloss": str(meaning["definition"]),
+                "semantic_core_terms": list(meaning.get("semantic_core_terms") or []),
+                "negative_contrast": [],
+                "provenance": str(meaning.get("provenance") or "cluster"),
+                "function_profile": None,
+                "kind": "content",
+                "head_gloss": str(meaning["definition"]),
+                "quality": 1.0,
+                "raw_definition": str(meaning["definition"]),
+            }
+            for meaning in candidate_meanings
+        ],
+        bundle_surface_gloss=gloss,
+        bundle_head_gloss=gloss,
+        bundle_function_profile="content",
+        bundle_coherence_score=0.9,
+        semantic_core=[gloss],
+    )
 
 
 def test_config_prefers_populated_debate_database() -> None:
@@ -593,6 +789,262 @@ def test_fetch_rejected_morphs_uses_nested_rejected_payload(tmp_path: Path) -> N
     repository = InsightsRepository(solo_path=db_path, debate_path=None)
     try:
         assert repository.fetch_rejected_morphs(["PSAD"], variants=["solo"]) == {"PSAD"}
+    finally:
+        repository.close()
+
+
+def test_root_fnp_aggregation_keeps_stable_and_noisy_profiles_distinct() -> None:
+    """Aggregate FNP axes without collapsing mixed roots into hard POS labels."""
+
+    clean = aggregate_root_fnp_profile(
+        "CAOS",
+        [
+            RootFNPObservation(
+                root="CAOS",
+                variant="solo",
+                nounness=0.92,
+                modifier=0.16,
+                verbness=0.08,
+                confidence=0.9,
+                definition="place of governance",
+                semantic_core_terms=["place", "governance"],
+                observed_free_count=3,
+            ),
+            RootFNPObservation(
+                root="CAOS",
+                variant="solo",
+                nounness=0.88,
+                modifier=0.20,
+                verbness=0.11,
+                confidence=0.85,
+                definition="seat",
+                semantic_core_terms=["seat"],
+                observed_free_count=2,
+            ),
+        ],
+    )
+    noisy = aggregate_root_fnp_profile(
+        "D",
+        [
+            RootFNPObservation(
+                root="D",
+                variant="solo",
+                nounness=0.95,
+                modifier=0.05,
+                verbness=0.10,
+                confidence=0.8,
+                definition="thing",
+                observed_prefix_count=4,
+            ),
+            RootFNPObservation(
+                root="D",
+                variant="solo",
+                nounness=0.10,
+                modifier=0.90,
+                verbness=0.10,
+                confidence=0.75,
+                definition="of",
+                observed_suffix_count=5,
+            ),
+            RootFNPObservation(
+                root="D",
+                variant="solo",
+                nounness=0.10,
+                modifier=0.15,
+                verbness=0.92,
+                confidence=0.7,
+                definition="do",
+                observed_infix_count=3,
+            ),
+        ],
+    )
+
+    assert clean is not None
+    assert clean.profile["nounness"] > 0.88
+    assert clean.instability < 0.04
+    assert clean.authority_weight > 0.45
+    axis_total = (
+        clean.profile["nounness"]
+        + clean.profile["modifier"]
+        + clean.profile["verbness"]
+    )
+    assert abs(axis_total - 1.0) > 0.01
+    assert noisy is not None
+    assert noisy.instability > clean.instability
+    assert noisy.ambiguity_score > clean.ambiguity_score
+    assert any("short" in warning.lower() for warning in noisy.warnings)
+
+
+def test_repository_fetch_root_fnp_profiles_batches_accepted_rows_and_examples(
+    tmp_path: Path,
+) -> None:
+    """Build root FNP profiles from accepted SQLite rows plus evidence snippets."""
+
+    db_path = tmp_path / "fnp.sqlite3"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            """
+            CREATE TABLE root_glosses (
+                root TEXT,
+                evaluation TEXT,
+                definition TEXT,
+                semantic_core TEXT,
+                decoding_guide TEXT,
+                pos_bias_nounness REAL,
+                pos_bias_modifier REAL,
+                pos_bias_verbness REAL,
+                attachment_prefix_likelihood REAL,
+                attachment_suffix_likelihood REAL,
+                attachment_free_likelihood REAL,
+                attachment_productivity REAL,
+                confidence_score REAL,
+                source_cluster_id INTEGER
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE root_attachment_profile (
+                root TEXT,
+                observed_prefix_count INTEGER,
+                observed_suffix_count INTEGER,
+                observed_infix_count INTEGER,
+                observed_free_count INTEGER,
+                estimated_profile TEXT,
+                source_cluster_id INTEGER
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE root_evidence_examples (
+                root TEXT,
+                evidence_word TEXT,
+                evidence_definition TEXT,
+                evidence_loc TEXT,
+                role TEXT,
+                effect TEXT,
+                sense_alignment TEXT,
+                confidence REAL,
+                note TEXT,
+                source_cluster_id INTEGER
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO root_glosses
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                "caos",
+                "accepted",
+                "place of governance",
+                json.dumps(["place", "governance"]),
+                "Functions as a stable nominal head.",
+                0.91,
+                0.18,
+                0.08,
+                0.12,
+                0.22,
+                0.86,
+                0.74,
+                0.9,
+                10,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO root_glosses
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                "caos",
+                "rejected",
+                "spurious action",
+                json.dumps(["noise"]),
+                "Should not participate.",
+                0.05,
+                0.05,
+                0.95,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.99,
+                11,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO root_attachment_profile
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+            """,
+            ("caos", 1, 2, 0, 5, "free nominal", 10),
+        )
+        conn.execute(
+            """
+            INSERT INTO root_evidence_examples
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            (
+                "caos",
+                "CAOSG",
+                "seat of governance",
+                "loc-1",
+                "free",
+                "head",
+                "strong",
+                0.88,
+                "nominal context",
+                10,
+            ),
+        )
+    conn.close()
+
+    repository = InsightsRepository(solo_path=db_path, debate_path=None)
+    try:
+        first = repository.fetch_root_fnp_profiles(["CAOS", "missing"], variants=["solo"])
+        second = repository.fetch_root_fnp_profiles(["caos"], variants=["solo"])
+    finally:
+        repository.close()
+
+    assert set(first) == {"CAOS"}
+    profile = first["CAOS"]
+    assert second["CAOS"].profile == profile.profile
+    assert profile.profile["nounness"] > 0.9
+    assert profile.profile["verbness"] < 0.2
+    assert profile.attachment_profile["observed_free_count"] == 5
+    assert any("CAOSG" in example for example in profile.representative_evidence_examples)
+
+
+def test_repository_root_fnp_profiles_fall_back_when_views_are_missing(
+    tmp_path: Path,
+) -> None:
+    """Keep FNP optional for older or minimal SQLite fixtures."""
+
+    db_path = tmp_path / "minimal-fnp.sqlite3"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            """
+            CREATE TABLE root_glosses (
+                root TEXT,
+                evaluation TEXT,
+                definition TEXT
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO root_glosses VALUES (?, ?, ?);",
+            ("CAOS", "accepted", "place"),
+        )
+    conn.close()
+
+    repository = InsightsRepository(solo_path=db_path, debate_path=None)
+    try:
+        assert repository.fetch_root_fnp_profiles(["CAOS"], variants=["solo"]) == {}
     finally:
         repository.close()
 
@@ -1953,6 +2405,83 @@ def test_phrase_translation_context_can_flip_same_token_candidate(tmp_path: Path
     assert verb_middle == ["MIR", "X"]
 
 
+def test_phrase_fnp_grammar_prior_prefers_modifier_to_noun_sequence(
+    tmp_path: Path,
+) -> None:
+    """Use FNP sequence plausibility to choose among close phrase parses."""
+
+    modifier_candidate = _word_candidate(
+        "holy",
+        analysis_type="compositional",
+        score=10.0,
+        confidence=0.76,
+        morphs=["MAD"],
+        candidate_fnp_profile={"nounness": 0.18, "modifier": 0.86, "verbness": 0.08},
+        candidate_function_hypotheses=[
+            {"label": "modifier_operator", "score": 0.82}
+        ],
+        inferred_word_function="modifier_operator",
+        fnp_confidence=0.82,
+        head_analysis={"modifier_roots": ["MAD"], "head_roots": []},
+    )
+    noun_candidate = _word_candidate(
+        "sanctuary",
+        analysis_type="compositional",
+        score=10.0,
+        confidence=0.76,
+        morphs=["MAD"],
+        candidate_fnp_profile={"nounness": 0.82, "modifier": 0.20, "verbness": 0.06},
+        candidate_function_hypotheses=[
+            {"label": "nominal_head_with_modification", "score": 0.78}
+        ],
+        inferred_word_function="nominal_head_with_modification",
+        fnp_confidence=0.78,
+        head_analysis={"head_roots": ["MAD"]},
+    )
+    word_service = FakeWordService(
+        results_by_word={
+            "MAD": _word_result("MAD", modifier_candidate, noun_candidate),
+            "CAF": _word_result(
+                "CAF",
+                _word_candidate(
+                    "law",
+                    analysis_type="dictionary_exact",
+                    score=10.0,
+                    confidence=0.82,
+                    morphs=["CAF"],
+                    candidate_fnp_profile={
+                        "nounness": 0.88,
+                        "modifier": 0.12,
+                        "verbness": 0.10,
+                    },
+                    candidate_function_hypotheses=[
+                        {"label": "nominal_head_with_modification", "score": 0.84}
+                    ],
+                    inferred_word_function="nominal_head_with_modification",
+                    fnp_confidence=0.84,
+                    head_analysis={"head_roots": ["CAF"]},
+                ),
+            ),
+        },
+        dictionary={},
+    )
+    memory = TranslationMemoryRepository(tmp_path / "phrase-fnp-prior.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase("mad caf", top_k=2, llm=False)
+    chosen = result["chosen_parse"]
+    parses = result["parse_candidates"]
+
+    assert chosen["token_choices"][0]["definition"] == "holy"
+    assert chosen["phrase_function_sequence"][0]["label"] == "modifier_like"
+    assert chosen["grammar_score"] > 0.7
+    assert any("modifier-like -> noun-like" in note for note in chosen["grammar_evidence"])
+    assert parses[0]["grammar_score"] > parses[1]["grammar_score"]
+
+
 def test_translate_word_exposes_decision_rows_and_candidate_traces_in_json() -> None:
     """Expose decision-function artifacts for manual decomposition debugging."""
 
@@ -2021,6 +2550,122 @@ def test_translate_word_exposes_decision_rows_and_candidate_traces_in_json() -> 
     )
 
 
+def test_candidate_fnp_analysis_prefers_nominal_head_over_operator_prefix() -> None:
+    """Keep operator-like prefixes from becoming lexical heads by size alone."""
+
+    profiles = {
+        "DS": _fnp_profile(
+            "DS",
+            nounness=0.12,
+            modifier=0.82,
+            verbness=0.08,
+            definition="relative marker",
+            prefix=0.92,
+            suffix=0.05,
+            free=0.10,
+            observed_prefix_count=8,
+            semantic_core=["relative", "marker"],
+        ),
+        "NAZ": _fnp_profile(
+            "NAZ",
+            nounness=0.88,
+            modifier=0.18,
+            verbness=0.10,
+            definition="temple",
+            prefix=0.08,
+            suffix=0.12,
+            free=0.84,
+            observed_free_count=7,
+            semantic_core=["temple"],
+        ),
+    }
+
+    analysis = analyze_candidate_fnp(
+        word="DSNAZ",
+        morphs=["DS", "NAZ"],
+        root_profiles=profiles,
+        morph_support={"DS": "cluster", "NAZ": "cluster"},
+        meaning_quality={"DS": 0.62, "NAZ": 0.94},
+    )
+
+    assert "NAZ" in analysis.head_analysis["head_roots"]
+    assert "DS" in analysis.head_analysis["operator_roots"]
+    assert analysis.inferred_word_function == "nominal_head_with_modification"
+    assert analysis.candidate_fnp_profile["nounness"] > analysis.candidate_fnp_profile["verbness"]
+    assert analysis.fnp_confidence > 0.45
+
+
+def test_translate_word_adds_fnp_payload_and_soft_decision_component() -> None:
+    """Attach FNP diagnostics to word candidates without replacing semantics."""
+
+    evidence = WordEvidence(word="DSNAZ", variants_queried=["solo"])
+    repository = FakeRepository(
+        evidence_by_word={"DSNAZ": evidence},
+        support_clusters={
+            "DS": _cluster_record("DS", "relative marker", cluster_id=901),
+            "NAZ": _cluster_record("NAZ", "temple", cluster_id=902),
+        },
+        root_fnp_profiles={
+            "DS": _fnp_profile(
+                "DS",
+                nounness=0.10,
+                modifier=0.84,
+                verbness=0.08,
+                definition="relative marker",
+                prefix=0.90,
+                free=0.10,
+                observed_prefix_count=6,
+            ),
+            "NAZ": _fnp_profile(
+                "NAZ",
+                nounness=0.90,
+                modifier=0.12,
+                verbness=0.08,
+                definition="temple",
+                free=0.88,
+                observed_free_count=6,
+            ),
+        },
+    )
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine(
+        [
+            Decomposition(
+                morphs=["DS", "NAZ"],
+                canonicals=["DS", "NAZ"],
+                beam_score=1.0,
+                breakdown={
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                    "segments": [],
+                    "uncovered": [],
+                },
+                morph_support={"DS": "cluster", "NAZ": "cluster"},
+            )
+        ]
+    )
+
+    result = service.translate_word(
+        "dsnaz",
+        llm=False,
+        allow_whole_word=False,
+        use_beam_search=True,
+        top_k=1,
+    )
+    candidate = result["candidates"][0]
+
+    assert abs(result["diagnostics"]["decision_function"]["fnp_weight"] - 0.08) < 0.001
+    assert "fnp_component" in candidate["decision_trace"]
+    assert candidate["candidate_fnp_profile"]["nounness"] > 0.5
+    assert candidate["inferred_word_function"] == "nominal_head_with_modification"
+    assert candidate["head_analysis"]["head_roots"] == ["NAZ"]
+    assert "DS" in candidate["head_analysis"]["operator_roots"]
+
+
 def test_phrase_report_verbose_includes_token_decision_table() -> None:
     """Render a compact token decision table alongside the verbose phrase trace."""
 
@@ -2041,6 +2686,9 @@ def test_phrase_report_verbose_includes_token_decision_table() -> None:
                         "role_hint": "verb",
                         "chosen_in_parse": True,
                         "definition_trace": {},
+                        "fnp_function": "predicate_like",
+                        "fnp_confidence": 0.74,
+                        "fnp_warnings": ["mixed predicate/operator evidence"],
                     },
                     {
                         "rank": 2,
@@ -2077,6 +2725,12 @@ def test_phrase_report_verbose_includes_token_decision_table() -> None:
                 },
             }
         ],
+        "chosen_parse": {
+            "relations": [],
+            "grammar_score": 0.81,
+            "grammar_evidence": ["MIRX -> NODB: predicate-like -> argument-like transition is plausible."],
+            "grammar_warnings": ["MIRX remains mixed."],
+        },
         "parse_candidates": [],
         "memory_updates": [],
         "render_warnings": [],
@@ -2088,6 +2742,9 @@ def test_phrase_report_verbose_includes_token_decision_table() -> None:
     assert "Token decision table:" in report
     assert "Winner rationale:" in report
     assert "Runner-up rejection:" in report
+    assert "FNP: predicate_like (0.74)" in report
+    assert "FNP grammar score: 0.81" in report
+    assert "FNP grammar warnings: MIRX remains mixed." in report
 
 
 def test_phrase_translation_known_sentence_uses_clause_like_blind_rendering_in_solo(
@@ -4850,6 +5507,9 @@ def test_phrase_bundle_prompt_requests_grounded_and_poetic_renders() -> None:
     assert "repair awkward fragment chains" in lowered
     assert "reorder aggressively" in lowered
     assert "do not need to differ" in lowered
+    assert "functional-nature profile" in lowered
+    assert "reduce poetic compression" in lowered
+    assert "do not create new fnp claims" in lowered
 
 
 def test_phrase_report_prints_rank1_and_contextual_tracks() -> None:
@@ -5839,6 +6499,251 @@ def test_phrase_translation_no_whole_word_inherits_blind_dictionary_suppression(
         for candidate in micaolz["word_result"]["candidates"]
     )
     assert micaolz["candidates"][0]["definition"] != "mighty"
+
+
+def test_affa_phrase_suppresses_numeric_shortcut_and_focuses_fa(
+    tmp_path: Path,
+) -> None:
+    """Keep ``AF = digits 19`` diagnostic while rendering ``FA`` as boundedness."""
+
+    numeric = "(the Enochian word for the digits 19)"
+    focused_meanings = [
+        _phrase_meaning("A", "being with or in", semantic_core=["being"]),
+        _phrase_meaning("F", "arrival", semantic_core=["arrival"]),
+        _phrase_meaning("FA", "boundedness", semantic_core=["boundedness"]),
+    ]
+    focused_candidate = _phrase_candidate_for_gloss(
+        "AFFA",
+        "boundedness",
+        morphs=["A", "F", "FA"],
+        meanings=focused_meanings,
+        score=12.0,
+    )
+    numeric_shortcut = _phrase_candidate_for_gloss(
+        "AFFA",
+        numeric,
+        morphs=["AF", "FA"],
+        meanings=[
+            _phrase_meaning("AF", numeric, provenance="dictionary"),
+            _phrase_meaning("FA", "boundedness", semantic_core=["boundedness"]),
+        ],
+        score=11.0,
+    )
+    numeric_shortcut["bundle_surface_gloss"] = numeric
+    numeric_shortcut["bundle_head_gloss"] = numeric
+    word_service = FakeWordService(
+        results_by_word={
+            "AFFA": _word_result("AFFA", focused_candidate, numeric_shortcut),
+        },
+    )
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=TranslationMemoryRepository(tmp_path / "affa.sqlite3"),
+    )
+
+    result = service.translate_phrase(
+        "AFFA",
+        top_k=2,
+        llm=False,
+        allow_whole_word=False,
+    )
+
+    assert result["rendered_translation"] == "boundedness"
+    assert result["chosen_parse"]["token_choices"][0]["morphs"] == ["A", "F", "FA"]
+    shortcut_payload = next(
+        candidate
+        for candidate in result["token_analyses"][0]["candidates"]
+        if candidate["morphs"] == ["AF", "FA"]
+    )
+    assert shortcut_payload["definition"] == "boundedness"
+    combined = " ".join(
+        [
+            str(result["rendered_translation"]),
+            str(result["footnoted_translation"]),
+            json.dumps(result["translation_footnotes"]),
+        ]
+    )
+    assert "boundedness" in combined
+    assert "digits 19" not in combined
+
+
+def test_numeric_meta_shortcut_expands_to_singletons_when_supported() -> None:
+    """Let ``A + F + FA`` compete when beam search stops at numeric ``AF``."""
+
+    numeric = "(the Enochian word for the digits 19)"
+    evidence = WordEvidence(
+        word="AFFA",
+        variants_queried=["solo"],
+        direct_clusters=[
+            _cluster_record("A", "being with or in", semantic_core=["being"]),
+            _cluster_record("F", "arrival", semantic_core=["arrival"]),
+            _cluster_record("FA", "boundedness", semantic_core=["boundedness"]),
+        ],
+        dictionary_morphs={
+            "AF": DictionaryMorph("AF", numeric, [numeric]),
+        },
+    )
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=FakeRepository(evidence_by_word={"AFFA": evidence}),
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine(
+        [
+            Decomposition(
+                morphs=["AF", "FA"],
+                canonicals=["AF", "FA"],
+                beam_score=8.0,
+                breakdown={
+                    "segments": [
+                        {"start": 0, "end": 2, "ngram": "AF", "canonical": "AF"},
+                        {"start": 2, "end": 4, "ngram": "FA", "canonical": "FA"},
+                    ],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={"AF": "dictionary", "FA": "cluster"},
+            )
+        ]
+    )
+
+    result = service.translate_word(
+        "AFFA",
+        llm=False,
+        allow_whole_word=False,
+        use_beam_search=True,
+        top_k=3,
+    )
+
+    assert result["diagnostics"]["numeric_meta_expansion"]["enabled"] is True
+    assert result["candidates"][0]["morphs"] == ["A", "F", "FA"]
+    assert result["candidates"][0]["bundle_head_gloss"] == "boundedness"
+
+
+def test_numeric_meta_exact_word_allowed_but_length_mismatch_suppressed(
+    tmp_path: Path,
+) -> None:
+    """Allow exact number words only when digit count equals token length."""
+
+    numeric = "(the Enochian word for the digits 19)"
+
+    exact = PhraseTranslationService._human_facing_definition(
+        numeric,
+        token="AF",
+        exact_token=True,
+    )
+    mismatched = PhraseTranslationService._human_facing_definition(
+        numeric,
+        token="AFFA",
+        exact_token=True,
+    )
+
+    assert exact == numeric
+    assert mismatched is None
+
+    word_service = FakeWordService(
+        results_by_word={
+            "AF": _word_result(
+                "AF",
+                _phrase_candidate_for_gloss(
+                    "AF",
+                    numeric,
+                    morphs=["AF"],
+                    meanings=[
+                        _phrase_meaning("AF", numeric, provenance="dictionary"),
+                    ],
+                ),
+            ),
+        },
+    )
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=TranslationMemoryRepository(tmp_path / "numeric.sqlite3"),
+    )
+
+    result = service.translate_phrase("AF", top_k=1, llm=False)
+
+    assert result["rendered_translation"] == numeric
+
+
+def test_numeric_singleton_can_render_quantity_compound(
+    tmp_path: Path,
+) -> None:
+    """Preserve legitimate one-digit quantity compounds like ``5 swords``."""
+
+    meanings = [
+        _phrase_meaning(
+            "O",
+            "(the Enochian word for the digit 5)",
+            provenance="dictionary",
+        ),
+        _phrase_meaning("NAZPSAD", "swords", semantic_core=["swords"]),
+    ]
+    candidate = _phrase_candidate_for_gloss(
+        "ONAZPSAD",
+        "swords",
+        morphs=["O", "NAZPSAD"],
+        meanings=meanings,
+    )
+    word_service = FakeWordService(
+        results_by_word={"ONAZPSAD": _word_result("ONAZPSAD", candidate)},
+    )
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=TranslationMemoryRepository(tmp_path / "quantity.sqlite3"),
+    )
+
+    result = service.translate_phrase("ONAZPSAD", top_k=1, llm=False)
+
+    assert result["rendered_translation"] == "5 swords"
+    assert "5 swords" in result["footnoted_translation"]
+
+
+def test_multiclause_phrase_translates_clauses_independently(
+    tmp_path: Path,
+) -> None:
+    """Split semicolon/colon/comma clauses before parse search and offset footnotes."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "AL": _word_result("AL", _phrase_candidate_for_gloss("AL", "first")),
+            "BE": _word_result("BE", _phrase_candidate_for_gloss("BE", "second")),
+            "GA": _word_result("GA", _phrase_candidate_for_gloss("GA", "third")),
+            "DE": _word_result("DE", _phrase_candidate_for_gloss("DE", "fourth")),
+        },
+    )
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=TranslationMemoryRepository(tmp_path / "clauses.sqlite3"),
+    )
+
+    result = service.translate_phrase("AL BE, GA DE: AL GA", top_k=1, llm=False)
+
+    assert result["tokens"] == ["AL", "BE", "GA", "DE", "AL", "GA"]
+    assert len(result["clause_translations"]) == 3
+    assert [
+        clause["clause_phrase"]
+        for clause in result["clause_translations"]
+    ] == ["AL BE", "GA DE", "AL GA"]
+    assert [
+        (relation["left_index"], relation["right_index"])
+        for relation in result["chosen_parse"]["relations"]
+    ] == [(0, 1), (2, 3), (4, 5)]
+    assert all(
+        (relation["left_index"], relation["right_index"]) not in {(1, 2), (3, 4)}
+        for relation in result["chosen_parse"]["relations"]
+    )
+    assert [note["index"] for note in result["translation_footnotes"]] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+    ]
+    assert "[^6]" in result["footnoted_translation"]
+    assert result["rendered_translation"] == "first second; third fourth; first third"
 
 
 def test_translation_cli_registers_translate_phrase_command() -> None:

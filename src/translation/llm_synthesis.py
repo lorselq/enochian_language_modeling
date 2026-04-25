@@ -22,6 +22,9 @@ from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 
 from .placeholder_glosses import (
     clean_lexical_gloss,
+    is_numeric_meta_gloss,
+    numeric_meta_digits,
+    numeric_meta_gloss_matches_token,
     specific_gloss_from_definition_and_semantic_core,
     sanitize_human_gloss,
     semantic_core_gloss,
@@ -1232,6 +1235,9 @@ def render_phrase_bundle(
             "Return grounded and poetic plain-English phrase renderings "
             "with token footnotes without "
             "introducing new meaning, relations, or token claims. "
+            "Your rendering must be comprised of sentences, which may be "
+            "comprised of phrases and sub-phrases, but must result in a "
+            "meaningful, if complex, English sentence."
             f"Historical scope: {llm_context}"
         ),
         name="Phrase Render Bundle",
@@ -1447,7 +1453,7 @@ def _build_phrase_bundle_prompt(
             "lay_translation": "<rank-1-only natural English prose reading>",
             "lay_confidence": 0.0,
             "lay_reasoning": "<brief note explaining the rank-1 grounded prose reading>",
-            "poetic_translation": "<rank-1-only more expressive prose reading; may reorder/add connective helper words while staying grounded>",
+            "poetic_translation": "<rank-1-only more expressive prose reading; may reorder/add connective helper words while staying grounded; the translation **must** be one or more readable English sentences, **not** a list of fragments or glossary terms>",
             "poetic_confidence": 0.0,
             "poetic_reasoning": "<brief note explaining the rank-1 poetic choices>",
             "contextual_selected_parse_rank": 1,
@@ -1521,6 +1527,9 @@ def _build_phrase_bundle_prompt(
             f"HISTORICAL CONTEXT: {llm_context}",
             "CONSTRAINTS:",
             "- Stay grounded in supplied token choices, relations, skeletons, semantic cores, and alternates.",
+            "- Treat FNP (Functional-Nature Profile) fields as deterministic structural hints, not as labels to invent or override.",
+            "- When FNP confidence is weak, mixed, or warning-heavy, reduce poetic compression and preserve uncertainty rather than forcing a polished reading.",
+            "- Do not create new FNP claims; only cite or use FNP details present in the payload.",
             "- `lay_translation` MUST use rank-1 parse data only (`rank1_parse_payload`) and must read like normal prose English, never partial gloss fragments.",
             "- `poetic_translation` MUST also use rank-1 parse data only, but can go further stylistically while remaining readable prose.",
             "- `contextual_lay_translation` may select the best coherent option from `contextual_parse_options` (parse ranks 1..3).",
@@ -2286,7 +2295,68 @@ def _compact_lay_gloss(text: object, *, token: str) -> str | None:
     sanitized = sanitize_human_gloss(text, token=token)
     if sanitized is None:
         return None
+    if is_numeric_meta_gloss(sanitized):
+        return None
     return " ".join(sanitized.split()).strip()
+
+
+def _numeric_meta_render_for_choice(
+    text: object,
+    token_choice: Mapping[str, object],
+    token: str,
+) -> str | None:
+    """Render numeric meta glosses only when they are structurally licensed.
+
+    Fallback rendering receives already-scored token choices. This guard keeps
+    multi-letter number diagnostics like ``AF = digits 19`` from leaking into a
+    larger token such as ``AFFA``, while preserving exact whole-number tokens
+    and one-digit quantity constructions such as ``5 swords``.
+    """
+
+    if not is_numeric_meta_gloss(text):
+        return None
+
+    morphs = token_choice.get("morphs")
+    if not isinstance(morphs, Sequence) or isinstance(morphs, (str, bytes)):
+        return None
+    cleaned_morphs = [
+        str(morph).upper()
+        for morph in morphs
+        if isinstance(morph, str) and morph.strip()
+    ]
+    normalized_token = token.upper()
+    if (
+        cleaned_morphs == [normalized_token]
+        and numeric_meta_gloss_matches_token(text, token=token)
+    ):
+        sanitized = sanitize_human_gloss(text, token=token)
+        return " ".join((sanitized or str(text)).split()).strip()
+
+    digits = numeric_meta_digits(text)
+    if (
+        digits is not None
+        and len(digits) == 1
+        and len(cleaned_morphs) > 1
+        and sum(1 for morph in cleaned_morphs if len(morph) == 1) == 1
+        and _token_choice_has_non_numeric_material(token_choice)
+    ):
+        return digits
+    return None
+
+
+def _token_choice_has_non_numeric_material(token_choice: Mapping[str, object]) -> bool:
+    """Return whether a serialized candidate contains a non-number lexical head."""
+
+    semantic_core = token_choice.get("semantic_core")
+    if isinstance(semantic_core, Sequence) and not isinstance(semantic_core, (str, bytes)):
+        for term in semantic_core:
+            if not is_numeric_meta_gloss(term) and _compact_lay_gloss(term, token=""):
+                return True
+    for key in ("definition", "surface_gloss", "bundle_surface_gloss", "bundle_head_gloss"):
+        value = token_choice.get(key)
+        if not is_numeric_meta_gloss(value) and _compact_lay_gloss(value, token=""):
+            return True
+    return False
 
 
 def _normalize_lay_translation(
@@ -2477,8 +2547,11 @@ def _fallback_footnote_explanation(
             if not isinstance(definition, str) or not definition.strip():
                 continue
             source = _format_source_label(str(runner_up.get("source") or "unknown"))
+            compact_runner = _compact_lay_gloss(definition, token=token)
+            if compact_runner is None and is_numeric_meta_gloss(definition):
+                continue
             parts.append(
-                f'Beat nearby {source} alternative "{_compact_lay_gloss(definition, token=token) or definition.strip()}".'
+                f'Beat nearby {source} alternative "{compact_runner or definition.strip()}".'
             )
             break
 
@@ -2517,16 +2590,21 @@ def _preferred_primary_gloss(token_choice: Mapping[str, object], token: str) -> 
     if dictionary_rescue is not None:
         return dictionary_rescue
     primary_candidates = [
+        token_choice.get("definition"),
         trace.get("surface_gloss"),
         token_choice.get("surface_gloss"),
         trace.get("selected_definition"),
-        token_choice.get("definition"),
         token_choice.get("bundle_surface_gloss"),
         token_choice.get("bundle_head_gloss"),
         trace.get("raw_selected_definition"),
         token_choice.get("raw_definition"),
     ]
     for candidate in primary_candidates:
+        if is_numeric_meta_gloss(candidate):
+            numeric_render = _numeric_meta_render_for_choice(candidate, token_choice, token)
+            if numeric_render is not None:
+                return numeric_render
+            continue
         specific = specific_gloss_from_definition_and_semantic_core(
             semantic_core=semantic_core,
             definition=candidate,
@@ -2572,6 +2650,15 @@ def _preferred_runner_up_gloss(token_choice: Mapping[str, object], token: str) -
         ]
         compact = None
         for runner_up_candidate in runner_up_candidates:
+            if is_numeric_meta_gloss(runner_up_candidate):
+                compact = _numeric_meta_render_for_choice(
+                    runner_up_candidate,
+                    token_choice,
+                    token,
+                )
+                if compact is not None:
+                    break
+                continue
             specific = specific_gloss_from_definition_and_semantic_core(
                 semantic_core=entry.get("semantic_core"),
                 definition=runner_up_candidate,
@@ -2615,6 +2702,8 @@ def _dictionary_rescue_gloss(token_choice: Mapping[str, object], token: str) -> 
     """
 
     raw_rescue = token_choice.get("dictionary_rescue_gloss")
+    if is_numeric_meta_gloss(raw_rescue):
+        return _numeric_meta_render_for_choice(raw_rescue, token_choice, token)
     sanitized = sanitize_human_gloss(raw_rescue, token=token)
     if sanitized is None:
         return None

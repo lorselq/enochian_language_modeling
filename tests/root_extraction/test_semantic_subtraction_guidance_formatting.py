@@ -35,6 +35,12 @@ if "sentence_transformers" not in sys.modules:
     st_stub = types.ModuleType("sentence_transformers")
     st_stub.util = types.SimpleNamespace(cos_sim=lambda *_a, **_k: [[1.0]])
     sys.modules["sentence_transformers"] = st_stub
+else:
+    sys.modules["sentence_transformers"].util = getattr(  # type: ignore[attr-defined]
+        sys.modules["sentence_transformers"],
+        "util",
+        types.SimpleNamespace(cos_sim=lambda *_a, **_k: [[1.0]]),
+    )
 
 if "enochian_lm.root_extraction.tools.query_model_tool" not in sys.modules:
     tool_stub = types.ModuleType("enochian_lm.root_extraction.tools.query_model_tool")

@@ -11,6 +11,12 @@ from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.embeddings import get_fasttext_model
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 
+from .fnp import (
+    RootFNPObservation,
+    RootFNPProfile,
+    aggregate_root_fnp_profile,
+)
+
 
 @dataclass
 class ResidualDetail:
@@ -215,6 +221,10 @@ class InsightsRepository:
             tuple[str, str, bool, bool],
             dict[str, float | None],
         ] = {}
+        self._root_fnp_observation_cache: dict[
+            tuple[str, str],
+            tuple[RootFNPObservation, ...],
+        ] = {}
 
     @property
     def variants(self) -> list[str]:
@@ -330,6 +340,7 @@ class InsightsRepository:
         self._rejected_morph_cache.clear()
         self._accepted_definition_count_cache.clear()
         self._accepted_definition_gloss_cache.clear()
+        self._root_fnp_observation_cache.clear()
 
     def fasttext_diagnostics(self, *, sample_size: int = 5) -> dict[str, object]:
         info: dict[str, object] = {
@@ -747,6 +758,59 @@ class InsightsRepository:
             output[morph] = [(text, score) for text, score in entries.items()]
         return output
 
+    def fetch_root_fnp_profiles(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> dict[str, RootFNPProfile]:
+        """Return deterministic FNP profiles for accepted root-gloss morphs.
+
+        Translation ranking and phrase parsing both need the same root-level
+        functional priors. This method batches SQLite reads, reuses the
+        observation cache, and aggregates across selected variants without
+        changing the underlying evidence/decomposition logic.
+        """
+
+        selected = list(variants) if variants else self.variants
+        unique = {str(morph).upper() for morph in morphs if morph}
+        self._populate_root_fnp_observation_cache_for_morphs(
+            unique,
+            variants=selected,
+        )
+
+        profiles: dict[str, RootFNPProfile] = {}
+        for morph in sorted(unique):
+            observations: list[RootFNPObservation] = []
+            for variant in selected:
+                observations.extend(
+                    self._root_fnp_observation_cache.get((variant, morph), ())
+                )
+            profile = aggregate_root_fnp_profile(morph, observations)
+            if profile is not None:
+                profiles[morph] = profile
+        return profiles
+
+    def prewarm_root_fnp_profiles(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> None:
+        """Populate root FNP caches for a batch of phrase/word morphs.
+
+        Phrase translation already prewarms support and gloss caches for many
+        overlapping substrings. Warming FNP observations alongside those caches
+        keeps the new structural prior cheap and deterministic.
+        """
+
+        selected = list(variants) if variants else self.variants
+        unique = {str(morph).upper() for morph in morphs if morph}
+        self._populate_root_fnp_observation_cache_for_morphs(
+            unique,
+            variants=selected,
+        )
+
     def fetch_accepted_morphs(self, variant: str) -> dict[str, AcceptedMorphInfo]:
         """Return accepted morph hypotheses for a single variant.
 
@@ -1146,6 +1210,101 @@ class InsightsRepository:
                     (variant, morph, include_clusters, include_residuals)
                 ] = grouped.get(morph, {})
 
+    def _populate_root_fnp_observation_cache_for_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None = None,
+    ) -> None:
+        """Batch-fill accepted root-gloss FNP observations for many morphs.
+
+        FNP is read-only evidence derived from existing SQLite views. This
+        cache keeps word and phrase translation from querying `root_glosses`
+        repeatedly for overlapping substrings while tolerating older databases
+        that do not yet expose the views.
+        """
+
+        selected = list(variants) if variants else self.variants
+        unique = {str(morph).upper() for morph in morphs if morph}
+        if not unique:
+            return
+
+        for variant in selected:
+            conn = self._connections.get(variant)
+            if conn is None:
+                continue
+            missing = sorted(
+                morph
+                for morph in unique
+                if (variant, morph) not in self._root_fnp_observation_cache
+            )
+            if not missing:
+                continue
+
+            placeholders = ",".join("?" for _ in missing)
+            grouped: dict[str, list[RootFNPObservation]] = {
+                morph: [] for morph in missing
+            }
+            try:
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                      g.root,
+                      g.definition,
+                      g.semantic_core,
+                      g.decoding_guide,
+                      g.pos_bias_nounness,
+                      g.pos_bias_modifier,
+                      g.pos_bias_verbness,
+                      g.attachment_prefix_likelihood,
+                      g.attachment_suffix_likelihood,
+                      g.attachment_free_likelihood,
+                      g.attachment_productivity,
+                      g.confidence_score,
+                      g.source_cluster_id,
+                      p.estimated_profile,
+                      p.observed_prefix_count,
+                      p.observed_suffix_count,
+                      p.observed_infix_count,
+                      p.observed_free_count
+                    FROM root_glosses AS g
+                    LEFT JOIN root_attachment_profile AS p
+                      ON p.root = g.root
+                     AND p.source_cluster_id = g.source_cluster_id
+                    WHERE UPPER(TRIM(g.root)) IN ({placeholders})
+                      AND LOWER(COALESCE(TRIM(g.evaluation), 'accepted')) = 'accepted'
+                    ORDER BY g.root COLLATE NOCASE ASC, g.source_cluster_id ASC;
+                    """,
+                    tuple(missing),
+                ).fetchall()
+            except Exception:
+                for morph in missing:
+                    self._root_fnp_observation_cache[(variant, morph)] = ()
+                continue
+
+            evidence_examples = _fetch_root_fnp_evidence_examples(
+                conn,
+                missing,
+            )
+            for row in rows:
+                observation = _root_fnp_observation_from_row(row, variant=variant)
+                root = observation.root.upper()
+                cluster_id = observation.source_cluster_id
+                observation.evidence_examples = list(
+                    evidence_examples.get((root, cluster_id), ())
+                )
+                if not observation.evidence_examples:
+                    observation.evidence_examples = list(
+                        evidence_examples.get((root, None), ())
+                    )
+                if root in grouped:
+                    grouped[root].append(observation)
+
+            for morph in missing:
+                self._root_fnp_observation_cache[(variant, morph)] = tuple(
+                    grouped.get(morph, [])
+                )
+
     def _fetch_residual_semantics(
         self, residual: str, *, variants: Iterable[str] | None = None
     ) -> list[ResidualSemanticRecord]:
@@ -1277,6 +1436,10 @@ class InsightsRepository:
             include_clusters=include_clusters,
             include_residuals=include_residuals,
         )
+        self._populate_root_fnp_observation_cache_for_morphs(
+            unique,
+            variants=selected,
+        )
 
 
 def _safe_float(value: SupportsFloat | str | bytes | bytearray | None) -> float | None:
@@ -1295,6 +1458,134 @@ def _safe_int(value: SupportsInt | str | bytes | bytearray | None, default: int 
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _root_fnp_observation_from_row(
+    row: sqlite3.Row,
+    *,
+    variant: str,
+) -> RootFNPObservation:
+    """Convert one `root_glosses` row into a typed FNP observation.
+
+    Repository methods keep SQLite concerns local. The FNP module receives this
+    stable dataclass instead of raw rows, which keeps aggregation independent
+    from view naming and schema quirks.
+    """
+
+    root = str(row["root"] or "").strip().upper()
+    return RootFNPObservation(
+        root=root,
+        variant=variant,
+        source_cluster_id=_safe_int(row["source_cluster_id"], default=0)
+        if row["source_cluster_id"] is not None
+        else None,
+        nounness=_safe_float(row["pos_bias_nounness"]),
+        modifier=_safe_float(row["pos_bias_modifier"]),
+        verbness=_safe_float(row["pos_bias_verbness"]),
+        confidence=_safe_float(row["confidence_score"]),
+        definition=(
+            str(row["definition"]).strip()
+            if row["definition"] is not None and str(row["definition"]).strip()
+            else None
+        ),
+        semantic_core_terms=_safe_json_array(row["semantic_core"]),
+        decoding_guide=(
+            str(row["decoding_guide"]).strip()
+            if row["decoding_guide"] is not None
+            and str(row["decoding_guide"]).strip()
+            else None
+        ),
+        attachment_prefix_likelihood=_safe_float(row["attachment_prefix_likelihood"]),
+        attachment_suffix_likelihood=_safe_float(row["attachment_suffix_likelihood"]),
+        attachment_free_likelihood=_safe_float(row["attachment_free_likelihood"]),
+        attachment_productivity=_safe_float(row["attachment_productivity"]),
+        estimated_attachment_profile=(
+            str(row["estimated_profile"]).strip()
+            if row["estimated_profile"] is not None
+            and str(row["estimated_profile"]).strip()
+            else None
+        ),
+        observed_prefix_count=_safe_int(row["observed_prefix_count"]),
+        observed_suffix_count=_safe_int(row["observed_suffix_count"]),
+        observed_infix_count=_safe_int(row["observed_infix_count"]),
+        observed_free_count=_safe_int(row["observed_free_count"]),
+    )
+
+
+def _fetch_root_fnp_evidence_examples(
+    conn: sqlite3.Connection,
+    roots: Iterable[str],
+) -> dict[tuple[str, int | None], tuple[str, ...]]:
+    """Read representative evidence snippets for root FNP debug profiles.
+
+    Root-level FNP should remain auditable back to concrete examples when the
+    `root_evidence_examples` view exists, while older fixtures/databases should
+    continue to work with an empty example set.
+    """
+
+    unique = sorted({str(root).upper() for root in roots if root})
+    if not unique:
+        return {}
+    placeholders = ",".join("?" for _ in unique)
+    grouped: dict[tuple[str, int | None], list[str]] = {}
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+              root,
+              evidence_word,
+              evidence_definition,
+              role,
+              effect,
+              sense_alignment,
+              confidence,
+              note,
+              source_cluster_id
+            FROM root_evidence_examples
+            WHERE UPPER(TRIM(root)) IN ({placeholders})
+            ORDER BY root COLLATE NOCASE ASC, confidence DESC, evidence_word ASC;
+            """,
+            tuple(unique),
+        ).fetchall()
+    except Exception:
+        return {}
+
+    for row in rows:
+        root = str(row["root"] or "").strip().upper()
+        if not root:
+            continue
+        cluster_id = (
+            _safe_int(row["source_cluster_id"], default=0)
+            if row["source_cluster_id"] is not None
+            else None
+        )
+        snippet = _format_root_fnp_evidence_example(row)
+        if not snippet:
+            continue
+        grouped.setdefault((root, cluster_id), []).append(snippet)
+        grouped.setdefault((root, None), []).append(snippet)
+    return {key: tuple(dict.fromkeys(values)) for key, values in grouped.items()}
+
+
+def _format_root_fnp_evidence_example(row: sqlite3.Row) -> str:
+    """Compress one root evidence row into a short human-readable snippet."""
+
+    word = str(row["evidence_word"] or "").strip()
+    definition = str(row["evidence_definition"] or "").strip()
+    role = str(row["role"] or "").strip()
+    effect = str(row["effect"] or "").strip()
+    alignment = str(row["sense_alignment"] or "").strip()
+    note = str(row["note"] or "").strip()
+    confidence = _safe_float(row["confidence"])
+    headline = " ".join(part for part in (word, definition) if part).strip()
+    qualifiers = [part for part in (role, effect, alignment, note) if part]
+    if confidence is not None:
+        qualifiers.append(f"confidence={confidence:.2f}")
+    if not headline and not qualifiers:
+        return ""
+    if qualifiers:
+        return f"{headline} ({'; '.join(qualifiers)})" if headline else "; ".join(qualifiers)
+    return headline
 
 
 def _dictionary_morphs_for_word(

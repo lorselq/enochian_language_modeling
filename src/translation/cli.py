@@ -1125,8 +1125,17 @@ def _build_output_payload(
                 "morphs": list(morphs_raw) if isinstance(morphs_raw, (list, tuple)) else [],
                 "score": candidate.get("score"),
                 "breakdown": candidate.get("breakdown"),
+                "score_breakdown": candidate.get("score_breakdown"),
                 "decision_trace": candidate.get("decision_trace"),
                 "meanings": list(meanings_raw) if isinstance(meanings_raw, (list, tuple)) else [],
+                "root_fnp_profiles": candidate.get("root_fnp_profiles"),
+                "candidate_fnp_profile": candidate.get("candidate_fnp_profile"),
+                "candidate_function_hypotheses": candidate.get("candidate_function_hypotheses"),
+                "inferred_word_function": candidate.get("inferred_word_function"),
+                "fnp_confidence": candidate.get("fnp_confidence"),
+                "head_analysis": candidate.get("head_analysis"),
+                "fnp_evidence": candidate.get("fnp_evidence"),
+                "fnp_warnings": candidate.get("fnp_warnings"),
                 "synthesized_definition": candidate.get("synthesized_definition"),
                 "concatenated_meanings": candidate.get("concatenated_meanings"),
                 "best_estimations": candidate.get("best_estimations"),
@@ -1460,6 +1469,30 @@ def _format_variant_report(
             confidence = sense.get("confidence")
             if isinstance(confidence, (int, float)):
                 lines.append(f"Confidence: {float(confidence):.2f}")
+
+            if verbose:
+                inferred_fnp = sense.get("inferred_word_function")
+                fnp_confidence = sense.get("fnp_confidence")
+                if isinstance(inferred_fnp, str) and inferred_fnp.strip():
+                    label = f"FNP function: {inferred_fnp.strip()}"
+                    if isinstance(fnp_confidence, (int, float)):
+                        label += f" ({float(fnp_confidence):.2f})"
+                    lines.append(_wrap_text(label, indent=0))
+                fnp_warnings = sense.get("fnp_warnings")
+                if isinstance(fnp_warnings, list) and fnp_warnings:
+                    lines.append(
+                        _wrap_text(
+                            "FNP warnings: "
+                            + "; ".join(str(item) for item in fnp_warnings),
+                            indent=0,
+                        )
+                    )
+                fnp_evidence = sense.get("fnp_evidence")
+                if isinstance(fnp_evidence, list) and fnp_evidence:
+                    lines.append("FNP evidence:")
+                    for note in fnp_evidence[:4]:
+                        if isinstance(note, str) and note.strip():
+                            lines.append(_wrap_text(note.strip(), indent=2, bullet=True))
 
             warnings = sense.get("warnings")
             if isinstance(warnings, list) and warnings:
@@ -2031,6 +2064,24 @@ def _format_phrase_report(
                     f"{relation.get('relation')} ({relation.get('direction')})"
                 )
                 lines.append(_wrap_text(label, indent=4, bullet=True))
+        grammar_score = chosen_parse.get("grammar_score")
+        if isinstance(grammar_score, (int, float)):
+            lines.append(_wrap_text(f"FNP grammar score: {float(grammar_score):.2f}", indent=2))
+        grammar_evidence = chosen_parse.get("grammar_evidence")
+        if isinstance(grammar_evidence, list) and grammar_evidence:
+            lines.append(_wrap_text("FNP grammar evidence:", indent=2))
+            for note in grammar_evidence[:4]:
+                if isinstance(note, str) and note.strip():
+                    lines.append(_wrap_text(note.strip(), indent=4, bullet=True))
+        grammar_warnings = chosen_parse.get("grammar_warnings")
+        if isinstance(grammar_warnings, list) and grammar_warnings:
+            lines.append(
+                _wrap_text(
+                    "FNP grammar warnings: "
+                    + "; ".join(str(item) for item in grammar_warnings[:4]),
+                    indent=2,
+                )
+            )
 
     if verbose:
         token_analyses = payload.get("token_analyses")
@@ -2053,6 +2104,22 @@ def _format_phrase_report(
                         f"{chosen_suffix}"
                     )
                     lines.append(_wrap_text(label, indent=4, bullet=True))
+                    fnp_function = candidate.get("fnp_function")
+                    fnp_confidence = candidate.get("fnp_confidence")
+                    if isinstance(fnp_function, str) and fnp_function.strip():
+                        fnp_line = f"FNP: {fnp_function.strip()}"
+                        if isinstance(fnp_confidence, (int, float)):
+                            fnp_line += f" ({float(fnp_confidence):.2f})"
+                        lines.append(_wrap_text(fnp_line, indent=6))
+                    fnp_warnings = candidate.get("fnp_warnings")
+                    if isinstance(fnp_warnings, list) and fnp_warnings:
+                        lines.append(
+                            _wrap_text(
+                                "FNP warnings: "
+                                + "; ".join(str(item) for item in fnp_warnings[:3]),
+                                indent=6,
+                            )
+                        )
                     morphs_raw = candidate.get("morphs")
                     if isinstance(morphs_raw, list):
                         morphs = [
