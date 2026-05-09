@@ -324,6 +324,7 @@ def _extract_meanings(
                     "negative_contrast": list(entry.get("negative_contrast") or []),
                     "surface_gloss_strategy": entry.get("surface_gloss_strategy") or "cleaned_definition",
                     "quality": 0.0,
+                    **_source_provenance_fields(entry),
                 }
             )
 
@@ -388,10 +389,47 @@ def _extract_meanings(
                     candidates.get(key, []),
                 ),
                 "definition_trace": trace,
+                **_source_provenance_fields(selected),
             }
         )
 
     return meanings
+
+
+def _source_provenance_fields(
+    selected: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Copy source-row identifiers from a selected definition into public output.
+
+    Translation debugging depends on tying a smooth morph gloss back to the
+    concrete row that supplied it. Definition candidates already carry IDs such
+    as `cluster_id`; this adapter keeps those IDs on both word-level meanings
+    and phrase-level definition traces without changing the selection math.
+    """
+
+    if not isinstance(selected, Mapping):
+        return {}
+
+    fields: dict[str, object] = {}
+    for key in (
+        "cluster_id",
+        "source_cluster_id",
+        "source_variant",
+        "source_run_id",
+        "source_cluster_index",
+        "source_root_ngram",
+        "source_parent_word",
+        "source_group_index",
+        "source_hypothesis_id",
+        "source_anchor",
+    ):
+        value = selected.get(key)
+        if value is not None:
+            fields[key] = value
+
+    if "cluster_id" in fields and "source_cluster_id" not in fields:
+        fields["source_cluster_id"] = fields["cluster_id"]
+    return fields
 
 
 def _meaning_from_evidence(
@@ -413,6 +451,7 @@ def _meaning_from_evidence(
         *,
         semantic_core_terms: Sequence[str] | None = None,
         negative_contrast: Sequence[str] | None = None,
+        **source_fields: object,
     ) -> None:
         if _should_suppress_numeric_meta_gloss(
             definition,
@@ -443,6 +482,7 @@ def _meaning_from_evidence(
                 "semantic_core_terms": list(semantic_core_terms or []),
                 "negative_contrast": list(negative_contrast or []),
                 "surface_gloss_strategy": strategy,
+                **_source_provenance_fields(source_fields),
             }
         )
 
@@ -462,6 +502,10 @@ def _meaning_from_evidence(
             "cluster",
             semantic_core_terms=semantic_core_terms or cluster.semantic_core,
             negative_contrast=negative_contrast or cluster.negative_contrast,
+            cluster_id=cluster.cluster_id,
+            source_variant=cluster.variant,
+            source_run_id=cluster.run_id,
+            source_cluster_index=cluster.cluster_index,
         )
 
     for residual in evidence.residual_semantics:
@@ -479,6 +523,10 @@ def _meaning_from_evidence(
             "residual",
             semantic_core_terms=semantic_core_terms or residual.semantic_core,
             negative_contrast=negative_contrast or residual.negative_contrast,
+            source_variant=residual.variant,
+            source_run_id=residual.run_id,
+            source_parent_word=residual.parent_word,
+            source_group_index=residual.group_index,
         )
 
     for hypothesis in evidence.morph_hypotheses:
@@ -486,13 +534,25 @@ def _meaning_from_evidence(
             continue
         seed_glosses = ", ".join(g for g in hypothesis.seed_glosses if g and g.strip()) or None
         definition = _first_non_empty(hypothesis.proposed_gloss, seed_glosses, hypothesis.anchor)
-        add(definition, "hypothesis")
+        add(
+            definition,
+            "hypothesis",
+            source_variant=hypothesis.variant,
+            source_hypothesis_id=hypothesis.hyp_id,
+            source_anchor=hypothesis.anchor,
+        )
 
     for attested in evidence.attested_definitions:
         if attested.source_word.upper() != morph:
             continue
         definition = _first_non_empty(attested.definition)
-        add(definition, "attested")
+        add(
+            definition,
+            "attested",
+            cluster_id=attested.cluster_id,
+            source_variant=attested.variant,
+            source_root_ngram=attested.root_ngram,
+        )
 
     entry = evidence.dictionary_morphs.get(morph)
     if allow_dictionary and entry is not None:
@@ -1635,6 +1695,10 @@ def _collect_definition_candidates(
                     "negative_contrast": negative_contrast or cluster.negative_contrast,
                     "source": "cluster",
                     "cluster_id": cluster.cluster_id,
+                    "source_cluster_id": cluster.cluster_id,
+                    "source_variant": cluster.variant,
+                    "source_run_id": cluster.run_id,
+                    "source_cluster_index": cluster.cluster_index,
                     "semantic_coverage": cluster.semantic_coverage,
                     "cohesion": cluster.cohesion,
                     "semantic_cohesion": cluster.semantic_cohesion,
@@ -1660,6 +1724,10 @@ def _collect_definition_candidates(
                     "semantic_core_terms": semantic_core_terms or residual.semantic_core,
                     "negative_contrast": negative_contrast or residual.negative_contrast,
                     "source": "residual",
+                    "source_variant": residual.variant,
+                    "source_run_id": residual.run_id,
+                    "source_parent_word": residual.parent_word,
+                    "source_group_index": residual.group_index,
                     "semantic_coverage": residual.semantic_coverage,
                     "cohesion": residual.cohesion,
                     "semantic_cohesion": residual.semantic_cohesion,
@@ -1679,7 +1747,10 @@ def _collect_definition_candidates(
                 {
                     "raw_definition": definition,
                     "source": "hypothesis",
+                    "source_variant": hypothesis.variant,
+                    "source_hypothesis_id": hypothesis.hyp_id,
                     "anchor": hypothesis.anchor,
+                    "source_anchor": hypothesis.anchor,
                     "delta_cosine": hypothesis.delta_cosine,
                     "residual_before": hypothesis.residual_before,
                     "residual_after": hypothesis.residual_after,
@@ -1696,6 +1767,9 @@ def _collect_definition_candidates(
                     "raw_definition": definition,
                     "source": "attested",
                     "cluster_id": attested.cluster_id,
+                    "source_cluster_id": attested.cluster_id,
+                    "source_variant": attested.variant,
+                    "source_root_ngram": attested.root_ngram,
                 }
             )
 
@@ -1775,6 +1849,7 @@ def _definition_trace(
                 "surface_gloss_strategy": candidate.get("surface_gloss_strategy"),
                 "source": str(candidate.get("source") or "unknown"),
                 "quality": _safe_number(candidate.get("quality"), default=0.0),
+                **_source_provenance_fields(candidate),
             }
         )
 
@@ -1805,6 +1880,7 @@ def _definition_trace(
             if isinstance(selected, Mapping)
             else "unknown"
         ),
+        "selected_source_detail": _source_provenance_fields(selected),
         "selected_quality": (
             _safe_number(selected.get("quality"), default=0.0)
             if isinstance(selected, Mapping)

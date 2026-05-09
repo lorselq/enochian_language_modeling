@@ -67,6 +67,18 @@
       { "value": "gon", "confidence": "low", "direction": "to" }
     ]
   },
+  "j": {
+    "canonical": "j",
+    "alternates": [
+      { "value": "i", "confidence": "high", "direction": "from" }
+    ]
+  },
+  "k": {
+    "canonical": "k",
+    "alternates": [
+      { "value": "c", "confidence": "high", "direction": "from" }
+    ]
+  },
   "l": {
     "canonical": "l",
     "alternates": [
@@ -106,9 +118,17 @@
   "q": {
     "canonical": "q",
     "alternates": [
-      { "value": "qu", "confidence": "high", "direction": "to" },
+      { "value": "qu", "confidence": "high", "direction": "both" },
       { "value": "qua", "confidence": "medium", "direction": "to" },
       { "value": "ger", "confidence": "low", "direction": "to" }
+    ]
+  },
+  "r": {
+    "canonical": "r",
+    "alternates": [
+      { "value": "er", "confidence": "low", "direction": "both" },
+      { "value": "ar", "confidence": "low", "direction": "both" },
+      { "value": "don", "confidence": "low", "direction": "from" }
     ]
   },
   "s": {
@@ -150,6 +170,12 @@
     "alternates": [
       { "value": "ex", "confidence": "medium", "direction": "both" },
       { "value": "pal", "confidence": "low", "direction": "to" }
+    ]
+  },
+  "y": {
+    "canonical": "y",
+    "alternates": [
+      { "value": "i", "confidence": "high", "direction": "from" }
     ]
   },
   "z": {

@@ -166,6 +166,7 @@ class PhraseTokenCandidate:
     decision_trace: dict[str, object] = field(default_factory=dict)
     chosen_in_parse: bool = False
     morphs: list[str] = field(default_factory=list)
+    morph_sources: list[dict[str, object]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     semantic_bundle: list[dict[str, object]] = field(default_factory=list)
     bundle_surface_gloss: str | None = None
@@ -291,6 +292,7 @@ class PhraseTranslationService:
         evidence_mode: SingleWordTranslationService.EvidenceMode = SingleWordTranslationService.EvidenceMode.ALL,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
+        allow_dictionary: bool = True,
         progress_reporter: PhraseProgressReporter | None = None,
     ) -> dict[str, object]:
         """Translate one phrase, splitting semicolon/colon clauses first.
@@ -319,6 +321,7 @@ class PhraseTranslationService:
                     evidence_mode=evidence_mode,
                     weight_enabled=weight_enabled,
                     allow_whole_word=allow_whole_word,
+                    allow_dictionary=allow_dictionary,
                     progress_reporter=progress_reporter,
                 )
                 for clause in clauses
@@ -340,6 +343,7 @@ class PhraseTranslationService:
             evidence_mode=evidence_mode,
             weight_enabled=weight_enabled,
             allow_whole_word=allow_whole_word,
+            allow_dictionary=allow_dictionary,
             progress_reporter=progress_reporter,
         )
 
@@ -357,6 +361,7 @@ class PhraseTranslationService:
         evidence_mode: SingleWordTranslationService.EvidenceMode = SingleWordTranslationService.EvidenceMode.ALL,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
+        allow_dictionary: bool = True,
         progress_reporter: PhraseProgressReporter | None = None,
     ) -> dict[str, object]:
         """Translate a phrase and expose both technical and layman-readable outputs.
@@ -416,6 +421,7 @@ class PhraseTranslationService:
                     evidence_mode=evidence_mode,
                     weight_enabled=weight_enabled,
                     allow_whole_word=allow_whole_word,
+                    allow_dictionary=allow_dictionary,
                     use_beam_search=True,
                 )
                 word_result_cache[token.upper()] = copy.deepcopy(cached_result)
@@ -715,6 +721,7 @@ class PhraseTranslationService:
             "strategy": strategy,
             "evidence_mode": evidence_mode.value,
             "weighting_enabled": weight_enabled,
+            "dictionary_enabled": allow_dictionary,
             "llm_enabled": llm_enabled,
             "llm_mode": (
                 "remote"
@@ -1323,6 +1330,7 @@ class PhraseTranslationService:
                     for morph in candidate.get("morphs", [])
                     if isinstance(morph, str)
                 ],
+                morph_sources=self._candidate_morph_sources(meaning_list),
                 warnings=warnings,
                 semantic_bundle=list(bundle.get("semantic_bundle") or []),
                 bundle_surface_gloss=(
@@ -1362,6 +1370,69 @@ class PhraseTranslationService:
                 continue
             converted.append(phrase_candidate)
         return converted
+
+    @staticmethod
+    def _candidate_morph_sources(
+        meanings: Sequence[object],
+    ) -> list[dict[str, object]]:
+        """Preserve per-morph evidence provenance for phrase verbose output.
+
+        Phrase rendering chooses one surface gloss for a whole token, but a
+        compositional token may have several morphs whose definitions came from
+        different accepted clusters. This compact projection keeps each morph's
+        selected source identifiers available after the word candidate becomes
+        a phrase candidate.
+        """
+
+        sources: list[dict[str, object]] = []
+        for meaning in meanings:
+            if not isinstance(meaning, Mapping):
+                continue
+            morph = str(meaning.get("morph") or "").strip()
+            if not morph:
+                continue
+            trace_raw = meaning.get("definition_trace")
+            trace = dict(trace_raw) if isinstance(trace_raw, Mapping) else {}
+            source_detail_raw = trace.get("selected_source_detail")
+            source_detail = (
+                dict(source_detail_raw)
+                if isinstance(source_detail_raw, Mapping)
+                else {}
+            )
+            payload: dict[str, object] = {
+                "morph": morph,
+                "canonical": str(meaning.get("canonical") or "").strip() or morph,
+                "definition": meaning.get("definition"),
+                "raw_definition": meaning.get("raw_definition"),
+                "provenance": str(meaning.get("provenance") or "unknown"),
+                "semantic_core": list(
+                    meaning.get("semantic_core_terms")
+                    or meaning.get("semantic_core")
+                    or []
+                ),
+                "negative_contrast": list(meaning.get("negative_contrast") or []),
+                "surface_gloss_strategy": meaning.get("surface_gloss_strategy"),
+                "selected_quality": trace.get("selected_quality"),
+            }
+            for key in (
+                "cluster_id",
+                "source_cluster_id",
+                "source_variant",
+                "source_run_id",
+                "source_cluster_index",
+                "source_root_ngram",
+                "source_parent_word",
+                "source_group_index",
+                "source_hypothesis_id",
+                "source_anchor",
+            ):
+                value = meaning.get(key)
+                if value is None:
+                    value = source_detail.get(key)
+                if value is not None:
+                    payload[key] = value
+            sources.append(payload)
+        return sources
 
     def _dictionary_rescue_gloss(
         self,
@@ -3017,6 +3088,7 @@ class PhraseTranslationService:
                     "weak_fallback_note": candidate.weak_fallback_note,
                     "semantic_core": list(trace.get("selected_semantic_core") or []),
                     "negative_contrast": list(trace.get("selected_negative_contrast") or []),
+                    "morph_sources": [dict(source) for source in candidate.morph_sources],
                     "alternates": list(candidate.alternates[:3]),
                     "analysis_type": candidate.analysis_type,
                     "role_hint": candidate.role_hint,

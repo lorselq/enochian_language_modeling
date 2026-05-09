@@ -1082,6 +1082,61 @@ def test_translate_word_prioritizes_dictionary_exact_candidates() -> None:
     assert float(lead["confidence"]) >= 0.98
 
 
+def test_translate_word_no_dictionary_suppresses_only_dictionary_exact() -> None:
+    """Allow DB whole-word anchors while removing the exact dictionary answer.
+
+    `--no-dictionary` is intentionally less strict than blind retranslation:
+    it should remove the canonical dictionary exact match without disabling
+    exact accepted database evidence for the same surface word.
+    """
+
+    evidence = WordEvidence(
+        word="OD",
+        variants_queried=["solo"],
+        direct_clusters=[_cluster_record("OD", "joining force", cluster_id=910)],
+        dictionary_morphs={
+            "OD": DictionaryMorph(
+                morph="OD",
+                definition="self",
+                senses=["self", "the selfsame"],
+                part_of_speech="pronoun",
+            )
+        },
+    )
+    repository = FakeRepository(evidence_by_word={"OD": evidence})
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(
+            {"od": {"canonical": "OD", "pos": "pronoun"}}
+        ),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine([])
+
+    result = service.translate_word(
+        "od",
+        llm=False,
+        allow_dictionary=False,
+        use_beam_search=True,
+    )
+
+    assert result["dictionary_enabled"] is False
+    assert result["candidates"]
+    lead = result["candidates"][0]
+    assert lead["analysis_type"] == "whole_word_anchor"
+    assert lead["meanings"][0]["provenance"] == "cluster"
+    assert lead["meanings"][0]["definition"] == "joining force"
+    assert all(
+        candidate["analysis_type"] != "dictionary_exact"
+        for candidate in result["candidates"]
+    )
+    assert result["evidence"]["dictionary_morphs"] == 0
+    assert any(
+        "Suppressed exact dictionary match for OD" in note
+        for note in result["diagnostics"]["dictionary"]["suppressed"]
+    )
+
+
 def test_translate_word_no_whole_word_suppresses_dictionary_exact_and_prefers_split() -> None:
     """Blind retranslation should not let exact dictionary entries short-circuit parsing.
 
@@ -1157,6 +1212,71 @@ def test_translate_word_no_whole_word_suppresses_dictionary_exact_and_prefers_sp
         "suppressed exact dictionary match for MICAOLZ" in note
         for note in blind["suppressed"]
     )
+
+
+def test_translate_word_compositional_meanings_preserve_cluster_provenance() -> None:
+    """Keep each selected morph gloss traceable to its accepted cluster row.
+
+    Debugging GOHO/OHIO-style cases requires knowing which accepted cluster
+    supplied the gloss after definition selection. This regression proves the
+    selected meaning and its definition trace keep the cluster ID, variant, and
+    run metadata that the repository already fetched.
+    """
+
+    go_cluster = _cluster_record("GO", "authoritative vocal utterance", cluster_id=3050)
+    ho_cluster = _cluster_record(
+        "HO",
+        "sacred authority",
+        cluster_id=3069,
+        semantic_core=["sacred authority"],
+        negative_contrast=["lamentation"],
+    )
+    go_cluster.semantic_coverage = 0.94
+    go_cluster.cohesion = 0.91
+    ho_cluster.semantic_coverage = 0.97
+    ho_cluster.cohesion = 0.96
+    repository = FakeRepository(
+        evidence_by_word={"GOHO": WordEvidence(word="GOHO", variants_queried=["solo"])},
+        support_clusters={"GO": go_cluster, "HO": ho_cluster},
+    )
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine(
+        [
+            Decomposition(
+                morphs=["GO", "HO"],
+                canonicals=["GO", "HO"],
+                beam_score=1.0,
+                breakdown={
+                    "segments": [],
+                    "uncovered": [],
+                    "coverage_ratio": 1.0,
+                    "residual_ratio": 0.0,
+                },
+                morph_support={"GO": "cluster", "HO": "cluster"},
+            )
+        ]
+    )
+
+    result = service.translate_word(
+        "goho",
+        llm=False,
+        use_beam_search=True,
+        top_k=1,
+    )
+
+    meanings = result["candidates"][0]["meanings"]
+    ho_meaning = next(meaning for meaning in meanings if meaning["morph"] == "HO")
+    assert ho_meaning["cluster_id"] == 3069
+    assert ho_meaning["source_cluster_id"] == 3069
+    assert ho_meaning["source_variant"] == "solo"
+    assert ho_meaning["source_run_id"] == "run-1"
+    assert ho_meaning["source_cluster_index"] == 0
+    assert ho_meaning["definition_trace"]["selected_source_detail"]["cluster_id"] == 3069
+    assert ho_meaning["definition_trace"]["selected_negative_contrast"] == ["lamentation"]
 
 
 def test_translate_word_no_whole_word_keeps_short_db_root_anchor() -> None:
@@ -1845,6 +1965,125 @@ def test_phrase_translation_surfaces_definition_trace_in_json_payload(tmp_path: 
         candidate["definition_trace"]["suppressed"][0]
     )
     assert "selection_reason" in candidate["definition_trace"]
+
+
+def test_phrase_translation_surfaces_all_morph_source_clusters(tmp_path: Path) -> None:
+    """Phrase token analyses should keep every morph's selected source cluster.
+
+    A phrase candidate may render one compact token gloss even when the token
+    decomposes into several roots. This regression keeps L + AN + SH-style
+    diagnostics from showing only the token-level source and losing the AN/SH
+    cluster IDs needed for audit.
+    """
+
+    meanings = [
+        {
+            "morph": "L",
+            "canonical": "L",
+            "definition": "primacy, origin",
+            "raw_definition": "Denoting primacy, origin, or initial state.",
+            "provenance": "cluster",
+            "semantic_core_terms": ["first", "origin"],
+            "negative_contrast": [],
+            "surface_gloss_strategy": "semantic_core_guided_definition",
+            "source_cluster_id": 4447,
+            "source_variant": "debate",
+            "source_run_id": "run-lansh",
+            "source_cluster_index": 0,
+            "definition_trace": {
+                "selected_source": "cluster",
+                "selected_source_detail": {
+                    "source_cluster_id": 4447,
+                    "source_variant": "debate",
+                    "source_run_id": "run-lansh",
+                    "source_cluster_index": 0,
+                },
+                "selected_quality": 0.91,
+            },
+        },
+        {
+            "morph": "AN",
+            "canonical": "AN",
+            "definition": "interior relation",
+            "raw_definition": "A relational root marking withinness.",
+            "provenance": "cluster",
+            "semantic_core_terms": ["within"],
+            "negative_contrast": [],
+            "surface_gloss_strategy": "semantic_core",
+            "source_cluster_id": 4452,
+            "source_variant": "debate",
+            "source_run_id": "run-lansh",
+            "source_cluster_index": 0,
+            "definition_trace": {
+                "selected_source": "cluster",
+                "selected_source_detail": {
+                    "source_cluster_id": 4452,
+                    "source_variant": "debate",
+                    "source_run_id": "run-lansh",
+                    "source_cluster_index": 0,
+                },
+                "selected_quality": 0.73,
+            },
+        },
+        {
+            "morph": "SH",
+            "canonical": "SH",
+            "definition": "completion",
+            "raw_definition": "A root marking completion or terminal force.",
+            "provenance": "cluster",
+            "semantic_core_terms": ["completion"],
+            "negative_contrast": [],
+            "surface_gloss_strategy": "semantic_core",
+            "source_cluster_id": 4460,
+            "source_variant": "debate",
+            "source_run_id": "run-lansh",
+            "source_cluster_index": 0,
+            "definition_trace": {
+                "selected_source": "cluster",
+                "selected_source_detail": {
+                    "source_cluster_id": 4460,
+                    "source_variant": "debate",
+                    "source_run_id": "run-lansh",
+                    "source_cluster_index": 0,
+                },
+                "selected_quality": 0.69,
+            },
+        },
+    ]
+    word_service = FakeWordService(
+        results_by_word={
+            "LANSH": _word_result(
+                "LANSH",
+                _word_candidate(
+                    "primacy, origin",
+                    analysis_type="compositional",
+                    score=8.0,
+                    confidence=0.74,
+                    morphs=["L", "AN", "SH"],
+                    meanings=meanings,
+                    bundle_surface_gloss="primacy, origin",
+                    bundle_head_gloss="primacy, origin",
+                    bundle_function_profile="content",
+                ),
+            ),
+        }
+    )
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=TranslationMemoryRepository(tmp_path / "phrase-morph-sources.sqlite3"),
+    )
+
+    result = service.translate_phrase("lansh", top_k=1, llm=False)
+
+    candidate = result["token_analyses"][0]["candidates"][0]
+    assert [source["morph"] for source in candidate["morph_sources"]] == ["L", "AN", "SH"]
+    assert [source["source_cluster_id"] for source in candidate["morph_sources"]] == [
+        4447,
+        4452,
+        4460,
+    ]
+    assert candidate["morph_sources"][1]["definition"] == "interior relation"
+    assert candidate["chosen_in_parse"] is True
 
 
 def test_compose_semantic_bundle_keeps_ordered_morph_cores_in_one_word_reading() -> None:
@@ -4365,6 +4604,26 @@ def test_phrase_report_verbose_includes_definition_trace_details() -> None:
                             "role_hint": "noun",
                             "definition": "comfort",
                             "morphs": ["BLI", "ORS"],
+                            "morph_sources": [
+                                {
+                                    "morph": "BLI",
+                                    "provenance": "cluster",
+                                    "definition": "comfort",
+                                    "source_cluster_id": 3069,
+                                    "source_variant": "solo",
+                                    "source_run_id": "run-1",
+                                    "selected_quality": 0.92,
+                                },
+                                {
+                                    "morph": "ORS",
+                                    "provenance": "cluster",
+                                    "definition": "solace",
+                                    "source_cluster_id": 3072,
+                                    "source_variant": "solo",
+                                    "source_run_id": "run-1",
+                                    "selected_quality": 0.81,
+                                },
+                            ],
                             "chosen_in_parse": True,
                             "definition_trace": {
                                 "surface_gloss": "comfort",
@@ -4375,8 +4634,18 @@ def test_phrase_report_verbose_includes_definition_trace_details() -> None:
                                 "selected_semantic_core": ["comfort", "solace"],
                                 "selected_negative_contrast": ["darkness"],
                                 "selected_source": "cluster",
+                                "selected_source_detail": {
+                                    "source_cluster_id": 3069,
+                                    "source_variant": "solo",
+                                    "source_run_id": "run-1",
+                                },
                                 "runner_ups": [
-                                    {"definition": "state", "source": "attested", "quality": 0.20}
+                                    {
+                                        "definition": "state",
+                                        "source": "attested",
+                                        "quality": 0.20,
+                                        "source_cluster_id": 3070,
+                                    }
                                 ],
                                 "suppressed": [
                                     "Blind mode suppressed dictionary-backed definition candidates for BLIORS."
@@ -4399,20 +4668,104 @@ def test_phrase_report_verbose_includes_definition_trace_details() -> None:
     )
 
     assert "definition=comfort [chosen parse]" in report
-    assert "Selected source: cluster" in report
+    assert "Selected source: cluster (cluster #3069; variant=solo; run=run-1)" in report
     assert "Surface gloss: comfort (semantic_core)" in report
     assert "Raw selected definition:" in report
     normalized_report = " ".join(report.split())
     assert "BLI encodes the state or provision of comfort as solace." in normalized_report
     assert "Semantic core: comfort; solace" in report
     assert "Negative contrast: darkness" in report
-    assert "Runner-ups: state (attested, q=0.20)" in report
+    assert "Runner-ups: state (attested; cluster #3070, q=0.20)" in report
     assert "Suppressed: Blind mode suppressed dictionary-backed definition" in report
     assert "Negative-contrast penalties: darkness" in report
     assert "Meta-linguistic rejections: A root denoting comfort as solace." in report
     assert "BLIORS" in report
     assert "Decomposition: BLI + ORS" in report
+    assert "Morph sources:" in report
+    assert "BLI (cluster; cluster #3069; variant=solo; run=run-1; q=0.92): comfort" in report
+    assert "ORS (cluster; cluster #3072; variant=solo; run=run-1; q=0.81): solace" in report
     assert "Why this won: Selected cluster-backed evidence survived for this token." in report
+
+
+def test_word_report_verbose_includes_meaning_cluster_provenance() -> None:
+    """Verbose word output should show which cluster supplied each morph gloss."""
+
+    report = translation_cli._format_text_report(
+        {
+            "word": "GOHO",
+            "variant": "debate",
+            "strategy": "prefer-balance",
+            "evidence_mode": "all",
+            "weighting_enabled": True,
+            "dictionary_enabled": False,
+            "llm_enabled": False,
+            "llm_mode": None,
+            "evidence": {
+                "direct_clusters": 2,
+                "residual_semantics": 0,
+                "morph_hypotheses": 0,
+                "attested_definitions": 0,
+                "dictionary_morphs": 0,
+            },
+            "senses": [
+                {
+                    "rank": 1,
+                    "morphs": ["GO", "HO"],
+                    "analysis_type": "compositional",
+                    "score": 2.07,
+                    "breakdown": {"coverage_ratio": 1.0, "residual_ratio": 0.0},
+                    "meanings": [
+                        {
+                            "morph": "GO",
+                            "provenance": "cluster",
+                            "definition": "authoritative vocal utterance",
+                            "source_cluster_id": 3050,
+                            "source_variant": "debate",
+                            "source_run_id": "run-a",
+                            "source_cluster_index": 0,
+                        },
+                        {
+                            "morph": "HO",
+                            "provenance": "cluster",
+                            "definition": "sacred authority",
+                            "source_cluster_id": 3069,
+                            "source_variant": "debate",
+                            "source_run_id": "run-a",
+                            "source_cluster_index": 1,
+                            "definition_trace": {
+                                "selected_source": "cluster",
+                                "selected_source_detail": {
+                                    "source_cluster_id": 3069,
+                                    "source_variant": "debate",
+                                    "source_run_id": "run-a",
+                                    "source_cluster_index": 1,
+                                },
+                                "selected_quality": 0.96,
+                                "selected_semantic_core": ["sacred authority"],
+                                "selected_negative_contrast": ["lamentation"],
+                                "runner_ups": [
+                                    {
+                                        "definition": "commanding voice",
+                                        "source": "cluster",
+                                        "source_cluster_id": 3071,
+                                        "quality": 0.44,
+                                    }
+                                ],
+                            },
+                        },
+                    ],
+                }
+            ],
+        },
+        verbose=True,
+    )
+
+    assert "GO (cluster; cluster #3050; variant=debate; run=run-a;" in report
+    assert "HO (cluster; cluster #3069; variant=debate; run=run-a;" in report
+    assert "Selected definition: source=cluster; cluster #3069;" in report
+    assert "Semantic core: sacred authority" in report
+    assert "Negative contrast: lamentation" in report
+    assert "Definition runner-ups: commanding voice (cluster, cluster #3071, q=0.44)" in report
 
 
 def test_phrase_report_verbose_includes_bundle_and_blind_rescue_details() -> None:
@@ -6501,6 +6854,62 @@ def test_phrase_translation_no_whole_word_inherits_blind_dictionary_suppression(
     assert micaolz["candidates"][0]["definition"] != "mighty"
 
 
+def test_phrase_translation_passes_no_dictionary_to_word_analysis(
+    tmp_path: Path,
+) -> None:
+    """Phrase `--no-dictionary` should delegate the narrower flag per token.
+
+    Phrase translation relies on single-word analysis for each token, so the
+    CLI/service flag must flow through without also disabling whole-word DB
+    anchors or other phrase-level mechanics.
+    """
+
+    class CapturingWordService(FakeWordService):
+        """Record token-analysis kwargs while returning stable phrase candidates."""
+
+        def __init__(self) -> None:
+            super().__init__(
+                results_by_word={
+                    "OD": _word_result(
+                        "OD",
+                        _word_candidate(
+                            "joining force",
+                            analysis_type="whole_word_anchor",
+                            score=12.0,
+                            confidence=0.91,
+                            morphs=["OD"],
+                            provenance="cluster",
+                        ),
+                    )
+                }
+            )
+            self.calls: list[dict[str, object]] = []
+
+        def translate_word(self, word: str, **kwargs: object) -> dict[str, object]:
+            self.calls.append(dict(kwargs))
+            return super().translate_word(word, **kwargs)
+
+    word_service = CapturingWordService()
+    memory = TranslationMemoryRepository(tmp_path / "phrase-no-dictionary.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase(
+        "od",
+        top_k=1,
+        llm=False,
+        allow_dictionary=False,
+    )
+
+    assert result["dictionary_enabled"] is False
+    assert word_service.calls
+    assert word_service.calls[0]["allow_dictionary"] is False
+    assert word_service.calls[0]["allow_whole_word"] is True
+    assert result["token_analyses"][0]["candidates"][0]["analysis_type"] == "whole_word_anchor"
+
+
 def test_affa_phrase_suppresses_numeric_shortcut_and_focuses_fa(
     tmp_path: Path,
 ) -> None:
@@ -6785,6 +7194,21 @@ def test_translation_cli_accepts_plural_no_whole_words_alias_for_word() -> None:
     assert args.allow_whole_word is False
 
 
+def test_translation_cli_accepts_no_dictionary_for_word_and_phrase() -> None:
+    """Expose the narrower dictionary-exact suppression switch on both CLIs."""
+    parser = translation_cli.build_parser()
+
+    word_args = parser.parse_args(["translate-word", "OL", "--no-dictionary"])
+    phrase_args = parser.parse_args(
+        ["translate-phrase", "ol sonf vorsg", "--no-dictionary"]
+    )
+
+    assert word_args.allow_dictionary is False
+    assert word_args.allow_whole_word is True
+    assert phrase_args.allow_dictionary is False
+    assert phrase_args.allow_whole_word is True
+
+
 def test_translation_cli_help_describes_blind_retranslation_semantics() -> None:
     """Document the broadened flag semantics for both word and phrase workflows.
 
@@ -6804,9 +7228,11 @@ def test_translation_cli_help_describes_blind_retranslation_semantics() -> None:
 
     assert "Blind retranslation mode" in word_help
     assert "suppress exact dictionary" in word_help
+    assert "Suppress exact dictionary matches" in word_help
     assert "Short 1-4 character DB roots" in word_help
     assert "Blind retranslation mode" in phrase_help
     assert "whole-word DB anchors longer than 4" in phrase_help
+    assert "Suppress exact dictionary matches" in phrase_help
 
 
 def test_candidate_finder_segment_target_uses_precomputed_definition_counts_without_reclustering(

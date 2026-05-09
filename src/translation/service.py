@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from enum import Enum
 import math
@@ -65,6 +65,9 @@ from .repository import (
     ResidualDetail,
     WordEvidence,
     FasttextNeighbor,
+    _dictionary_entry_definition,
+    _dictionary_entry_pos,
+    _dictionary_entry_senses,
 )
 from .scoring import (
     CoherenceResult,
@@ -79,6 +82,11 @@ from .strategies import (
     compute_contradiction_penalty_for_candidates,
     extract_definition_candidates,
     select_top_k,
+)
+from .substitution_aliases import (
+    LookupSubstitutionRule,
+    build_lookup_aliases,
+    load_lookup_substitution_rules,
 )
 from .tokenization import expand_sentence_ngrams, tokenize_words
 
@@ -387,6 +395,7 @@ class SingleWordTranslationService:
             tuple[str, tuple[tuple[str, float | None], ...]],
             int,
         ] = {}
+        self._lookup_substitution_rules: tuple[LookupSubstitutionRule, ...] | None = None
 
     @classmethod
     def from_config(
@@ -549,6 +558,7 @@ class SingleWordTranslationService:
         evidence_mode: EvidenceMode = EvidenceMode.CLUSTERS_ONLY,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
+        allow_dictionary: bool = True,
         use_beam_search: bool = False,
         progress_reporter: TranslationProgressReporter | None = None,
     ) -> dict[str, object]:
@@ -591,6 +601,7 @@ class SingleWordTranslationService:
                     "strategy": strategy,
                     "evidence_mode": evidence_mode.value,
                     "weighting_enabled": weight_enabled,
+                    "dictionary_enabled": allow_dictionary,
                     "llm_enabled": llm_enabled,
                     "llm_mode": (
                         "remote"
@@ -619,6 +630,10 @@ class SingleWordTranslationService:
                             else None
                         ),
                         "weighting_enabled": weight_enabled,
+                        "dictionary": {
+                            "enabled": allow_dictionary,
+                            "suppressed": [],
+                        },
                         "hard_filters": {},
                         "decomposition": {
                             "generated": 0,
@@ -633,33 +648,84 @@ class SingleWordTranslationService:
                 }
             substring_support: list[str] = []
             substrings = self._substring_candidates(normalized)
+            substitution_aliases = self._substitution_aliases_for_substrings(substrings)
+            support_lookup_terms = set(substrings) | set(substitution_aliases)
             if substrings:
                 (
                     support_clusters,
                     support_residuals,
                     support_hypotheses,
                 ) = self.repository.fetch_morph_support(
-                    substrings, variants=active_variants
+                    support_lookup_terms, variants=active_variants
                 )
-                if support_clusters or support_residuals or support_hypotheses:
+                (
+                    direct_support_clusters,
+                    direct_support_residuals,
+                    direct_support_hypotheses,
+                ) = self._direct_support_records_for_substrings(
+                    substrings,
+                    support_clusters,
+                    support_residuals,
+                    support_hypotheses,
+                )
+                (
+                    alias_clusters,
+                    alias_residuals,
+                    alias_hypotheses,
+                ) = self._alias_support_records_for_substrings(
+                    substitution_aliases,
+                    support_clusters,
+                    support_residuals,
+                    support_hypotheses,
+                )
+                if (
+                    direct_support_clusters
+                    or direct_support_residuals
+                    or direct_support_hypotheses
+                    or alias_clusters
+                    or alias_residuals
+                    or alias_hypotheses
+                ):
                     substring_support = sorted(
                         {
-                            item.ngram.upper() for item in support_clusters
+                            item.ngram.upper()
+                            for item in [*direct_support_clusters, *alias_clusters]
                         }
-                        | {item.residual.upper() for item in support_residuals}
-                        | {item.morph.upper() for item in support_hypotheses}
+                        | {
+                            item.residual.upper()
+                            for item in [*direct_support_residuals, *alias_residuals]
+                        }
+                        | {
+                            item.morph.upper()
+                            for item in [*direct_support_hypotheses, *alias_hypotheses]
+                        }
                     )
                     self._merge_support_evidence(
                         evidence,
-                        support_clusters,
-                        support_residuals,
-                        support_hypotheses,
+                        [*direct_support_clusters, *alias_clusters],
+                        [*direct_support_residuals, *alias_residuals],
+                        [*direct_support_hypotheses, *alias_hypotheses],
                     )
+                self._merge_substitution_dictionary_aliases(
+                    evidence,
+                    substitution_aliases,
+                    dictionary_snapshot,
+                )
+                rejected_morphs = self.repository.fetch_rejected_morphs(
+                    support_lookup_terms, variants=active_variants
+                )
                 evidence.rejected_morphs.update(
-                    self.repository.fetch_rejected_morphs(
-                        substrings, variants=active_variants
+                    self._surface_rejections_for_aliases(
+                        rejected_morphs,
+                        substitution_aliases,
                     )
                 )
+
+            dictionary_suppression_notes = self._suppress_exact_dictionary_match(
+                evidence,
+                normalized,
+                allow_dictionary=allow_dictionary,
+            )
 
             # Apply evidence mode EARLY so that decomposition generation, morph_support
             # labeling, and hard filtering all respect the mode.
@@ -734,6 +800,10 @@ class SingleWordTranslationService:
                     "enabled": not allow_whole_word,
                     "short_root_max_len": self.BLIND_RETRANSLATION_SHORT_ROOT_MAX_LEN,
                     "suppressed": blind_suppression_notes,
+                },
+                "dictionary": {
+                    "enabled": allow_dictionary,
+                    "suppressed": dictionary_suppression_notes,
                 },
             }
             fallback_used = False
@@ -962,6 +1032,10 @@ class SingleWordTranslationService:
                     "beam_scoring_applied": beam_scoring_applied,
                     "beam_scoring_parse_count": beam_scoring_parse_count,
                 }
+            diagnostics["dictionary"] = {
+                "enabled": allow_dictionary,
+                "suppressed": dictionary_suppression_notes,
+            }
             if decompositions:
                 morphs = {morph for decomp in decompositions for morph in decomp.morphs}
                 if morphs:
@@ -1269,6 +1343,7 @@ class SingleWordTranslationService:
                 "strategy": strategy,
                 "evidence_mode": evidence_mode.value,
                 "weighting_enabled": weight_enabled,
+                "dictionary_enabled": allow_dictionary,
                 "llm_enabled": llm_enabled,
                 "llm_mode": (
                     "remote"
@@ -1287,6 +1362,10 @@ class SingleWordTranslationService:
                 "diagnostics": {
                     **diagnostics,
                     "substring_support": substring_support,
+                    "substitution_aliases": {
+                        lookup: sorted(surfaces)
+                        for lookup, surfaces in sorted(substitution_aliases.items())
+                    },
                     "fasttext": self.repository.fasttext_diagnostics(),
                     "repository": self.repository.path_diagnostics(),
                     "word_lookup": self.repository.word_lookup_diagnostics(
@@ -1587,6 +1666,32 @@ class SingleWordTranslationService:
                     )
 
         return candidates, suppression_notes
+
+    @staticmethod
+    def _suppress_exact_dictionary_match(
+        evidence: WordEvidence,
+        word: str,
+        *,
+        allow_dictionary: bool,
+    ) -> list[str]:
+        """Remove only the queried token's exact dictionary anchor when requested.
+
+        `--no-dictionary` is a narrower diagnostic mode than blind
+        retranslation: it strips the canonical dictionary answer for the word
+        being translated while leaving database whole-word anchors and
+        dictionary-backed subpieces available for ordinary decomposition.
+        """
+
+        if allow_dictionary:
+            return []
+
+        normalized = (word or "").upper()
+        if not normalized:
+            return []
+        removed = evidence.dictionary_morphs.pop(normalized, None)
+        if removed is None:
+            return []
+        return [f"Suppressed exact dictionary match for {normalized}."]
 
     def _build_provisional_candidates(
         self,
@@ -2821,7 +2926,6 @@ class SingleWordTranslationService:
             "residual_ratio": 0.0,
         }
 
-
     def _with_min_n(
         self,
         min_n: int,
@@ -2899,6 +3003,166 @@ class SingleWordTranslationService:
         if denom == 0:
             return None
         return float(np.dot(word_vec, morph_vec) / denom)
+
+    def _substitution_aliases_for_substrings(
+        self,
+        substrings: Iterable[str],
+    ) -> dict[str, set[str]]:
+        """Return substitution lookup aliases for the current word's substrings.
+
+        Word translation decomposes the user's observed surface token, but the
+        project substitution map records letters that should be looked up under
+        another spelling. Building aliases per substring lets a span such as
+        ``Y`` borrow evidence from ``I`` while downstream coverage and phrase
+        traces still point at the original token.
+        """
+
+        rules = self._get_lookup_substitution_rules()
+        if not rules:
+            return {}
+        return build_lookup_aliases(
+            substrings,
+            rules,
+            max_operations=2,
+        )
+
+    def _get_lookup_substitution_rules(self) -> tuple[LookupSubstitutionRule, ...]:
+        """Load and cache translation-visible anomalous-letter substitutions.
+
+        The map is a project data artifact, not mutable runtime state. Caching
+        keeps repeated token analysis from re-reading JSON while still letting
+        tests inject ``_lookup_substitution_rules`` directly on a service
+        instance.
+        """
+
+        if self._lookup_substitution_rules is None:
+            self._lookup_substitution_rules = load_lookup_substitution_rules()
+        return self._lookup_substitution_rules
+
+    @staticmethod
+    def _direct_support_records_for_substrings(
+        substrings: Iterable[str],
+        clusters: Sequence[ClusterRecord],
+        residuals: Sequence[ResidualSemanticRecord],
+        hypotheses: Sequence[MorphHypothesisRecord],
+    ) -> tuple[
+        list[ClusterRecord],
+        list[ResidualSemanticRecord],
+        list[MorphHypothesisRecord],
+    ]:
+        """Keep fetched support whose evidence key is a literal substring.
+
+        Substitution lookup fetches both original spans and alias spellings in
+        one repository call. This splitter prevents lookup-only evidence such
+        as ``I`` from entering the word evidence as an independent span when
+        the surface token only contains ``Y``.
+        """
+
+        literal = {substring.upper() for substring in substrings if substring}
+        return (
+            [cluster for cluster in clusters if cluster.ngram.upper() in literal],
+            [
+                residual
+                for residual in residuals
+                if residual.residual.upper() in literal
+            ],
+            [
+                hypothesis
+                for hypothesis in hypotheses
+                if hypothesis.morph.upper() in literal
+            ],
+        )
+
+    @staticmethod
+    def _alias_support_records_for_substrings(
+        aliases_by_lookup: Mapping[str, set[str]],
+        clusters: Sequence[ClusterRecord],
+        residuals: Sequence[ResidualSemanticRecord],
+        hypotheses: Sequence[MorphHypothesisRecord],
+    ) -> tuple[
+        list[ClusterRecord],
+        list[ResidualSemanticRecord],
+        list[MorphHypothesisRecord],
+    ]:
+        """Clone lookup evidence onto its configured surface substring aliases.
+
+        The cloned records intentionally keep their definitions and quality
+        metadata while replacing only the matched morph key. That lets hard
+        filters, definition extraction, and phrase explanations treat the
+        surface substring as evidence-backed without mutating repository data.
+        """
+
+        alias_clusters: list[ClusterRecord] = []
+        alias_residuals: list[ResidualSemanticRecord] = []
+        alias_hypotheses: list[MorphHypothesisRecord] = []
+
+        for cluster in clusters:
+            lookup = cluster.ngram.upper()
+            for surface in sorted(aliases_by_lookup.get(lookup, set())):
+                alias_clusters.append(replace(cluster, ngram=surface))
+
+        for residual in residuals:
+            lookup = residual.residual.upper()
+            for surface in sorted(aliases_by_lookup.get(lookup, set())):
+                alias_residuals.append(replace(residual, residual=surface))
+
+        for hypothesis in hypotheses:
+            lookup = hypothesis.morph.upper()
+            for surface in sorted(aliases_by_lookup.get(lookup, set())):
+                alias_hypotheses.append(replace(hypothesis, morph=surface))
+
+        return alias_clusters, alias_residuals, alias_hypotheses
+
+    @staticmethod
+    def _merge_substitution_dictionary_aliases(
+        evidence: WordEvidence,
+        aliases_by_lookup: Mapping[str, set[str]],
+        dictionary_entries: Mapping[str, EntryRecord],
+    ) -> None:
+        """Expose dictionary entries through configured surface aliases.
+
+        Dictionary-backed singletons are valid decomposition anchors in blind
+        mode. When ``Y`` is configured to look up as ``I``, this method gives
+        the surface morph ``Y`` the same dictionary definition payload so later
+        scoring can stay surface-oriented and evidence-backed.
+        """
+
+        for lookup, surfaces in aliases_by_lookup.items():
+            entry = dictionary_entries.get(lookup.lower())
+            if entry is None:
+                continue
+            definition = _dictionary_entry_definition(entry)
+            senses = _dictionary_entry_senses(entry)
+            if not definition and not senses:
+                continue
+            for surface in sorted(surfaces):
+                if surface in evidence.dictionary_morphs:
+                    continue
+                evidence.dictionary_morphs[surface] = DictionaryMorph(
+                    morph=surface,
+                    definition=definition,
+                    senses=senses,
+                    part_of_speech=_dictionary_entry_pos(entry),
+                )
+
+    @staticmethod
+    def _surface_rejections_for_aliases(
+        rejected_morphs: Iterable[str],
+        aliases_by_lookup: Mapping[str, set[str]],
+    ) -> set[str]:
+        """Project rejected lookup morphs onto their surface aliases.
+
+        If a lookup spelling is explicitly rejected by the insights database,
+        the surface spelling that borrowed its evidence should carry the same
+        negative signal. Returning both lookup and surface keys keeps diagnostics
+        transparent while preserving existing rejection behavior.
+        """
+
+        rejected = {morph.upper() for morph in rejected_morphs if morph}
+        projected = set(rejected)
+        for lookup in rejected:
+            projected.update(aliases_by_lookup.get(lookup, set()))
+        return projected
 
     def _substring_candidates(
         self, word: str, *, include_singletons: bool = True
@@ -3053,10 +3317,11 @@ class SingleWordTranslationService:
     ) -> None:
         """Merge morph-level support evidence into the primary WordEvidence."""
         cluster_keys = {
-            (item.variant, item.cluster_id) for item in evidence.direct_clusters
+            (item.variant, item.cluster_id, item.ngram.upper())
+            for item in evidence.direct_clusters
         }
         for item in clusters:
-            key = (item.variant, item.cluster_id)
+            key = (item.variant, item.cluster_id, item.ngram.upper())
             if key in cluster_keys:
                 continue
             evidence.direct_clusters.append(item)
@@ -3074,10 +3339,11 @@ class SingleWordTranslationService:
             residual_keys.add(key)
 
         hypothesis_keys = {
-            (item.variant, item.hyp_id) for item in evidence.morph_hypotheses
+            (item.variant, item.hyp_id, item.morph.upper())
+            for item in evidence.morph_hypotheses
         }
         for item in hypotheses:
-            key = (item.variant, item.hyp_id)
+            key = (item.variant, item.hyp_id, item.morph.upper())
             if key in hypothesis_keys:
                 continue
             evidence.morph_hypotheses.append(item)

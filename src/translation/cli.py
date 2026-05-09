@@ -370,6 +370,16 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         action="store_false",
         help="Disable weighted scoring.",
     )
+    parser.add_argument(
+        "--no-dictionary",
+        dest="allow_dictionary",
+        action="store_false",
+        default=True,
+        help=(
+            "Suppress exact dictionary matches while still allowing exact DB "
+            "matches and single-piece whole-word decompositions."
+        ),
+    )
 
     llm_group = parser.add_mutually_exclusive_group()
     llm_group.add_argument(
@@ -501,6 +511,16 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
         dest="weight",
         action="store_false",
         help="Disable weighted word-level scoring.",
+    )
+    parser.add_argument(
+        "--no-dictionary",
+        dest="allow_dictionary",
+        action="store_false",
+        default=True,
+        help=(
+            "Suppress exact dictionary matches in token analyses while still "
+            "allowing exact DB matches and single-piece whole-word decompositions."
+        ),
     )
 
     llm_group = parser.add_mutually_exclusive_group()
@@ -794,6 +814,7 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
                     allow_whole_word=bool(args.allow_whole_word),
+                    allow_dictionary=bool(args.allow_dictionary),
                     progress_reporter=progress_renderer if llm_enabled else None,
                 )
                 outputs.append(
@@ -900,6 +921,7 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
                     allow_whole_word=bool(args.allow_whole_word),
+                    allow_dictionary=bool(args.allow_dictionary),
                     progress_reporter=progress_renderer,
                 )
                 outputs.append(
@@ -1099,6 +1121,7 @@ def _build_output_payload(
         "strategy": result.get("strategy"),
         "evidence_mode": result.get("evidence_mode"),
         "weighting_enabled": result.get("weighting_enabled"),
+        "dictionary_enabled": result.get("dictionary_enabled"),
         "timestamp": result.get("timestamp"),
         "llm_enabled": result.get("llm_enabled"),
         "llm_mode": result.get("llm_mode"),
@@ -1174,6 +1197,7 @@ def _build_phrase_output_payload(
         "strategy": result.get("strategy"),
         "evidence_mode": result.get("evidence_mode"),
         "weighting_enabled": result.get("weighting_enabled"),
+        "dictionary_enabled": result.get("dictionary_enabled"),
         "timestamp": result.get("timestamp"),
         "llm_enabled": result.get("llm_enabled"),
         "llm_mode": result.get("llm_mode"),
@@ -1355,6 +1379,65 @@ def _format_text_report(
     return _format_variant_report(payload, verbose=verbose, trace_filters=trace_filters)
 
 
+def _source_detail_parts(payload: object) -> list[str]:
+    """Normalize source identifiers for compact verbose provenance labels.
+
+    Word and phrase reports both consume nested translation payloads. This
+    helper lets them render the same cluster/run/root IDs without duplicating
+    brittle dictionary-key checks in each report loop.
+    """
+
+    if not isinstance(payload, dict):
+        return []
+
+    parts: list[str] = []
+    cluster_id = payload.get("source_cluster_id")
+    if cluster_id is None:
+        cluster_id = payload.get("cluster_id")
+    if cluster_id is not None:
+        parts.append(f"cluster #{cluster_id}")
+
+    variant = payload.get("source_variant")
+    if isinstance(variant, str) and variant.strip():
+        parts.append(f"variant={variant.strip()}")
+
+    run_id = payload.get("source_run_id")
+    if isinstance(run_id, str) and run_id.strip():
+        parts.append(f"run={run_id.strip()}")
+
+    cluster_index = payload.get("source_cluster_index")
+    if cluster_index is not None:
+        parts.append(f"cluster_index={cluster_index}")
+
+    root_ngram = payload.get("source_root_ngram")
+    if isinstance(root_ngram, str) and root_ngram.strip():
+        parts.append(f"root={root_ngram.strip()}")
+
+    parent_word = payload.get("source_parent_word")
+    if isinstance(parent_word, str) and parent_word.strip():
+        parts.append(f"parent={parent_word.strip()}")
+
+    group_index = payload.get("source_group_index")
+    if group_index is not None:
+        parts.append(f"group={group_index}")
+
+    hypothesis_id = payload.get("source_hypothesis_id")
+    if hypothesis_id is not None:
+        parts.append(f"hypothesis #{hypothesis_id}")
+
+    anchor = payload.get("source_anchor")
+    if isinstance(anchor, str) and anchor.strip():
+        parts.append(f"anchor={anchor.strip()}")
+
+    return parts
+
+
+def _source_detail_label(payload: object) -> str:
+    """Render a stable one-line source provenance suffix for verbose reports."""
+
+    return "; ".join(_source_detail_parts(payload))
+
+
 def _format_variant_report(
     payload: dict[str, object],
     *,
@@ -1375,6 +1458,7 @@ def _format_variant_report(
     llm_context = payload.get("llm_context")
     evidence_mode = payload.get("evidence_mode")
     weighting_enabled = payload.get("weighting_enabled")
+    dictionary_enabled = payload.get("dictionary_enabled")
     llm_mode_label = llm_mode if llm_mode else "n/a"
 
     lines.append(f"Word: {word}")
@@ -1384,6 +1468,8 @@ def _format_variant_report(
         lines.append(f"Evidence mode: {evidence_mode}")
     if isinstance(weighting_enabled, bool):
         lines.append(f"Weighted scoring: {weighting_enabled}")
+    if isinstance(dictionary_enabled, bool):
+        lines.append(f"Dictionary exact matches: {dictionary_enabled}")
     lines.append(f"LLM enabled: {llm_enabled}")
     lines.append(f"LLM mode: {llm_mode_label}")
     if isinstance(llm_context, str) and llm_context:
@@ -1445,8 +1531,92 @@ def _format_variant_report(
                     morph = meaning.get("morph", "")
                     provenance = meaning.get("provenance", "unknown")
                     definition = meaning.get("definition") or "unknown"
-                    line = f"{morph} ({provenance}): {definition}"
+                    provenance_label = str(provenance)
+                    if verbose:
+                        source_detail = _source_detail_label(meaning)
+                        if source_detail:
+                            provenance_label = f"{provenance_label}; {source_detail}"
+                    line = f"{morph} ({provenance_label}): {definition}"
                     lines.append(_wrap_text(line, indent=2, bullet=True))
+                    if verbose:
+                        definition_trace = meaning.get("definition_trace")
+                        if not isinstance(definition_trace, dict):
+                            continue
+                        selected_quality = definition_trace.get("selected_quality")
+                        trace_bits = []
+                        selected_source = definition_trace.get("selected_source")
+                        if isinstance(selected_source, str) and selected_source.strip():
+                            trace_bits.append(f"source={selected_source.strip()}")
+                        trace_detail = _source_detail_label(
+                            definition_trace.get("selected_source_detail")
+                        )
+                        if trace_detail:
+                            trace_bits.append(trace_detail)
+                        if isinstance(selected_quality, (int, float)):
+                            trace_bits.append(f"q={float(selected_quality):.2f}")
+                        if trace_bits:
+                            lines.append(
+                                _wrap_text(
+                                    "Selected definition: " + "; ".join(trace_bits),
+                                    indent=4,
+                                )
+                            )
+                        semantic_core = definition_trace.get("selected_semantic_core")
+                        if isinstance(semantic_core, list) and semantic_core:
+                            lines.append(
+                                _wrap_text(
+                                    "Semantic core: "
+                                    + "; ".join(str(item) for item in semantic_core),
+                                    indent=4,
+                                )
+                            )
+                        negative_contrast = definition_trace.get(
+                            "selected_negative_contrast"
+                        )
+                        if isinstance(negative_contrast, list) and negative_contrast:
+                            lines.append(
+                                _wrap_text(
+                                    "Negative contrast: "
+                                    + "; ".join(str(item) for item in negative_contrast),
+                                    indent=4,
+                                )
+                            )
+                        runner_ups = definition_trace.get("runner_ups")
+                        if isinstance(runner_ups, list) and runner_ups:
+                            rendered_runner_ups: list[str] = []
+                            for runner_up in runner_ups:
+                                if not isinstance(runner_up, dict):
+                                    continue
+                                runner_definition = runner_up.get("definition")
+                                if (
+                                    not isinstance(runner_definition, str)
+                                    or not runner_definition.strip()
+                                ):
+                                    continue
+                                source_label = str(
+                                    runner_up.get("source") or "unknown"
+                                ).strip()
+                                source_detail = _source_detail_label(runner_up)
+                                quality = runner_up.get("quality")
+                                details = [item for item in (source_label, source_detail) if item]
+                                if isinstance(quality, (int, float)):
+                                    details.append(f"q={float(quality):.2f}")
+                                suffix = (
+                                    " (" + ", ".join(details) + ")"
+                                    if details
+                                    else ""
+                                )
+                                rendered_runner_ups.append(
+                                    runner_definition.strip() + suffix
+                                )
+                            if rendered_runner_ups:
+                                lines.append(
+                                    _wrap_text(
+                                        "Definition runner-ups: "
+                                        + "; ".join(rendered_runner_ups),
+                                        indent=4,
+                                    )
+                                )
 
             synthesized = sense.get("synthesized_definition")
             concatenated = sense.get("concatenated_meanings")
@@ -1944,6 +2114,9 @@ def _format_phrase_report(
     lines.append(f"Phrase: {payload.get('phrase', '')}")
     lines.append(f"Variant: {payload.get('variant', '')}")
     lines.append(f"Strategy: {payload.get('strategy', '')}")
+    dictionary_enabled = payload.get("dictionary_enabled")
+    if isinstance(dictionary_enabled, bool):
+        lines.append(f"Dictionary exact matches: {dictionary_enabled}")
     lines.append(f"Constrained render enabled: {payload.get('llm_enabled', False)}")
     lay_mode = payload.get("lay_translation_mode")
     if isinstance(lay_mode, str) and lay_mode:
@@ -2134,13 +2307,47 @@ def _format_phrase_report(
                                     indent=6,
                                 )
                             )
+                    morph_sources = candidate.get("morph_sources")
+                    if isinstance(morph_sources, list) and morph_sources:
+                        rendered_sources: list[str] = []
+                        for source in morph_sources:
+                            if not isinstance(source, dict):
+                                continue
+                            morph = str(source.get("morph") or "").strip()
+                            if not morph:
+                                continue
+                            provenance = str(source.get("provenance") or "unknown").strip()
+                            source_detail = _source_detail_label(source)
+                            definition = source.get("definition")
+                            quality = source.get("selected_quality")
+                            label = morph
+                            details = [item for item in (provenance, source_detail) if item]
+                            if isinstance(quality, (int, float)):
+                                details.append(f"q={float(quality):.2f}")
+                            if details:
+                                label += " (" + "; ".join(details) + ")"
+                            if isinstance(definition, str) and definition.strip():
+                                label += f": {definition.strip()}"
+                            rendered_sources.append(label)
+                        if rendered_sources:
+                            lines.append(_wrap_text("Morph sources:", indent=6))
+                            for source_line in rendered_sources:
+                                lines.append(
+                                    _wrap_text(source_line, indent=8, bullet=True)
+                                )
                     definition_trace = candidate.get("definition_trace")
                     if isinstance(definition_trace, dict):
                         selected_source = definition_trace.get("selected_source")
                         if isinstance(selected_source, str) and selected_source.strip():
+                            source_detail = _source_detail_label(
+                                definition_trace.get("selected_source_detail")
+                            )
+                            selected_label = selected_source.strip()
+                            if source_detail:
+                                selected_label = f"{selected_label} ({source_detail})"
                             lines.append(
                                 _wrap_text(
-                                    f"Selected source: {selected_source.strip()}",
+                                    f"Selected source: {selected_label}",
                                     indent=6,
                                 )
                             )
@@ -2215,7 +2422,11 @@ def _format_phrase_report(
                                     continue
                                 label_bits = [definition.strip()]
                                 if isinstance(source, str) and source.strip():
-                                    label_bits.append(source.strip())
+                                    source_label = source.strip()
+                                    source_detail = _source_detail_label(runner_up)
+                                    if source_detail:
+                                        source_label = f"{source_label}; {source_detail}"
+                                    label_bits.append(source_label)
                                 if isinstance(quality, (int, float)):
                                     label_bits.append(f"q={float(quality):.2f}")
                                 rendered_runner_ups.append(" (" + ", ".join(label_bits[1:]) + ")" if len(label_bits) > 1 else "")

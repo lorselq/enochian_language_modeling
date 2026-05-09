@@ -202,3 +202,5 @@ suggestions.md
 .roo
 diag.py
 runs/*
+.codex
+.claude/
