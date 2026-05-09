@@ -1277,6 +1277,63 @@ def _run_report_pipeline(args: argparse.Namespace) -> None:
     print("Report written to {}".format(out_dir.joinpath("pipeline_report.html")))
 
 
+def _run_report_root_groups(args: argparse.Namespace) -> None:
+    """Build the root-group diagnostic report from configured insights DBs.
+
+    Why:
+    root-level sense grouping is an advisory read model for translation
+    diagnostics, and it should be reachable without changing translation
+    ranking behavior.
+
+    How:
+    the command resolves the configured solo/debate insights databases, asks
+    the read-only translation root-group service for a report, then renders the
+    same payload as JSON or compact text.
+
+    Responsibility:
+    provide CLI wiring only. All grouping, parsing, and evidence-preservation
+    rules live in ``translation.root_groups`` so tests can exercise the service
+    independently from argparse.
+    """
+
+    from translation.root_groups import (
+        RootGroupOptions,
+        RootSenseGroupService,
+        render_report_json,
+        render_report_text,
+    )
+
+    paths = get_config_paths()
+    options = RootGroupOptions(
+        variant_paths={
+            "solo": paths["solo"],
+            "debate": paths["debate"],
+        },
+        variants=(args.variant,),
+        detail=args.detail,
+        max_groups=args.max_groups,
+        pretty=args.pretty,
+    )
+    report = RootSenseGroupService(options).build_report(args.root)
+    output = (
+        render_report_json(report, pretty=args.pretty)
+        if args.format == "json"
+        else render_report_text(report)
+    )
+
+    if args.output:
+        out_path = Path(args.output)
+
+        def writer(tmp: NamedTemporaryFile) -> None:
+            tmp.write(output)
+
+        _atomic_write(out_path, writer)
+        print(f"Root group report written to {out_path}")
+        return
+
+    print(output, end="")
+
+
 def _run_preanalyze(args: argparse.Namespace) -> None:
     db_path = Path(args.db_path)
     run_ids = _normalize_run_ids(args.run_id) if args.run_id is not None else []
@@ -1704,6 +1761,50 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     report_pipeline.set_defaults(handler=_run_report_pipeline)
 
+    report_root_groups = report_subparsers.add_parser(
+        "root-groups",
+        help="Group accepted root glosses into diagnostic sense bundles",
+    )
+    report_root_groups.add_argument(
+        "--root",
+        required=True,
+        help="Root to inspect, case-insensitive",
+    )
+    report_root_groups.add_argument(
+        "--variant",
+        choices=["solo", "debate", "both"],
+        default="both",
+        help="Insights DB variant to query",
+    )
+    report_root_groups.add_argument(
+        "--detail",
+        choices=["full", "compact"],
+        default="full",
+        help="Include full evidence packets or compact group payloads",
+    )
+    report_root_groups.add_argument(
+        "--max-groups",
+        type=int,
+        default=12,
+        help="Maximum number of ranked groups to emit",
+    )
+    report_root_groups.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format",
+    )
+    report_root_groups.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output",
+    )
+    report_root_groups.add_argument(
+        "--output",
+        help="Optional path to write the report instead of printing it",
+    )
+    report_root_groups.set_defaults(handler=_run_report_root_groups)
+
     analyze = subparsers.add_parser("analyze", help="Run all placeholder analytics")
     analyze_subparsers = analyze.add_subparsers(dest="analyze_command", required=True)
     analyze_all = analyze_subparsers.add_parser("all", help="Run all placeholder tasks")
@@ -1802,6 +1903,31 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _should_bootstrap_command_db(args: argparse.Namespace) -> bool:
+    """Return whether the top-level ``--db`` path needs schema bootstrap.
+
+    Why:
+    most analysis commands operate directly on ``--db`` and expect the analysis
+    tables to exist, but some commands resolve their own variant-aware data
+    sources and should not initialize an unrelated default database.
+
+    How:
+    this helper keeps the exception list explicit and testable instead of
+    burying command-specific behavior inside ``main``.
+
+    Responsibility:
+    protect read-only reporting and translation commands from misleading or
+    unnecessary writes while preserving bootstrap behavior for legacy analysis
+    commands.
+    """
+
+    if args.command == "translate-word":
+        return False
+    if args.command == "report" and args.report_command == "root-groups":
+        return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     try:
@@ -1814,7 +1940,7 @@ def main(argv: list[str] | None = None) -> int:
 
     db_path = Path(args.db).expanduser().resolve()
     args.db_path = db_path
-    if args.command != "translate-word":
+    if _should_bootstrap_command_db(args):
         init_insights_db.init_db(str(db_path))
 
         conn = connect_sqlite(str(db_path))

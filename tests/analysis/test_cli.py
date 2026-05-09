@@ -170,6 +170,48 @@ def test_build_parser_keeps_refresh_alias() -> None:
     assert args.handler == cli._run_residual_refresh
 
 
+def test_build_parser_accepts_root_groups_report_command() -> None:
+    parser = cli._build_parser()
+    args = parser.parse_args(
+        [
+            "report",
+            "root-groups",
+            "--root",
+            "IO",
+            "--variant",
+            "debate",
+            "--detail",
+            "compact",
+            "--format",
+            "json",
+            "--pretty",
+        ]
+    )
+
+    assert args.command == "report"
+    assert args.report_command == "root-groups"
+    assert args.root == "IO"
+    assert args.variant == "debate"
+    assert args.detail == "compact"
+    assert args.format == "json"
+    assert args.pretty is True
+    assert args.handler == cli._run_report_root_groups
+
+
+def test_root_groups_report_skips_top_level_db_bootstrap() -> None:
+    parser = cli._build_parser()
+    args = parser.parse_args(["report", "root-groups", "--root", "D"])
+
+    assert cli._should_bootstrap_command_db(args) is False
+
+
+def test_pipeline_report_still_bootstraps_top_level_db() -> None:
+    parser = cli._build_parser()
+    args = parser.parse_args(["report", "pipeline"])
+
+    assert cli._should_bootstrap_command_db(args) is True
+
+
 def test_run_composite_backfill_processes_each_run(monkeypatch, capsys) -> None:
     calls: list[str | None] = []
 
