@@ -213,6 +213,47 @@ class TranslationMemoryRepository:
             )
 
 
+class NullTranslationMemoryRepository:
+    """No-op translation memory used when memory is disabled.
+
+    Testing and evaluation runs must be reproducible without hidden influence
+    from previous provisional translations. This repository implements the same
+    read/write surface as ``TranslationMemoryRepository`` while deliberately
+    avoiding SQLite connections, schema creation, reads, and writes.
+    """
+
+    path: Path | None = None
+
+    def close(self) -> None:
+        """Mirror the persistent repository cleanup surface without side effects."""
+
+    def __enter__(self) -> "NullTranslationMemoryRepository":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def fetch_entry(self, word: str) -> ProvisionalLexiconEntry | None:
+        """Return no memory entry so previous runs cannot affect translation."""
+
+        return None
+
+    def record_observation(
+        self,
+        *,
+        word: str,
+        phrase: str,
+        role_hint: str | None,
+        glosses: list[str],
+        confidence: float,
+        left_neighbor: str | None,
+        right_neighbor: str | None,
+    ) -> dict[str, object]:
+        """Reject accidental writes when memory updates are disabled upstream."""
+
+        raise RuntimeError("Translation memory updates are disabled.")
+
+
 def _load_json_list(payload: object) -> list[str]:
     if isinstance(payload, list):
         return [str(item) for item in payload if str(item).strip()]

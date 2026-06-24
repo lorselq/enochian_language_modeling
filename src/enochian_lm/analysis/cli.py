@@ -30,17 +30,16 @@ from enochian_lm.root_extraction.utils.dictionary_loader import load_dictionary
 from enochian_lm.root_extraction.utils.preanalysis import execute_preanalysis
 from enochian_lm.root_extraction.utils.residual_refresh import refresh_residual_details
 
-from translation.cli import (
-    configure_translate_phrase_parser,
-    configure_translate_word_parser,
-    translate_phrase_from_args,
-    translate_word_from_args,
-)
-
 from .analysis.attribution import run_leave_one_out
 from .analysis.colloc import compute_collocations
 from .analysis.factorize import factorize_morphemes
 from .analysis.residuals import cluster_residuals
+from .find_ngram import (
+    find_ngram_matches,
+    format_ngram_matches_json,
+    format_ngram_matches_text,
+    load_dictionary_entries,
+)
 from .report.pipeline_summary import generate_pipeline_report
 from .utils.sql import connect_sqlite, ensure_analysis_tables
 from .utils.text import set_global_seeds, utcnow_iso
@@ -1482,6 +1481,8 @@ def _run_translate_word(args: argparse.Namespace) -> None:
     This delegates to the translation package so the same logic powers both the
     dedicated translation CLI and the `enlm translate-word` entry point.
     """
+    from translation.cli import translate_word_from_args
+
     exit_code = translate_word_from_args(args)
     if exit_code != 0:
         raise SystemExit(exit_code)
@@ -1489,7 +1490,174 @@ def _run_translate_word(args: argparse.Namespace) -> None:
 
 def _run_translate_phrase(args: argparse.Namespace) -> None:
     """Translate an Enochian phrase using stored insights and parse search."""
+    from translation.cli import translate_phrase_from_args
+
     exit_code = translate_phrase_from_args(args)
+    if exit_code != 0:
+        raise SystemExit(exit_code)
+
+
+def _configure_translate_word_command(parser: argparse.ArgumentParser) -> None:
+    """Attach translate-word arguments without top-level translation imports.
+
+    Why:
+    `enlm find-ngram` should be able to start without paying the import cost of
+    the translation CLI, while translation commands still need their full parser
+    when the general `enlm` parser is built.
+
+    How:
+    import the translation parser configurator only when `_build_parser` is
+    constructing the translate-word command.
+
+    Responsibility:
+    preserve existing translation CLI behavior while keeping module import
+    lighter for fast-path commands.
+    """
+
+    from translation.cli import configure_translate_word_parser
+
+    configure_translate_word_parser(parser)
+
+
+def _configure_translate_phrase_command(parser: argparse.ArgumentParser) -> None:
+    """Attach translate-phrase arguments without top-level translation imports.
+
+    Why:
+    the analysis CLI now has a lightweight pre-dispatch path for dictionary
+    lookup, and eager translation imports would defeat that path.
+
+    How:
+    import the phrase parser configurator at parser-build time only.
+
+    Responsibility:
+    keep translate-phrase parser wiring compatible with the existing
+    translation module.
+    """
+
+    from translation.cli import configure_translate_phrase_parser
+
+    configure_translate_phrase_parser(parser)
+
+
+def _configure_find_ngram_parser(parser: argparse.ArgumentParser) -> None:
+    """Attach shared `find-ngram` arguments to a parser.
+
+    Why:
+    the lookup must be available as both a top-level Poetry script and an
+    `enlm` subcommand without drifting option behavior between the two entry
+    points.
+
+    How:
+    configure positional query, dictionary source, filtering, output, and
+    formatting flags once and reuse the function for both parsers.
+
+    Responsibility:
+    keep the public CLI contract for ngram lookup centralized and testable.
+    """
+
+    parser.add_argument("ngram", metavar="NGRAM", help="Ngram to find in words")
+    parser.add_argument(
+        "--dictionary",
+        default=str(get_config_paths()["dictionary"]),
+        help="Dictionary JSON path",
+    )
+    parser.add_argument(
+        "--canon-only",
+        action="store_true",
+        help="Return only entries explicitly marked canon_word=true",
+    )
+    parser.add_argument(
+        "--include-alternates",
+        action="store_true",
+        help="Also match alternate spellings when present",
+    )
+    parser.add_argument(
+        "--citations",
+        action="store_true",
+        help="Include entry-level and sense-level citations",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Include match surfaces and dictionary metadata",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format",
+    )
+    parser.add_argument(
+        "--output",
+        help="Optional file path to write output instead of printing to stdout",
+    )
+
+
+def _execute_find_ngram(args: argparse.Namespace) -> int:
+    """Run the dictionary ngram lookup and write the requested output.
+
+    Why:
+    both CLI entry points need identical runtime behavior, including exit codes
+    and file-output handling.
+
+    How:
+    load raw dictionary JSON, find matches using the shared analysis helper,
+    render text or JSON, then print or atomically write the result.
+
+    Responsibility:
+    translate parsed CLI arguments into one read-only dictionary lookup.
+    """
+
+    dictionary_path = Path(args.dictionary).expanduser().resolve()
+    entries = load_dictionary_entries(dictionary_path)
+    matches = find_ngram_matches(
+        entries,
+        args.ngram,
+        canon_only=args.canon_only,
+        include_alternates=args.include_alternates,
+    )
+    if args.format == "json":
+        rendered = format_ngram_matches_json(matches, query=args.ngram)
+    else:
+        rendered = format_ngram_matches_text(
+            matches,
+            query=args.ngram,
+            citations=args.citations,
+            verbose=args.verbose,
+        )
+
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+
+        def writer(tmp: NamedTemporaryFile) -> None:
+            tmp.write(rendered)
+
+        _atomic_write(output_path, writer)
+    else:
+        print(rendered, end="")
+
+    if not matches:
+        return 1
+    return 0
+
+
+def _run_find_ngram(args: argparse.Namespace) -> None:
+    """Handle the `enlm find-ngram` subcommand.
+
+    Why:
+    the main `enlm` dispatcher expects handlers to raise for non-zero exits
+    rather than returning status codes directly.
+
+    How:
+    delegate to the shared executor and convert a no-match status into
+    `SystemExit(1)`.
+
+    Responsibility:
+    preserve existing analysis CLI handler conventions for the new read-only
+    command.
+    """
+
+    exit_code = _execute_find_ngram(args)
     if exit_code != 0:
         raise SystemExit(exit_code)
 
@@ -1736,15 +1904,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "translate-word",
         help="Translate a single Enochian word using stored insights",
     )
-    configure_translate_word_parser(translate_word)
+    _configure_translate_word_command(translate_word)
     translate_word.set_defaults(handler=_run_translate_word)
 
     translate_phrase = subparsers.add_parser(
         "translate-phrase",
         help="Translate an Enochian phrase using stored insights and parse search",
     )
-    configure_translate_phrase_parser(translate_phrase)
+    _configure_translate_phrase_command(translate_phrase)
     translate_phrase.set_defaults(handler=_run_translate_phrase)
+
+    find_ngram = subparsers.add_parser(
+        "find-ngram",
+        help="Find dictionary words containing an ngram",
+    )
+    _configure_find_ngram_parser(find_ngram)
+    find_ngram.set_defaults(handler=_run_find_ngram)
 
     report = subparsers.add_parser("report", help="Reporting utilities")
     report_subparsers = report.add_subparsers(dest="report_command", required=True)
@@ -1923,12 +2098,122 @@ def _should_bootstrap_command_db(args: argparse.Namespace) -> bool:
 
     if args.command == "translate-word":
         return False
+    if args.command == "find-ngram":
+        return False
     if args.command == "report" and args.report_command == "root-groups":
         return False
     return True
 
 
+def _build_find_ngram_parser() -> argparse.ArgumentParser:
+    """Build the top-level `find-ngram` parser.
+
+    Why:
+    Poetry script entry points bypass the `enlm` subparser tree, so the command
+    needs a small standalone parser with the same lookup options.
+
+    How:
+    create a parser named `find-ngram` and attach the shared argument contract.
+
+    Responsibility:
+    make `poetry run find-ngram "NGRAM"` behave like `enlm find-ngram "NGRAM"`.
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="find-ngram",
+        description="Find dictionary words containing an ngram",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    _configure_find_ngram_parser(parser)
+    return parser
+
+
+def find_ngram_main(argv: list[str] | None = None) -> int:
+    """Run the top-level `find-ngram` Poetry script.
+
+    Why:
+    the project needs a direct command for quick dictionary lookup while keeping
+    the analysis CLI subcommand available for users who prefer `enlm`.
+
+    How:
+    parse standalone arguments, configure logging from `--verbose`, and execute
+    the shared read-only lookup path.
+
+    Responsibility:
+    provide the console-script entry point declared in `pyproject.toml`.
+    """
+
+    parser = _build_find_ngram_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:  # pragma: no cover - delegated to argparse
+        return exc.code
+
+    _configure_logging(args.verbose)
+    try:
+        return _execute_find_ngram(args)
+    except (FileNotFoundError, OSError, ValueError) as error:
+        logger.error(
+            f"Command failed. Reason: {str(error)}",
+            exc_info=False,
+            extra={"error": str(error)},
+        )
+        return 2
+
+
+def _extract_find_ngram_fast_args(argv: list[str] | None) -> list[str] | None:
+    """Extract standalone lookup args from an `enlm find-ngram` invocation.
+
+    Why:
+    the full `enlm` parser wires translation subcommands that are expensive to
+    import, but `find-ngram` only needs dictionary JSON and should stay quick.
+
+    How:
+    inspect raw argv for the `find-ngram` command, accept the existing global
+    `--verbose`, `--db`, and `--seed` options before it, and return the
+    remaining arguments in the shape expected by the lightweight standalone
+    parser.
+
+    Responsibility:
+    provide a narrow fast path for this read-only subcommand without changing
+    behavior for the rest of the analysis CLI.
+    """
+
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if "find-ngram" not in raw_args:
+        return None
+
+    command_index = raw_args.index("find-ngram")
+    leading_args = raw_args[:command_index]
+    verbose = False
+    index = 0
+    while index < len(leading_args):
+        token = leading_args[index]
+        if token == "--verbose":
+            verbose = True
+            index += 1
+            continue
+        if token in {"--db", "--seed"}:
+            index += 2
+            continue
+        if token.startswith("--db=") or token.startswith("--seed="):
+            index += 1
+            continue
+        return None
+
+    fast_args = list(raw_args[command_index + 1 :])
+    if verbose and "--verbose" not in fast_args:
+        fast_args.append("--verbose")
+    return fast_args
+
+
 def main(argv: list[str] | None = None) -> int:
+    fast_find_ngram_args = _extract_find_ngram_fast_args(argv)
+    if fast_find_ngram_args is not None:
+        from .find_ngram_cli import main as find_ngram_cli_main
+
+        return find_ngram_cli_main(fast_find_ngram_args)
+
     parser = _build_parser()
     try:
         args = parser.parse_args(argv)

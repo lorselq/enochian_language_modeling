@@ -8,6 +8,7 @@ surface nested evidence and ambiguity without changing translation ranking.
 """
 
 import json
+import argparse
 import sqlite3
 from pathlib import Path
 
@@ -17,7 +18,15 @@ from translation.root_groups import (
     MissingRootGlossesViewError,
     RootGroupOptions,
     RootSenseGroupService,
+    align_root_groups_for_morph,
     render_report_text,
+)
+from translation.decomposition import Decomposition
+from translation.repository import AttestedDefinition, WordEvidence
+from translation.service import SingleWordTranslationService
+from translation.cli import (
+    configure_translate_phrase_parser,
+    configure_translate_word_parser,
 )
 
 
@@ -388,3 +397,185 @@ def test_text_renderer_shows_effects_and_empty_reason(tmp_path: Path) -> None:
         RootGroupOptions(variant_paths={"solo": db_path}, variants=("solo",))
     ).build_report("zz")
     assert "no_accepted_root_glosses" in render_report_text(empty)
+
+
+def test_alignment_prefers_source_word_and_suffix_match(tmp_path: Path) -> None:
+    db_path = tmp_path / "debate.sqlite3"
+    _create_root_group_db(db_path)
+    _insert_gloss(
+        db_path,
+        root="io",
+        cluster_id=3069,
+        definition="A state marker with negative manifestations.",
+        semantic_core=["negative manifestation", "woe"],
+        evidence=[
+            {
+                "word": "OHIO",
+                "sense": "woe",
+                "note": {
+                    "role": "suffix",
+                    "effect": "negative manifestation of sorrow",
+                    "confidence": 0.93,
+                    "sense_alignment": 0.9,
+                },
+            }
+        ],
+        attachment_suffix=0.8,
+        attachment_free=0.1,
+    )
+    report = RootSenseGroupService(
+        RootGroupOptions(variant_paths={"debate": db_path}, variants=("debate",))
+    ).build_report("io")
+
+    alignment = align_root_groups_for_morph(
+        morph="IO",
+        span_role="suffix",
+        report=report,
+        source_cluster_ids=[3069],
+        evidence_word="OHIO",
+        semantic_text="woe and sorrow",
+    )
+
+    assert alignment["primary_group_id"]
+    assert alignment["alignment_score"] > 0.7
+    assert "source_cluster_id_match" in alignment["reasons"]
+    assert "nested_evidence_word_match" in alignment["reasons"]
+    assert alignment["primary_group"]["source_cluster_ids"] == [3069]
+
+
+def test_word_service_attaches_root_group_diagnostics_to_candidates(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "debate.sqlite3"
+    _create_root_group_db(db_path)
+    _insert_gloss(
+        db_path,
+        root="d",
+        cluster_id=12,
+        definition="A demonstrative marker.",
+        semantic_core=["deictic", "demonstrative"],
+        evidence=[
+            {
+                "word": "DA",
+                "sense": "that",
+                "note": {
+                    "role": "prefix",
+                    "effect": "points to discourse entities",
+                    "confidence": 0.88,
+                    "sense_alignment": 0.82,
+                },
+            }
+        ],
+        attachment_prefix=0.9,
+        attachment_free=0.0,
+    )
+    report = RootSenseGroupService(
+        RootGroupOptions(variant_paths={"debate": db_path}, variants=("debate",))
+    ).build_report("d")
+    service = SingleWordTranslationService.__new__(SingleWordTranslationService)
+    service.repository = type("Repo", (), {"variants": ["debate"]})()
+    service.ROOT_GROUP_MAX_GROUPS_PER_ROOT = 3
+    candidate = {
+        "morphs": ["D"],
+        "meanings": [
+            {
+                "morph": "D",
+                "definition": "that",
+                "semantic_core": ["deictic"],
+                "source_cluster_id": 12,
+            }
+        ],
+        "bundle_surface_gloss": "that",
+    }
+    diagnostics: dict[str, object] = {}
+
+    service._attach_root_group_context_to_candidates(
+        [candidate],
+        reports_by_morph={"D": report},
+        variants=["debate"],
+        evidence_word="DA",
+        diagnostics=diagnostics,
+        use_for_ranking=False,
+    )
+
+    assert candidate["root_group_alignments"][0]["primary_group_id"]
+    assert diagnostics["root_groups"]["enabled"] is True
+    assert diagnostics["root_groups"]["used_for_ranking"] is False
+    assert diagnostics["root_groups"]["root_groups_by_morph"]["D"]["groups"]
+
+
+def test_root_group_ranking_feature_is_bounded_and_provenance_based(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "debate.sqlite3"
+    _create_root_group_db(db_path)
+    _insert_gloss(
+        db_path,
+        root="d",
+        cluster_id=12,
+        definition="A demonstrative marker.",
+        semantic_core=["deictic", "demonstrative"],
+        evidence=[
+            {
+                "word": "DA",
+                "sense": "that",
+                "note": {
+                    "role": "prefix",
+                    "effect": "points to discourse entities",
+                    "confidence": 0.88,
+                    "sense_alignment": 0.82,
+                },
+            }
+        ],
+        attachment_prefix=0.9,
+        attachment_free=0.0,
+    )
+    report = RootSenseGroupService(
+        RootGroupOptions(variant_paths={"debate": db_path}, variants=("debate",))
+    ).build_report("d")
+    service = SingleWordTranslationService.__new__(SingleWordTranslationService)
+    evidence = WordEvidence(
+        word="DA",
+        variants_queried=["debate"],
+        attested_definitions=[
+            AttestedDefinition(
+                variant="debate",
+                source_word="D",
+                definition="that",
+                cluster_id=12,
+                root_ngram="D",
+            )
+        ],
+    )
+    feature = service._root_group_decision_feature(
+        decomp=Decomposition(
+            morphs=["D", "A"],
+            canonicals=["D", "A"],
+            beam_score=1.0,
+        ),
+        evidence=evidence,
+        reports_by_morph={"D": report},
+    )
+
+    assert 0.0 <= feature["score"] <= 1.0
+    assert feature["score"] > 0.2
+    assert feature["alignments"][0]["primary_group_id"]
+
+
+def test_translation_cli_accepts_root_group_phase_flags() -> None:
+    word_parser = argparse.ArgumentParser()
+    configure_translate_word_parser(word_parser)
+    word_args = word_parser.parse_args(
+        ["DA", "--with-root-groups", "--use-root-groups-for-ranking"]
+    )
+
+    phrase_parser = argparse.ArgumentParser()
+    configure_translate_phrase_parser(phrase_parser)
+    phrase_args = phrase_parser.parse_args(
+        ["DA IA", "--with-root-groups", "--use-root-groups-for-ranking"]
+    )
+
+    assert word_args.with_root_groups is True
+    assert word_args.use_root_groups_for_ranking is True
+    assert phrase_args.with_root_groups is True
+    assert phrase_args.use_root_groups_for_ranking is True

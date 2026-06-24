@@ -445,6 +445,67 @@ Forbidden fields in compact summaries:
 This summary is the only group shape allowed in normal translation output unless
 verbose/debug output explicitly requests the full report.
 
+#### `RootGroupAlignment`
+
+Represents the local decision that connects one morph occurrence inside one
+candidate decomposition to one provisional root sense group.
+
+Required fields:
+
+- `morph`: uppercase morph/root string.
+- `span_role`: one of `prefix`, `suffix`, `infix`, `free`, or `unknown`.
+- `primary_group_id`: selected group ID, or `null` when no group exists.
+- `alignment_score`: bounded float from `0.0` to `1.0`.
+- `reasons`: ordered reason labels explaining the score.
+- `warnings`: alignment or group caveats.
+- `source_cluster_ids`: source cluster IDs supplied by the selected morph
+  meaning or current evidence trace.
+- `primary_group`: compact `RootSenseGroupSummary`, or `null`.
+- `alternates`: compact runner-up group alignments.
+
+Allowed reason labels:
+
+- `source_cluster_id_match`: selected morph evidence points to a cluster inside
+  the group.
+- `nested_evidence_word_match`: target word appears in the group's nested
+  `EVIDENCE[*].word` or examples.
+- `<role>_attachment_match`: group attachment likelihood supports the morph's
+  span role, for example `prefix_attachment_match`.
+- `<role>_observed_attachment_match`: observed attachment counts support the
+  span role when likelihoods are unavailable.
+- `semantic_overlap`: selected morph semantics overlap group terms, examples,
+  or nested effects.
+- `group_rank_support`: group rank contributes a small prior.
+- `ranked_as_visible_alternate`: group remains visible but had no strong local
+  evidence.
+- `no_root_groups_available`: no accepted groups were available for the morph.
+
+Default alignment weights:
+
+- `source_cluster_id_match_weight`: `0.45`
+- `nested_evidence_word_match_weight`: `0.25`
+- `attachment_role_match_weight`: `0.15`
+- `semantic_overlap_weight`: `0.10`
+- `group_rank_weight`: `0.05`
+- `needs_review_penalty`: `0.08`
+- `split_recommended_penalty`: `0.12`
+- `provisional_penalty`: `0.02`
+- `max_alignment_score`: `1.0`
+
+Alignment policy:
+
+- Provenance beats semantics. A `source_cluster_id` match is the strongest
+  reason because it ties the chosen morph meaning to a concrete accepted row.
+- Target-word evidence beats abstract similarity. If `OHIO` appears in nested
+  evidence for an `IO` group, that group should outrank a generic existential
+  group for the word `OHIO`.
+- Attachment role is local to the decomposition. The same root may align to
+  different groups when it appears as a prefix, suffix, infix, or free morph.
+- Semantic overlap is only a tie-breaker. It must not override provenance,
+  word evidence, hard filters, or whole-word anchors.
+- `needs_review` and `split_recommended` groups remain eligible but penalized.
+  They should be visible as alternates rather than erased.
+
 ### Evidence Packet Construction
 
 Implementation should construct packets in this order:
@@ -959,7 +1020,8 @@ Implementation shape:
   translation.
 - For `translate-word`, compute group reports for the unique morphs from
   returned candidates up to `top_k`. Attach compact summaries under
-  diagnostics, for example `diagnostics.root_groups`.
+  `diagnostics.root_groups`, and attach local `RootGroupAlignment` rows to each
+  returned candidate as `candidate.root_group_alignments`.
 - For `translate-phrase`, compute group reports for chosen token candidate
   morphs after parse selection. Attach compact summaries under token
   diagnostics and, when `--llm` is enabled, include a bounded summary in the LLM
@@ -969,6 +1031,41 @@ Implementation shape:
 - Do not compute groups for every possible substring by default; that is too
   expensive and too noisy. Broader substring grouping is out of scope for Phase
   3 v1 and requires a separate flag/spec update.
+
+Concrete Phase 3 output paths:
+
+- Word service internal result:
+  - `result.diagnostics.root_groups.enabled`
+  - `result.diagnostics.root_groups.used_for_ranking`
+  - `result.diagnostics.root_groups.variants`
+  - `result.diagnostics.root_groups.max_groups_per_root`
+  - `result.diagnostics.root_groups.root_groups_by_morph[ROOT].groups`
+  - `result.diagnostics.root_groups.root_groups_by_morph[ROOT].diagnostics`
+  - `result.candidates[*].root_group_alignments`
+- Word CLI JSON payload:
+  - `root_groups` is copied from diagnostics when enabled;
+  - `senses[*].root_group_alignments` is copied from candidates.
+- Phrase service internal result:
+  - `token_analyses[*].diagnostics.root_groups.alignments` for chosen token
+    candidates;
+  - `chosen_parse.token_choices[*].root_group_alignments`;
+  - LLM phrase render payload
+    `token_choices[*].root_group_alignments` only when `--with-root-groups`
+    and `--llm` are both enabled.
+
+Phase 3 candidate selection rules:
+
+- `translate-word --with-root-groups` computes reports after ordinary
+  candidate selection, using only the returned candidate morphs up to `top_k`.
+- `translate-phrase --with-root-groups` computes reports after phrase parse
+  selection, using only morphs from the chosen parse by default.
+- Single-character roots are eligible when they occur in selected candidates.
+  They do not require extra gating because Phase 3 is diagnostic only.
+- `top_k` means the final returned service candidate count, after ordinary
+  deterministic ranking and candidate-pool merging.
+- Existing candidate meanings, bundle fields, deterministic skeletons, and
+  selected definitions must remain byte-for-byte unchanged except for added
+  diagnostic/context fields.
 
 Requirements:
 
@@ -1033,6 +1130,61 @@ Implementation shape:
 - Apply group-derived scoring as a small additive component, never as a hard
   override.
 - Emit before/after decision rows so regressions are inspectable.
+
+Concrete Phase 4 ranking story:
+
+- `--use-root-groups-for-ranking` implies `--with-root-groups`.
+- Word translation computes live root group reports for morphs present in
+  hard-filtered decomposition candidates before final decision-row sorting.
+- The baseline decision score is computed first and stored as
+  `baseline_decision_score`.
+- Each decomposition receives one `RootGroupAlignment` per morph occurrence.
+- The per-decomposition root-group raw score is the average alignment score
+  across its morph occurrences.
+- The bounded additive component is:
+
+```text
+root_group_component = root_group_alignment_raw * ROOT_GROUP_DECISION_WEIGHT
+```
+
+- Default `ROOT_GROUP_DECISION_WEIGHT` is `0.06`.
+- `decision_score` becomes
+  `baseline_decision_score + root_group_component`.
+- Hard-filtered candidates are never reconsidered.
+- Exact whole-word and provisional candidates are not resurrected or suppressed
+  by root groups in Phase 4 v1; they may carry Phase 3 diagnostics after the
+  candidate pool is merged.
+- Phrase translation passes the experimental flag through to token-level word
+  translation. Phrase parse search then consumes whatever token candidates the
+  word service returns. Chosen phrase tokens still receive Phase 3 alignment
+  diagnostics after parse selection.
+
+Phase 4 diagnostics:
+
+- `diagnostics.decision_function.root_group_ranking_enabled`
+- `diagnostics.decision_function.root_group_weight`
+- `diagnostics.root_group_ranking.enabled`
+- `diagnostics.root_group_ranking.weight`
+- `diagnostics.root_group_ranking.baseline_rows`
+- `diagnostics.decision_rows[*].baseline_decision_score`
+- `diagnostics.decision_rows[*].root_group_alignment_raw`
+- `diagnostics.decision_rows[*].root_group_component`
+- `diagnostics.decision_rows[*].root_group_alignments`
+- `diagnostics.decision_rows[*].root_group_warnings`
+
+Phase 4 guardrails:
+
+- The root-group component must remain small relative to ordinary attestation,
+  FNP, and semantic coherence signals.
+- Root-group scoring must be additive only. It must not change hard filtering,
+  decomposition generation, dictionary suppression, evidence-mode filtering, or
+  provisional fallback construction.
+- A group with `status = split_recommended` or `needs_review` can still align
+  when provenance is strong, but its alignment score must carry status
+  warnings and penalties.
+- A group with only semantic overlap and no provenance, no target-word match,
+  and no attachment fit should remain a visible alternate, not a strong ranking
+  driver.
 
 Requirements:
 
@@ -1152,9 +1304,13 @@ The practical policy is:
 
 - `translate-word --with-root-groups` computes group summaries live for selected
   candidate morphs and places compact summaries under diagnostics.
+- Returned word candidates include `root_group_alignments`; each alignment
+  includes morph, span role, primary group ID, score, reasons, warnings,
+  source cluster IDs, primary compact group, and alternates.
 - `translate-phrase --with-root-groups` computes group summaries live for chosen
   token candidate morphs and places compact summaries under token or phrase
   diagnostics.
+- Phrase chosen-parse token choices include `root_group_alignments`.
 - `--with-root-groups` without `--llm` does not change candidate ranking,
   selected definitions, deterministic skeletons, or rendered output fields.
 - `--with-root-groups --llm` may include compact group summaries in LLM context,
@@ -1168,6 +1324,8 @@ The practical policy is:
 
 - Phrase LLM payloads receive grouped evidence only when explicitly enabled.
 - Group-aware translation context does not replace selected morph meanings.
+- Alignment prefers source cluster ID and nested evidence word matches over
+  semantic overlap.
 - `translate-word` output without `--with-root-groups` is unchanged from the
   baseline.
 - `translate-word --with-root-groups --no-llm` has the same candidate order and
@@ -1182,6 +1340,8 @@ The practical policy is:
   requires `--with-root-groups`.
 - Baseline decision rows and group-aware decision rows are both emitted.
 - Group-derived score components are visible and bounded.
+- Decision rows include baseline score, root-group raw alignment score,
+  root-group additive component, and final decision score.
 - Group-derived scoring is additive and cannot hard-override hard filters or
   unsupported decompositions.
 - Disabling the flag restores baseline candidate order and output.
@@ -1195,5 +1355,7 @@ The practical policy is:
 - Before/after diagnostics show any ranking change caused by group-aware
   scoring.
 - Group-derived scoring does not resurrect hard-filtered candidates.
+- Group-derived scoring remains bounded by the configured
+  `ROOT_GROUP_DECISION_WEIGHT`.
 - A regression fixture proves that exception-heavy or split-recommended groups
   do not automatically outrank cleaner baseline evidence.

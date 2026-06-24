@@ -178,8 +178,18 @@ from translation import strategies as translation_strategies
 from translation import scoring as translation_scoring
 from translation import service as translation_service_module
 from translation.memory import TranslationMemoryRepository
-from translation.placeholder_glosses import _definition_span_candidates
-from translation.phrase_service import PhraseTranslationService
+from translation.placeholder_glosses import (
+    _definition_span_candidates,
+    clean_translation_gloss,
+    is_diagnostic_metalanguage,
+    root_term_fallback_gloss,
+    translation_surface_has_diagnostic_metalanguage,
+)
+from translation.phrase_service import (
+    PhraseParseCandidate,
+    PhraseTokenCandidate,
+    PhraseTranslationService,
+)
 from translation import cli as translation_cli
 from translation.repository import (
     AttestedDefinition,
@@ -1434,6 +1444,54 @@ def test_translate_word_returns_provisional_fallback_when_support_is_missing() -
     assert float(lead["confidence"]) <= 0.55
 
 
+def test_translate_word_no_dictionary_suppresses_raw_attested_whole_word_fallback() -> None:
+    """Keep blind dictionary-off runs from using dictionary-like raw attestations.
+
+    Raw attested whole-token glosses are useful diagnostics, but in
+    `--no-dictionary` mode they leak the same kind of pre-solved answer as an
+    exact dictionary entry. This preserves the middle ground: accepted DB
+    anchors may still win, but provisional raw-attestation whole-word anchors
+    must not be translated as if they were decompositions.
+    """
+
+    evidence = WordEvidence(
+        word="DSBRIN",
+        variants_queried=["debate"],
+        attested_definitions=[
+            AttestedDefinition(
+                variant="debate",
+                source_word="DSBRIN",
+                definition="which have",
+                cluster_id=44,
+                root_ngram="DS",
+            )
+        ],
+    )
+    repository = FakeRepository(evidence_by_word={"DSBRIN": evidence})
+    service = SingleWordTranslationService(
+        candidate_finder=FakeCandidateFinder(),
+        repository=repository,
+        llm_enabled=False,
+    )
+    service._decomposition_engine = FakeDecompositionEngine([])
+
+    result = service.translate_word(
+        "dsbrin",
+        llm=False,
+        allow_dictionary=False,
+        use_beam_search=True,
+    )
+
+    assert result["dictionary_enabled"] is False
+    assert result["candidates"] == []
+    assert any(
+        "suppressed provisional raw-attestation whole-word fallback for DSBRIN"
+        in note
+        for note in result["diagnostics"]["dictionary"]["suppressed"]
+    )
+    assert result["diagnostics"]["blind_retranslation"]["suppressed"] == []
+
+
 def test_translate_word_no_whole_word_allows_provisional_without_dictionary_collision() -> None:
     """Blind retranslation may still surface provisional exact reads for unknown words.
 
@@ -1835,6 +1893,195 @@ def test_compact_lay_gloss_prefers_meaning_over_meta_linguistic_scaffolding() ->
         )
         == "which"
     )
+
+
+def test_translation_surface_safety_extracts_root_terms_from_diagnostics() -> None:
+    """Diagnostic grammar prose may preserve trace value but not translation text."""
+
+    existential = "Invariant copular base expressing existence"
+    deictic = "A deictic/demonstrative marker meaning 'this', used for reference."
+    negative = "A negative morpheme expressing negation or prohibition."
+
+    assert is_diagnostic_metalanguage(existential) is True
+    assert clean_translation_gloss(existential) == "existence"
+    assert clean_translation_gloss(deictic) == "this"
+    assert clean_translation_gloss(negative) in {
+        "negation",
+        "prohibition",
+        "negation prohibition",
+    }
+    assert clean_translation_gloss("Invariant copular base") is None
+    assert is_diagnostic_metalanguage("predicate-integrator") is True
+    assert is_diagnostic_metalanguage("relational operator") is True
+    assert clean_translation_gloss("predicate-integrator") is None
+    assert clean_translation_gloss("relational operator") is None
+    assert root_term_fallback_gloss(["being", "copular base"]) == "being"
+
+
+def test_phrase_translation_uses_root_terms_instead_of_diagnostic_metalanguage(
+    tmp_path: Path,
+) -> None:
+    """No-dictionary phrase output should render root signal, not analysis labels."""
+
+    diagnostic_definition = "Invariant copular base expressing existence"
+    word_service = FakeWordService(
+        results_by_word={
+            "IO": _word_result(
+                "IO",
+                _word_candidate(
+                    diagnostic_definition,
+                    analysis_type="compositional",
+                    score=8.2,
+                    confidence=0.51,
+                    morphs=["IO"],
+                    semantic_core=[],
+                    semantic_bundle=[
+                        {
+                            "morph": "IO",
+                            "surface_gloss": diagnostic_definition,
+                            "semantic_core_terms": [],
+                            "negative_contrast": [],
+                            "provenance": "cluster",
+                            "kind": "content",
+                            "function_profile": None,
+                            "head_gloss": diagnostic_definition,
+                            "quality": 0.5,
+                            "raw_definition": diagnostic_definition,
+                        }
+                    ],
+                    bundle_surface_gloss=diagnostic_definition,
+                    bundle_head_gloss=diagnostic_definition,
+                    bundle_function_profile="content",
+                    bundle_coherence_score=0.3,
+                ),
+            ),
+        },
+        dictionary={},
+    )
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=TranslationMemoryRepository(tmp_path / "phrase-metalanguage.sqlite3"),
+    )
+
+    result = service.translate_phrase("io", top_k=1, llm=False, allow_dictionary=False)
+
+    assert result["rendered_translation"] == "existence"
+    assert result["lay_translation"] == "existence"
+    assert result["translation_footnotes"][0]["rendered_text"] == "existence"
+    assert result["chosen_parse"]["token_choices"][0]["translation_gloss"] == "existence"
+    rendered_fields = [
+        result["rendered_translation"],
+        result["lay_translation"],
+        result["footnoted_translation"],
+    ]
+    assert not any(
+        translation_surface_has_diagnostic_metalanguage(field)
+        for field in rendered_fields
+    )
+
+
+def test_phrase_render_payload_separates_translation_gloss_from_diagnostics() -> None:
+    """LLM surface fields should receive safe glosses, not diagnostic definitions."""
+
+    diagnostic_definition = "Invariant copular base expressing existence"
+    candidate = PhraseTokenCandidate(
+        token="IO",
+        rank=1,
+        analysis_type="compositional",
+        definition=diagnostic_definition,
+        raw_definition=diagnostic_definition,
+        alternates=[],
+        confidence=0.5,
+        score=8.0,
+        role_hint="unknown",
+        translation_gloss="existence",
+        bundle_surface_gloss=diagnostic_definition,
+        bundle_head_gloss=diagnostic_definition,
+        semantic_bundle=[
+            {
+                "morph": "IO",
+                "surface_gloss": diagnostic_definition,
+                "semantic_core_terms": [],
+                "negative_contrast": [],
+                "head_gloss": diagnostic_definition,
+            }
+        ],
+    )
+    parse = PhraseParseCandidate(
+        rank=1,
+        score=8.0,
+        token_choices=[candidate],
+        translation_skeleton="existence",
+    )
+
+    payload = PhraseTranslationService._phrase_render_payload("io", parse)
+    token_choice = payload["token_choices"][0]
+
+    assert token_choice["translation_gloss"] == "existence"
+    assert token_choice["definition"] == "existence"
+    assert token_choice["surface_gloss"] == "existence"
+    assert token_choice["bundle_surface_gloss"] == "existence"
+    assert token_choice["bundle_head_gloss"] == "existence"
+    assert not translation_surface_has_diagnostic_metalanguage(
+        token_choice["definition"]
+    )
+
+
+def test_translation_surface_guard_repairs_contaminated_renderer_output() -> None:
+    """Final phrase payload cleanup should catch renderer metalanguage leakage."""
+
+    candidate = PhraseTokenCandidate(
+        token="IO",
+        rank=1,
+        analysis_type="compositional",
+        definition="Invariant copular base expressing existence",
+        raw_definition="Invariant copular base expressing existence",
+        alternates=[],
+        confidence=0.5,
+        score=8.0,
+        role_hint="unknown",
+        translation_gloss="existence",
+    )
+    parse = PhraseParseCandidate(
+        rank=1,
+        score=8.0,
+        token_choices=[candidate],
+        translation_skeleton="existence",
+    )
+    payload: dict[str, object] = {
+        "chosen_parse": {
+            "translation_skeleton": "existence",
+            "token_choices": [{"token": "IO", "translation_gloss": "existence"}],
+        },
+        "rendered_translation": "Invariant copular base expressing existence",
+        "lay_translation": "copular base",
+        "poetic_translation": "",
+        "contextual_lay_translation": "semantic core of being",
+        "contextual_poetic_translation": "",
+        "interpretive_translation": "",
+        "translation_footnotes": [
+            {
+                "index": 1,
+                "source_token": "IO",
+                "rendered_text": "copular base",
+                "explanation": "Renderer leaked diagnostic language.",
+            }
+        ],
+        "footnoted_translation": "copular base [^1]",
+        "render_warnings": [],
+    }
+
+    PhraseTranslationService._apply_translation_surface_guard(
+        payload,
+        chosen_parse=parse,
+    )
+
+    assert payload["rendered_translation"] == "existence"
+    assert payload["lay_translation"] == "existence"
+    assert payload["contextual_lay_translation"] == "existence"
+    assert payload["translation_footnotes"][0]["rendered_text"] == "existence"
+    assert payload["footnoted_translation"] == "existence [^1]"
+    assert payload["translation_surface_guard_warnings"]
 
 
 def test_phrase_footnote_fallback_prefers_selected_trace_over_shorter_alternates() -> None:
@@ -4038,8 +4285,18 @@ def test_phrase_translation_memory_accumulates_repeated_provisional_reads(tmp_pa
         memory_repository=memory,
     )
 
-    first = service.translate_phrase("githulcag mirc", top_k=2, llm=False)
-    second = service.translate_phrase("githulcag mirc", top_k=2, llm=False)
+    first = service.translate_phrase(
+        "githulcag mirc",
+        top_k=2,
+        llm=False,
+        memory_update=True,
+    )
+    second = service.translate_phrase(
+        "githulcag mirc",
+        top_k=2,
+        llm=False,
+        memory_update=True,
+    )
     entry = memory.fetch_entry("GITHULCAG")
 
     assert first["memory_updates"][0]["evidence_count"] == 1
@@ -4048,6 +4305,76 @@ def test_phrase_translation_memory_accumulates_repeated_provisional_reads(tmp_pa
     assert entry.best_gloss == "storm-born"
     assert entry.evidence_count == 2
     assert "githulcag mirc" in entry.examples
+
+
+def test_phrase_translation_does_not_update_memory_by_default(tmp_path: Path) -> None:
+    """Keep evaluation runs from learning provisional guesses unless requested."""
+
+    word_service = FakeWordService(
+        results_by_word={
+            "GITHULCAG": _word_result(
+                "GITHULCAG",
+                _word_candidate(
+                    "storm-born",
+                    analysis_type="provisional",
+                    score=5.0,
+                    confidence=0.4,
+                    morphs=["GITHULCAG"],
+                ),
+            )
+        }
+    )
+    memory = TranslationMemoryRepository(tmp_path / "translation-memory-default.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase("githulcag", top_k=1, llm=False)
+
+    assert result["translation_memory_update_enabled"] is False
+    assert result["memory_updates"] == []
+    assert memory.fetch_entry("GITHULCAG") is None
+
+
+def test_phrase_translation_does_not_read_memory_by_default(tmp_path: Path) -> None:
+    """Stored provisional memory must not influence parses unless opted in."""
+
+    memory = TranslationMemoryRepository(tmp_path / "translation-memory-read.sqlite3")
+    memory.record_observation(
+        word="ARDZA",
+        phrase="ardza",
+        role_hint="noun",
+        glosses=["saved gloss"],
+        confidence=0.7,
+        left_neighbor=None,
+        right_neighbor=None,
+    )
+    word_service = FakeWordService(
+        results_by_word={
+            "ARDZA": _word_result("ARDZA"),
+        }
+    )
+    service_without_memory = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="could not resolve token ARDZA through decomposition",
+    ):
+        service_without_memory.translate_phrase("ardza", top_k=1, llm=False)
+
+    service_with_memory = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+        use_memory=True,
+    )
+    result = service_with_memory.translate_phrase("ardza", top_k=1, llm=False)
+
+    assert result["translation_memory_enabled"] is True
+    assert result["rendered_translation"] == "saved gloss"
 
 
 def test_phrase_render_prompt_forbids_unsupported_semantics() -> None:
@@ -7163,6 +7490,28 @@ def test_translation_cli_registers_translate_phrase_command() -> None:
     assert args.command == "translate-phrase"
     assert args.phrase == "ol sonf vorsg"
     assert args.handler == translation_cli._run_translate_phrase
+    assert args.use_memory is False
+    assert args.update_memory is False
+
+
+def test_translation_cli_memory_flags_are_opt_in_for_phrase() -> None:
+    """Require explicit phrase flags before memory can read or write."""
+
+    parser = translation_cli.build_parser()
+    default_args = parser.parse_args(["translate-phrase", "ol sonf vorsg"])
+    memory_args = parser.parse_args(
+        [
+            "translate-phrase",
+            "ol sonf vorsg",
+            "--use-memory",
+            "--update-memory",
+        ]
+    )
+
+    assert default_args.use_memory is False
+    assert default_args.update_memory is False
+    assert memory_args.use_memory is True
+    assert memory_args.update_memory is True
 
 
 def test_translation_cli_accepts_plural_no_whole_words_alias_for_phrase() -> None:

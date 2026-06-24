@@ -454,6 +454,22 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         help="Include per-decomposition filter traces in verbose diagnostics.",
     )
     parser.add_argument(
+        "--with-root-groups",
+        action="store_true",
+        help=(
+            "Attach compact surviving root-group diagnostics for returned "
+            "candidate morphs without changing ranking."
+        ),
+    )
+    parser.add_argument(
+        "--use-root-groups-for-ranking",
+        action="store_true",
+        help=(
+            "Experimental: add a small root-group alignment component to "
+            "candidate ranking. Implies --with-root-groups."
+        ),
+    )
+    parser.add_argument(
         "--allow-whole-word",
         dest="allow_whole_word",
         action="store_true",
@@ -584,17 +600,60 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--memory-db",
         type=Path,
-        help="Optional translation-memory SQLite path.",
+        help=(
+            "Optional translation-memory SQLite path used only with "
+            "--use-memory or --update-memory."
+        ),
+    )
+    parser.add_argument(
+        "--use-memory",
+        action="store_true",
+        help=(
+            "Allow phrase translation to read provisional translation memory. "
+            "Default: disabled."
+        ),
+    )
+    parser.add_argument(
+        "--do-not-use-memory",
+        dest="use_memory",
+        action="store_false",
+        help="Keep translation memory lookup disabled (default).",
+    )
+    parser.add_argument(
+        "--update-memory",
+        action="store_true",
+        help=(
+            "Write provisional unknown-word observations to translation memory. "
+            "Default: disabled."
+        ),
     )
     parser.add_argument(
         "--no-memory-update",
-        action="store_true",
-        help="Do not write provisional unknown-word observations to translation memory.",
+        dest="update_memory",
+        action="store_false",
+        default=False,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
         help="Include token analyses and parse candidates in text output.",
+    )
+    parser.add_argument(
+        "--with-root-groups",
+        action="store_true",
+        help=(
+            "Attach compact surviving root-group diagnostics for chosen parse "
+            "morphs without changing ranking."
+        ),
+    )
+    parser.add_argument(
+        "--use-root-groups-for-ranking",
+        action="store_true",
+        help=(
+            "Experimental: use root-group alignment in token ranking. Implies "
+            "--with-root-groups."
+        ),
     )
     parser.add_argument(
         "--allow-whole-word",
@@ -815,6 +874,11 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     weight_enabled=bool(args.weight),
                     allow_whole_word=bool(args.allow_whole_word),
                     allow_dictionary=bool(args.allow_dictionary),
+                    with_root_groups=bool(args.with_root_groups)
+                    or bool(args.use_root_groups_for_ranking),
+                    use_root_groups_for_ranking=bool(
+                        args.use_root_groups_for_ranking
+                    ),
                     progress_reporter=progress_renderer if llm_enabled else None,
                 )
                 outputs.append(
@@ -893,6 +957,8 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
             llm_enabled=llm_enabled,
             llm_use_remote=llm_use_remote,
             memory_db=args.memory_db,
+            use_memory=bool(args.use_memory),
+            update_memory=bool(args.update_memory),
         ) as service:
             outputs: list[dict[str, object]] = []
             if len(variants) > 1:
@@ -917,11 +983,17 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
                     llm=llm_enabled,
                     llm_context=args.llm_context,
                     llm_unknown_context=bool(args.llm_unknown_context),
-                    memory_update=not bool(args.no_memory_update),
+                    use_memory=bool(args.use_memory),
+                    memory_update=bool(args.update_memory),
                     evidence_mode=_resolve_evidence_mode(args.evidence_mode),
                     weight_enabled=bool(args.weight),
                     allow_whole_word=bool(args.allow_whole_word),
                     allow_dictionary=bool(args.allow_dictionary),
+                    with_root_groups=bool(args.with_root_groups)
+                    or bool(args.use_root_groups_for_ranking),
+                    use_root_groups_for_ranking=bool(
+                        args.use_root_groups_for_ranking
+                    ),
                     progress_reporter=progress_renderer,
                 )
                 outputs.append(
@@ -1159,6 +1231,7 @@ def _build_output_payload(
                 "head_analysis": candidate.get("head_analysis"),
                 "fnp_evidence": candidate.get("fnp_evidence"),
                 "fnp_warnings": candidate.get("fnp_warnings"),
+                "root_group_alignments": candidate.get("root_group_alignments", []),
                 "synthesized_definition": candidate.get("synthesized_definition"),
                 "concatenated_meanings": candidate.get("concatenated_meanings"),
                 "best_estimations": candidate.get("best_estimations"),
@@ -1177,8 +1250,14 @@ def _build_output_payload(
             "message"
         ] = "No direct evidence found. Showing FastText neighbors as heuristic."
 
+    diagnostics_raw = result.get("diagnostics")
+    if isinstance(diagnostics_raw, dict):
+        root_groups = diagnostics_raw.get("root_groups")
+        if isinstance(root_groups, dict) and root_groups.get("enabled"):
+            payload["root_groups"] = root_groups
+
     if verbose:
-        payload["diagnostics"] = result.get("diagnostics", {})
+        payload["diagnostics"] = diagnostics_raw or {}
 
     return payload
 
@@ -1204,6 +1283,10 @@ def _build_phrase_output_payload(
         "llm_context": result.get("llm_context"),
         "llm_unknown_context_enabled": result.get("llm_unknown_context_enabled"),
         "llm_unknown_context_applied": result.get("llm_unknown_context_applied"),
+        "translation_memory_enabled": result.get("translation_memory_enabled"),
+        "translation_memory_update_enabled": result.get(
+            "translation_memory_update_enabled"
+        ),
         "token_analyses": result.get("token_analyses", []),
         "parse_candidates": result.get("parse_candidates", []),
         "chosen_parse": result.get("chosen_parse"),

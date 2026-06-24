@@ -12,7 +12,11 @@ from .llm_synthesis import (
     synthesize_consensus,
     synthesize_definition,
 )
-from .memory import ProvisionalLexiconEntry, TranslationMemoryRepository
+from .memory import (
+    NullTranslationMemoryRepository,
+    ProvisionalLexiconEntry,
+    TranslationMemoryRepository,
+)
 from .phrase_service import PhraseTranslationService
 from .service import InterpretationService, SingleWordTranslationService
 from .strategies import apply_strategy
@@ -33,5 +37,6 @@ __all__ = [
     "PhraseRenderResult",
     "render_phrase_translation",
     "TranslationMemoryRepository",
+    "NullTranslationMemoryRepository",
     "ProvisionalLexiconEntry",
 ]

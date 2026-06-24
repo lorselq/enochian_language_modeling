@@ -21,10 +21,12 @@ import re
 from enochian_lm.root_extraction.tools.query_model_tool import QueryModelTool
 
 from .placeholder_glosses import (
+    clean_translation_gloss,
     clean_lexical_gloss,
     is_numeric_meta_gloss,
     numeric_meta_digits,
     numeric_meta_gloss_matches_token,
+    root_term_fallback_gloss,
     specific_gloss_from_definition_and_semantic_core,
     sanitize_human_gloss,
     semantic_core_gloss,
@@ -1544,6 +1546,8 @@ def _build_phrase_bundle_prompt(
             "- Poetic outputs do not need to differ from lay outputs when the lay line is already coherent and expressive.",
             "- Return exactly one footnote entry per token choice, in source order.",
             "- Footnotes MUST stay anchored to rank-1 token choices (`token_choices`) only.",
+            "- Prefer each token's `translation_gloss` for translation wording; treat diagnostic/provenance fields as evidence notes, not renderable English.",
+            "- Never render grammar or analysis labels such as copula, copular, morpheme, marker, pronoun, base, root, invariant, semantic core, prefix, suffix, or particle as translated words.",
             "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
             "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
             "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
@@ -1662,9 +1666,7 @@ def _parse_unknown_token_refinement_response(
             replacement_raw = item.get("replacement")
             if not isinstance(replacement_raw, str) or not replacement_raw.strip():
                 continue
-            cleaned = clean_lexical_gloss(replacement_raw, token=token)
-            if cleaned is None:
-                cleaned = sanitize_human_gloss(replacement_raw, token=token)
+            cleaned = clean_translation_gloss(replacement_raw, token=token)
             if not isinstance(cleaned, str) or not cleaned.strip():
                 continue
             replacement = cleaned.strip()
@@ -1813,6 +1815,8 @@ def _build_phrase_lay_render_prompt(
             "- Prefer a clear sentence-level idea over mirroring the source token order mechanically.",
             "- Never restate full token definitions, example sentences, or long alternation chains in `rendered_translation`.",
             "- Return exactly one footnote entry per token choice, in source order.",
+            "- Prefer each token's `translation_gloss` for translation wording; treat diagnostic/provenance fields as evidence notes, not renderable English.",
+            "- Never render grammar or analysis labels such as copula, copular, morpheme, marker, pronoun, base, root, invariant, semantic core, prefix, suffix, or particle as translated words.",
             "- Each `rendered_text` should preserve the most specific grounded sense available for that token, often in 1-6 words.",
             "- Do not flatten semantically rich glosses into weaker generic abstractions when a fuller supported gloss exists.",
             "- If a gloss contains vivid supported detail such as `ornaments of brightness`, keep that richer phrasing instead of reducing it to a blander one-word label.",
@@ -2288,16 +2292,17 @@ def _compact_lay_gloss(text: object, *, token: str) -> str | None:
     if isinstance(text, Sequence) and not isinstance(text, (str, bytes)):
         semantic_gloss = semantic_core_gloss(text)
         if semantic_gloss is not None:
-            return semantic_gloss
+            cleaned_semantic = clean_translation_gloss(semantic_gloss, token=token)
+            if cleaned_semantic is not None:
+                return cleaned_semantic
+        return root_term_fallback_gloss(text, token=token)
     cleaned = clean_lexical_gloss(text, token=token)
     if cleaned is not None:
         return cleaned
-    sanitized = sanitize_human_gloss(text, token=token)
-    if sanitized is None:
-        return None
-    if is_numeric_meta_gloss(sanitized):
-        return None
-    return " ".join(sanitized.split()).strip()
+    cleaned = clean_translation_gloss(text, token=token)
+    if cleaned is not None:
+        return cleaned
+    return None
 
 
 def _numeric_meta_render_for_choice(
@@ -2590,6 +2595,7 @@ def _preferred_primary_gloss(token_choice: Mapping[str, object], token: str) -> 
     if dictionary_rescue is not None:
         return dictionary_rescue
     primary_candidates = [
+        token_choice.get("translation_gloss"),
         token_choice.get("definition"),
         trace.get("surface_gloss"),
         token_choice.get("surface_gloss"),
@@ -2621,6 +2627,15 @@ def _preferred_primary_gloss(token_choice: Mapping[str, object], token: str) -> 
         compact = _compact_lay_gloss(semantic_gloss, token=token)
         if compact is not None:
             return compact
+    root_fallback = root_term_fallback_gloss(
+        token_choice.get("semantic_bundle"),
+        token_choice.get("root_group_alignments"),
+        semantic_core=semantic_core,
+        negative_contrast=negative_contrast,
+        token=token,
+    )
+    if root_fallback is not None:
+        return root_fallback
     return None
 
 
@@ -2704,10 +2719,7 @@ def _dictionary_rescue_gloss(token_choice: Mapping[str, object], token: str) -> 
     raw_rescue = token_choice.get("dictionary_rescue_gloss")
     if is_numeric_meta_gloss(raw_rescue):
         return _numeric_meta_render_for_choice(raw_rescue, token_choice, token)
-    sanitized = sanitize_human_gloss(raw_rescue, token=token)
-    if sanitized is None:
-        return None
-    return " ".join(sanitized.split()).strip()
+    return clean_translation_gloss(raw_rescue, token=token)
 
 
 def _human_facing_unresolved_gloss() -> str:

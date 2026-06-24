@@ -16,19 +16,56 @@ import re
 _PLACEHOLDER_PREFIXES = ("top residuals:",)
 _BRACKET_PLACEHOLDER_RE = re.compile(r"^\[[A-Z][A-Z' ?-]*\]$")
 _META_LINGUISTIC_MARKERS = (
+    "base",
+    "copula",
+    "copular",
+    "deictic",
+    "demonstrative",
+    "derivational",
+    "existential base",
+    "grammatical",
+    "infix",
+    "invariant",
+    "lemma",
     "morpheme",
     "marker",
+    "operator",
     "prefix",
+    "predicate",
+    "predicate-integrator",
     "suffix",
     "relativizer",
-    "deictic",
-    "derivational",
-    "grammatical",
     "particle",
     "pronoun",
+    "pronominal",
+    "root",
+    "semantic",
+    "semantic core",
     "specifier",
+    "relational operator",
     "reference",
     "subordinate clause",
+)
+_DIAGNOSTIC_TRANSLATION_MARKERS = tuple(
+    sorted(set(_META_LINGUISTIC_MARKERS), key=len, reverse=True)
+)
+_DIAGNOSTIC_MARKER_RE = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(marker) for marker in _DIAGNOSTIC_TRANSLATION_MARKERS)
+    + r")\b",
+    re.IGNORECASE,
+)
+_DIAGNOSTIC_VALUE_PATTERNS = (
+    re.compile(
+        r"(?i)\b(?:expressing|expresses|denoting|denotes|indicating|indicates|"
+        r"encoding|encodes|representing|represents|signifying|signifies)\s+"
+        r"([^.;:,]+)"
+    ),
+    re.compile(
+        r"(?i)\b(?:concepts?|states?|qualities|conditions?|ideas?)\s+of\s+"
+        r"([^.;:,]+)"
+    ),
+    re.compile(r"(?i)\b(?:meaning|means)\s+([^.;:,]+)"),
 )
 _NUMERIC_META_GLOSS_RE = re.compile(
     r"\b(?:enochian\s+word\s+for\s+the\s+)?"
@@ -115,6 +152,29 @@ def sanitize_human_gloss(text: object, *, token: str | None = None) -> str | Non
     return cleaned
 
 
+def is_diagnostic_metalanguage(text: object) -> bool:
+    """Return whether ``text`` contains analysis language forbidden in translations.
+
+    The translation stack preserves rich root-analysis prose in diagnostics, but
+    rendered English must never use grammar labels such as ``copular base`` or
+    ``morpheme`` as if they were lexical meaning. This stricter predicate is the
+    shared guard for phrase skeletons, LLM payload surfaces, and footnotes.
+    """
+
+    if not isinstance(text, str):
+        return False
+    normalized = " ".join(text.strip().lower().split())
+    if not normalized:
+        return False
+    return bool(_DIAGNOSTIC_MARKER_RE.search(normalized))
+
+
+def translation_surface_has_diagnostic_metalanguage(text: object) -> bool:
+    """Return whether a rendered translation surface still exposes diagnostics."""
+
+    return is_diagnostic_metalanguage(text)
+
+
 def normalize_semantic_terms(value: object) -> list[str]:
     """Normalize semantic-core style payloads into short lexical terms.
 
@@ -174,7 +234,7 @@ def is_meta_linguistic_gloss(text: object) -> bool:
     normalized = " ".join(text.strip().lower().split())
     if not normalized:
         return False
-    if any(marker in normalized for marker in _META_LINGUISTIC_MARKERS):
+    if is_diagnostic_metalanguage(normalized):
         if _QUOTED_PHRASE_RE.search(normalized):
             return False
         return True
@@ -304,6 +364,187 @@ def clean_lexical_gloss(text: object, *, token: str | None = None) -> str | None
     return trimmed
 
 
+def clean_translation_gloss(
+    text: object,
+    *,
+    semantic_core: object | None = None,
+    negative_contrast: object | None = None,
+    token: str | None = None,
+) -> str | None:
+    """Return a translation-safe gloss, never diagnostic metalanguage.
+
+    This is the hard boundary between evidence prose and rendered English. It
+    first accepts ordinary lexical glosses, then mines diagnostic prose for a
+    short root term such as ``existence`` or ``negation``. If no lexical term can
+    be recovered, callers get ``None`` and must use diagnostics rather than
+    laundering analysis language into a translation.
+    """
+
+    if isinstance(text, Sequence) and not isinstance(text, (str, bytes)):
+        return root_term_fallback_gloss(
+            text,
+            semantic_core=semantic_core,
+            negative_contrast=negative_contrast,
+            token=token,
+        )
+    sanitized = sanitize_human_gloss(text, token=token)
+    if sanitized is None:
+        return None
+    if is_numeric_meta_gloss(sanitized):
+        return None
+
+    if (
+        not is_meta_linguistic_gloss(sanitized)
+        and not is_diagnostic_metalanguage(sanitized)
+        and len(sanitized.split()) <= 6
+    ):
+        return " ".join(sanitized.split()).strip()
+
+    cleaned = clean_lexical_gloss(sanitized, token=token)
+    if cleaned is not None and not translation_surface_has_diagnostic_metalanguage(cleaned):
+        return cleaned
+
+    fallback = root_term_fallback_gloss(
+        sanitized,
+        semantic_core=semantic_core,
+        negative_contrast=negative_contrast,
+        token=token,
+    )
+    if fallback is not None:
+        return fallback
+    if not translation_surface_has_diagnostic_metalanguage(sanitized):
+        return " ".join(sanitized.split()).strip()
+    return None
+
+
+def root_term_fallback_gloss(
+    *values: object,
+    semantic_core: object | None = None,
+    negative_contrast: object | None = None,
+    token: str | None = None,
+    max_terms: int = 3,
+) -> str | None:
+    """Build a compact fallback from root terms without using analysis labels.
+
+    Root decomposition can preserve real signal even when selected definitions
+    are too diagnostic for translation. This helper extracts only short lexical
+    terms from semantic-core arrays, bundle entries, root-group summaries, or
+    definition clauses like ``expressing existence``.
+    """
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    blocked = {
+        term.lower()
+        for term in normalize_semantic_terms(negative_contrast)
+    }
+
+    def add_term(raw: object) -> None:
+        if len(terms) >= max(1, int(max_terms)):
+            return
+        normalized = _translation_root_term(raw, token=token)
+        if normalized is None:
+            return
+        key = normalized.lower()
+        if key in seen or key in blocked:
+            return
+        seen.add(key)
+        terms.append(normalized)
+
+    for term in normalize_semantic_terms(semantic_core):
+        add_term(term)
+
+    for value in values:
+        for term in _root_term_candidates(value, token=token):
+            add_term(term)
+
+    if not terms:
+        return None
+    return " ".join(terms).strip()
+
+
+def _root_term_candidates(value: object, *, token: str | None = None) -> list[object]:
+    """Collect possible lexical root terms from mixed evidence payload shapes."""
+
+    if value is None:
+        return []
+    if isinstance(value, Mapping):
+        candidates: list[object] = []
+        for key in (
+            "translation_gloss",
+            "semantic_terms",
+            "semantic_core_terms",
+            "semantic_core",
+            "sense",
+            "effect",
+            "head_gloss",
+            "surface_gloss",
+            "label",
+            "definition",
+        ):
+            if key in value:
+                candidates.extend(_root_term_candidates(value.get(key), token=token))
+        primary_group = value.get("primary_group")
+        if isinstance(primary_group, Mapping):
+            candidates.extend(_root_term_candidates(primary_group, token=token))
+        alternates = value.get("alternates")
+        if isinstance(alternates, Sequence) and not isinstance(alternates, (str, bytes)):
+            for alternate in alternates:
+                candidates.extend(_root_term_candidates(alternate, token=token))
+        return candidates
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        candidates = []
+        for item in value:
+            candidates.extend(_root_term_candidates(item, token=token))
+        return candidates
+    if not isinstance(value, str):
+        return []
+
+    quoted = _quoted_gloss_candidate(value)
+    candidates: list[object] = [quoted] if quoted is not None else []
+    if is_numeric_meta_gloss(value):
+        return candidates
+    if not is_diagnostic_metalanguage(value):
+        candidates.append(value)
+        return candidates
+    for pattern in _DIAGNOSTIC_VALUE_PATTERNS:
+        for match in pattern.finditer(value):
+            raw = match.group(1).strip()
+            if not raw:
+                continue
+            raw = re.split(
+                r"(?i)\b(?:when|while|with|through|across|in\s+contexts?|"
+                r"as\s+a|as\s+an|functioning|serving)\b",
+                raw,
+                maxsplit=1,
+            )[0].strip(" ,;-")
+            pieces = re.split(r"(?i)\s+(?:or|and)\s+", raw)
+            candidates.extend(piece for piece in pieces if piece.strip())
+    return candidates
+
+
+def _translation_root_term(value: object, *, token: str | None = None) -> str | None:
+    """Normalize one extracted term and reject remaining diagnostic language."""
+
+    if not isinstance(value, str):
+        return None
+    cleaned = clean_lexical_gloss(value, token=token)
+    if cleaned is None:
+        cleaned = _normalize_definition_span_candidate(value, token=token)
+    if cleaned is None:
+        cleaned = semantic_core_gloss(value)
+    if cleaned is None:
+        return None
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;-")
+    if not cleaned or is_numeric_meta_gloss(cleaned):
+        return None
+    if translation_surface_has_diagnostic_metalanguage(cleaned):
+        return None
+    if len(cleaned.split()) > 4:
+        return None
+    return cleaned
+
+
 def surface_gloss_from_sources(
     *,
     semantic_core: object,
@@ -325,7 +566,12 @@ def surface_gloss_from_sources(
     semantic_gloss = semantic_core_gloss(semantic_terms)
     if semantic_gloss is not None and not is_meta_linguistic_gloss(semantic_gloss):
         return semantic_gloss, "semantic_core"
-    cleaned = clean_lexical_gloss(definition, token=token)
+    cleaned = clean_translation_gloss(
+        definition,
+        semantic_core=semantic_terms,
+        negative_contrast=negative_contrast,
+        token=token,
+    )
     if cleaned is not None:
         return cleaned, "cleaned_definition"
     return None, "unresolved"

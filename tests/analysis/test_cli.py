@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import sys
 import types
 from pathlib import Path
@@ -198,6 +199,105 @@ def test_build_parser_accepts_root_groups_report_command() -> None:
     assert args.handler == cli._run_report_root_groups
 
 
+def test_build_parser_accepts_find_ngram_subcommand() -> None:
+    """Verify `enlm find-ngram` exposes the lookup options.
+
+    Why:
+    the ngram lookup must be available under the existing analysis command
+    surface as well as the top-level Poetry script.
+
+    How:
+    parse a representative subcommand invocation and inspect the resulting
+    namespace.
+
+    Responsibility:
+    guard the public `enlm find-ngram` CLI contract.
+    """
+
+    parser = cli._build_parser()
+    args = parser.parse_args(
+        [
+            "find-ngram",
+            "A-B",
+            "--canon-only",
+            "--citations",
+            "--include-alternates",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert args.command == "find-ngram"
+    assert args.ngram == "A-B"
+    assert args.canon_only is True
+    assert args.citations is True
+    assert args.include_alternates is True
+    assert args.format == "json"
+    assert args.handler == cli._run_find_ngram
+
+
+def test_build_find_ngram_parser_accepts_top_level_options() -> None:
+    """Verify the top-level `find-ngram` parser mirrors lookup options.
+
+    Why:
+    the Poetry script entry point has its own parser and can drift from the
+    `enlm` subcommand if it is not tested directly.
+
+    How:
+    parse a standalone invocation with verbosity and output options.
+
+    Responsibility:
+    protect `poetry run find-ngram "NGRAM"` usability.
+    """
+
+    parser = cli._build_find_ngram_parser()
+    args = parser.parse_args(["AB", "--verbose", "--output", "matches.txt"])
+
+    assert args.ngram == "AB"
+    assert args.verbose is True
+    assert args.output == "matches.txt"
+
+
+def test_find_ngram_skips_top_level_db_bootstrap() -> None:
+    """Ensure dictionary lookup remains read-only with respect to the DB.
+
+    Why:
+    this command reads dictionary JSON and should not initialize or mutate the
+    default analysis SQLite database.
+
+    How:
+    parse the subcommand and ask the bootstrap guard for its decision.
+
+    Responsibility:
+    prevent accidental database writes from a read-only lookup command.
+    """
+
+    parser = cli._build_parser()
+    args = parser.parse_args(["find-ngram", "AB"])
+
+    assert cli._should_bootstrap_command_db(args) is False
+
+
+def test_find_ngram_fast_path_extracts_subcommand_args() -> None:
+    """Verify `enlm find-ngram` can bypass the full parser.
+
+    Why:
+    the full parser imports translation command wiring, while dictionary lookup
+    only needs the lightweight lookup parser.
+
+    How:
+    pass a representative `enlm` argv list with global options before the
+    command and inspect the extracted standalone arguments.
+
+    Responsibility:
+    keep the `enlm find-ngram` path fast without losing global verbosity.
+    """
+
+    assert cli._extract_find_ngram_fast_args(
+        ["--db", "ignored.sqlite3", "--verbose", "find-ngram", "AB"]
+    ) == ["AB", "--verbose"]
+
+
 def test_root_groups_report_skips_top_level_db_bootstrap() -> None:
     parser = cli._build_parser()
     args = parser.parse_args(["report", "root-groups", "--root", "D"])
@@ -245,3 +345,79 @@ def test_run_composite_backfill_processes_each_run(monkeypatch, capsys) -> None:
     output = capsys.readouterr().out
     assert "run x" in output
     assert "run y" in output
+
+
+def test_find_ngram_main_writes_output_file(tmp_path, capsys) -> None:
+    """Exercise the top-level command's `--output` path.
+
+    Why:
+    users asked to save lookup output, and file output should not also echo the
+    same payload to stdout.
+
+    How:
+    run `find_ngram_main` against a tiny temporary dictionary and inspect the
+    written text file.
+
+    Responsibility:
+    verify CLI argument handling, dictionary loading, and output routing work
+    together.
+    """
+
+    dictionary_path = tmp_path / "dictionary.json"
+    output_path = tmp_path / "matches.txt"
+    dictionary_path.write_text(
+        json.dumps(
+            [
+                {
+                    "word": "ABBA",
+                    "normalized": "abba",
+                    "canon_word": True,
+                    "senses": [{"definition": "father"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = cli.find_ngram_main(
+        ["bb", "--dictionary", str(dictionary_path), "--output", str(output_path)]
+    )
+
+    assert exit_code == 0
+    assert "ABBA [canon]" in output_path.read_text(encoding="utf-8")
+    assert capsys.readouterr().out == ""
+
+
+def test_find_ngram_main_returns_one_when_no_matches(tmp_path, capsys) -> None:
+    """Confirm no-match searches produce message text and status 1.
+
+    Why:
+    scripts need a non-zero status for empty searches while humans still need a
+    concise explanation of what happened.
+
+    How:
+    run the standalone command against a dictionary with no matching word.
+
+    Responsibility:
+    lock the no-match behavior requested for the CLI.
+    """
+
+    dictionary_path = tmp_path / "dictionary.json"
+    dictionary_path.write_text(
+        json.dumps(
+            [
+                {
+                    "word": "ABBA",
+                    "normalized": "abba",
+                    "canon_word": True,
+                    "senses": [{"definition": "father"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = cli.find_ngram_main(["zz", "--dictionary", str(dictionary_path)])
+
+    assert exit_code == 1
+    assert 'Matches for "zz" (normalized: "zz"): 0' in capsys.readouterr().out

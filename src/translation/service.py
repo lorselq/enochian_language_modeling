@@ -69,6 +69,13 @@ from .repository import (
     _dictionary_entry_pos,
     _dictionary_entry_senses,
 )
+from .root_groups import (
+    RootGroupError,
+    RootGroupOptions,
+    RootSenseGroupService,
+    align_root_groups_for_morph,
+    compact_report_groups,
+)
 from .scoring import (
     CoherenceResult,
     ScoringWeights,
@@ -364,6 +371,8 @@ class SingleWordTranslationService:
     DECISION_SINGLETON_BURDEN_WEIGHT = 0.08
     DECISION_FEWER_MORPHS_TIE_MARGIN = 0.10
     DECISION_SINGLETON_CLEAR_WIN_MARGIN = 0.18
+    ROOT_GROUP_DECISION_WEIGHT = 0.06
+    ROOT_GROUP_MAX_GROUPS_PER_ROOT = 3
 
     class EvidenceMode(str, Enum):
         ALL = "all"
@@ -560,6 +569,8 @@ class SingleWordTranslationService:
         allow_whole_word: bool = True,
         allow_dictionary: bool = True,
         use_beam_search: bool = False,
+        with_root_groups: bool = False,
+        use_root_groups_for_ranking: bool = False,
         progress_reporter: TranslationProgressReporter | None = None,
     ) -> dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
@@ -644,6 +655,10 @@ class SingleWordTranslationService:
                             "fallback_mode": None,
                             "fallback_min_coverage_ratio": None,
                         },
+                        "root_groups": self._empty_root_group_diagnostics(
+                            enabled=with_root_groups or use_root_groups_for_ranking,
+                            use_for_ranking=use_root_groups_for_ranking,
+                        ),
                     },
                 }
             substring_support: list[str] = []
@@ -1094,6 +1109,18 @@ class SingleWordTranslationService:
                     "Attested-only enumeration dropped candidates for missing morph "
                     f"support: {stage1_drops_missing_support}"
                 )
+            root_group_cache: dict[tuple[tuple[str, ...], str], dict[str, object]] = {}
+            root_group_reports: dict[str, dict[str, object]] = {}
+            if with_root_groups or use_root_groups_for_ranking:
+                root_group_reports = self._root_group_reports_for_morphs(
+                    {
+                        morph
+                        for decomp in filtered
+                        for morph in getattr(decomp, "morphs", [])
+                    },
+                    variants=active_variants,
+                    cache=root_group_cache,
+                )
             fallback_decompositions: list[Decomposition] = []
             fallback_min_coverage: float | None = None
             selected = self._select_compositional_candidates(
@@ -1105,6 +1132,8 @@ class SingleWordTranslationService:
                 weight_enabled=weight_enabled,
                 allow_whole_word=allow_whole_word,
                 root_fnp_profiles=root_fnp_profiles,
+                root_group_reports=root_group_reports,
+                use_root_groups_for_ranking=use_root_groups_for_ranking,
             )
             blind_full_cover_candidates = [
                 candidate
@@ -1170,6 +1199,8 @@ class SingleWordTranslationService:
                         weight_enabled=weight_enabled,
                         allow_whole_word=allow_whole_word,
                         root_fnp_profiles=root_fnp_profiles,
+                        root_group_reports=root_group_reports,
+                        use_root_groups_for_ranking=use_root_groups_for_ranking,
                     )
                     blind_full_cover_candidates = [
                         candidate
@@ -1239,6 +1270,8 @@ class SingleWordTranslationService:
                         weight_enabled=weight_enabled,
                         allow_whole_word=allow_whole_word,
                         root_fnp_profiles=root_fnp_profiles,
+                        root_group_reports=root_group_reports,
+                        use_root_groups_for_ranking=use_root_groups_for_ranking,
                     )
                     blind_full_cover_candidates = [
                         candidate
@@ -1246,15 +1279,19 @@ class SingleWordTranslationService:
                         if self._is_grounded_full_cover_compositional(candidate)
                     ]
 
-            provisional_candidates, fallback_morphs, provisional_suppression_notes = (
-                self._build_provisional_candidates(
+            (
+                provisional_candidates,
+                fallback_morphs,
+                provisional_suppression_notes,
+                provisional_dictionary_suppression_notes,
+            ) = self._build_provisional_candidates(
                     normalized,
                     evidence=evidence,
                     top_n=fallback_top_n,
                     existing_candidates=exact_candidates + selected,
                     allow_whole_word=allow_whole_word,
+                    allow_dictionary=allow_dictionary,
                 )
-            )
             for candidate in provisional_candidates:
                 self._attach_candidate_bundle_metadata(candidate)
                 self._attach_candidate_fnp_metadata(
@@ -1274,6 +1311,9 @@ class SingleWordTranslationService:
                 )
             )
             blind_suppression_notes.extend(provisional_suppression_notes)
+            dictionary_suppression_notes.extend(
+                provisional_dictionary_suppression_notes
+            )
             blind_suppression_notes.extend(decomposition_priority_notes)
             if (
                 not allow_whole_word
@@ -1303,6 +1343,31 @@ class SingleWordTranslationService:
                     candidate,
                     evidence=evidence,
                     root_fnp_profiles=root_fnp_profiles,
+                )
+            if with_root_groups or use_root_groups_for_ranking:
+                missing_root_group_reports = self._root_group_reports_for_morphs(
+                    {
+                        morph
+                        for candidate in candidate_pool
+                        for morph in candidate.get("morphs", [])
+                        if isinstance(morph, str)
+                    },
+                    variants=active_variants,
+                    cache=root_group_cache,
+                )
+                root_group_reports.update(missing_root_group_reports)
+                self._attach_root_group_context_to_candidates(
+                    candidate_pool,
+                    reports_by_morph=root_group_reports,
+                    variants=active_variants,
+                    evidence_word=normalized,
+                    diagnostics=diagnostics,
+                    use_for_ranking=use_root_groups_for_ranking,
+                )
+            else:
+                diagnostics["root_groups"] = self._empty_root_group_diagnostics(
+                    enabled=False,
+                    use_for_ranking=False,
                 )
 
             llm_enabled = self.llm_enabled if llm is None else bool(llm)
@@ -1454,6 +1519,10 @@ class SingleWordTranslationService:
                     "progress_stage": "candidate",
                     "progress_label": f"refining rank {idx + 1} best estimations...",
                 }
+                if base.get("root_group_alignments"):
+                    context["root_group_alignments"] = list(
+                        base.get("root_group_alignments") or []
+                    )
                 synthesis = self.llm_adapter(
                     morphs,
                     morph_meanings,
@@ -1701,7 +1770,8 @@ class SingleWordTranslationService:
         top_n: int,
         existing_candidates: Sequence[dict[str, object]],
         allow_whole_word: bool,
-    ) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str]]:
+        allow_dictionary: bool,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str], list[str]]:
         """Return provisional whole-word candidates plus human-readable hints.
 
         The current pipeline should not fail silently when support is weak but
@@ -1710,9 +1780,13 @@ class SingleWordTranslationService:
         building blocks for later phrase-level or corpus-level disambiguation.
         In blind retranslation mode, provisional exact-word fallback is only
         allowed when the token does not already have an exact dictionary entry.
+        In no-dictionary mode, raw-attestation whole-token fallbacks are also
+        suppressed because they behave like dictionary shortcuts even though
+        they are not stored as canonical dictionary entries.
         """
         fallback_morphs = self._fallback_morph_hints(word)[:top_n]
-        suppression_notes: list[str] = []
+        blind_suppression_notes: list[str] = []
+        dictionary_suppression_notes: list[str] = []
         existing_types = {
             (
                 tuple(str(morph) for morph in candidate.get("morphs", [])),
@@ -1741,16 +1815,27 @@ class SingleWordTranslationService:
         )
         if (
             attested_definitions
+            and not allow_dictionary
+            and not has_exact_word_candidate
+        ):
+            dictionary_suppression_notes.append(
+                "No-dictionary mode suppressed provisional raw-attestation "
+                f"whole-word fallback for {word}."
+            )
+        if (
+            attested_definitions
+            and allow_dictionary
             and not allow_whole_word
             and has_dictionary_exact
             and not has_exact_word_candidate
         ):
-            suppression_notes.append(
+            blind_suppression_notes.append(
                 "Blind retranslation suppressed provisional full-word fallback "
                 f"for {word} because an exact dictionary entry exists."
             )
         if (
             attested_definitions
+            and allow_dictionary
             and (allow_whole_word or not has_dictionary_exact)
             and not has_exact_word_candidate
             and ((word,), "provisional") not in existing_types
@@ -1769,7 +1854,12 @@ class SingleWordTranslationService:
                 )
             )
 
-        return provisional, fallback_morphs, suppression_notes
+        return (
+            provisional,
+            fallback_morphs,
+            blind_suppression_notes,
+            dictionary_suppression_notes,
+        )
 
     @staticmethod
     def _dictionary_exact_entry(
@@ -2056,6 +2146,8 @@ class SingleWordTranslationService:
         weight_enabled: bool,
         allow_whole_word: bool,
         root_fnp_profiles: Mapping[str, RootFNPProfile] | None = None,
+        root_group_reports: Mapping[str, Mapping[str, object]] | None = None,
+        use_root_groups_for_ranking: bool = False,
     ) -> list[dict[str, object]]:
         """Score decompositions via an explicit context-weighted decision function.
 
@@ -2201,11 +2293,34 @@ class SingleWordTranslationService:
                 + fnp_component
                 - singleton_burden_component
             )
+            baseline_decision_score = decision_score
+            root_group_alignment_feature = (
+                self._root_group_decision_feature(
+                    decomp=decomp,
+                    evidence=evidence,
+                    reports_by_morph=root_group_reports or {},
+                )
+                if use_root_groups_for_ranking
+                else {
+                    "score": 0.0,
+                    "component": 0.0,
+                    "alignments": [],
+                    "warnings": [],
+                }
+            )
+            root_group_raw = float(root_group_alignment_feature.get("score") or 0.0)
+            root_group_component = (
+                self.ROOT_GROUP_DECISION_WEIGHT * root_group_raw
+                if use_root_groups_for_ranking
+                else 0.0
+            )
+            decision_score = baseline_decision_score + root_group_component
             decision_rows.append(
                 {
                     "decomposition": decomp,
                     "morphs": list(decomp.morphs),
                     "analysis_type": "compositional",
+                    "baseline_decision_score": baseline_decision_score,
                     "base_component": base_component,
                     "semantic_raw": semantic_raw,
                     "semantic_component": semantic_component,
@@ -2219,6 +2334,14 @@ class SingleWordTranslationService:
                     "candidate_fnp_analysis": fnp_analysis,
                     "singleton_burden_raw": singleton_burden_raw,
                     "singleton_burden_component": singleton_burden_component,
+                    "root_group_alignment_raw": root_group_raw,
+                    "root_group_component": root_group_component,
+                    "root_group_alignments": list(
+                        root_group_alignment_feature.get("alignments") or []
+                    ),
+                    "root_group_warnings": list(
+                        root_group_alignment_feature.get("warnings") or []
+                    ),
                     "decision_score": decision_score,
                     "morph_count": len(decomp.morphs),
                     "singleton_count": sum(
@@ -2230,6 +2353,12 @@ class SingleWordTranslationService:
                     "rejection_reason": "",
                 }
             )
+
+        baseline_decision_rows = sorted(
+            decision_rows,
+            key=lambda row: float(row.get("baseline_decision_score") or 0.0),
+            reverse=True,
+        )
 
         decision_rows.sort(
             key=lambda row: float(row.get("decision_score") or 0.0),
@@ -2245,7 +2374,25 @@ class SingleWordTranslationService:
             "singleton_burden_weight": self.DECISION_SINGLETON_BURDEN_WEIGHT,
             "fewer_morphs_tie_margin": self.DECISION_FEWER_MORPHS_TIE_MARGIN,
             "singleton_clear_win_margin": self.DECISION_SINGLETON_CLEAR_WIN_MARGIN,
+            "root_group_weight": (
+                self.ROOT_GROUP_DECISION_WEIGHT
+                if use_root_groups_for_ranking
+                else 0.0
+            ),
+            "root_group_ranking_enabled": use_root_groups_for_ranking,
             "strategy": strategy,
+        }
+        diagnostics["root_group_ranking"] = {
+            "enabled": use_root_groups_for_ranking,
+            "weight": (
+                self.ROOT_GROUP_DECISION_WEIGHT
+                if use_root_groups_for_ranking
+                else 0.0
+            ),
+            "baseline_rows": [
+                self._serialize_decision_row(row)
+                for row in baseline_decision_rows[: max(3, top_k * 2)]
+            ],
         }
         diagnostics["decision_rows"] = [
             self._serialize_decision_row(row)
@@ -2501,6 +2648,11 @@ class SingleWordTranslationService:
             "morphs": list(row.get("morphs") or []),
             "decision_rank": int(row.get("decision_rank") or 0),
             "decision_score": float(row.get("decision_score") or 0.0),
+            "baseline_decision_score": float(
+                row.get("baseline_decision_score")
+                if isinstance(row.get("baseline_decision_score"), numbers.Real)
+                else row.get("decision_score") or 0.0
+            ),
             "base_component": float(row.get("base_component") or 0.0),
             "semantic_raw": float(row.get("semantic_raw") or 0.0),
             "semantic_component": float(row.get("semantic_component") or 0.0),
@@ -2515,6 +2667,12 @@ class SingleWordTranslationService:
             "singleton_burden_component": float(
                 row.get("singleton_burden_component") or 0.0
             ),
+            "root_group_alignment_raw": float(
+                row.get("root_group_alignment_raw") or 0.0
+            ),
+            "root_group_component": float(row.get("root_group_component") or 0.0),
+            "root_group_alignments": list(row.get("root_group_alignments") or []),
+            "root_group_warnings": list(row.get("root_group_warnings") or []),
             "morph_count": int(row.get("morph_count") or 0),
             "singleton_count": int(row.get("singleton_count") or 0),
             "tie_break_applied": bool(row.get("tie_break_applied")),
@@ -2564,6 +2722,326 @@ class SingleWordTranslationService:
             analysis = row.get("candidate_fnp_analysis")
             if isinstance(analysis, CandidateFNPAnalysis):
                 candidate.update(candidate_analysis_payload(analysis))
+
+    def _root_group_reports_for_morphs(
+        self,
+        morphs: Iterable[str],
+        *,
+        variants: Iterable[str] | None,
+        cache: dict[tuple[tuple[str, ...], str], dict[str, object]] | None = None,
+    ) -> dict[str, dict[str, object]]:
+        """Build live root-group reports for the requested morph set.
+
+        Why:
+        Phase 3/4 root groups are a live diagnostic read model, not a saved
+        report file. Translation needs a bounded request-level cache so repeated
+        short roots in a word or phrase do not trigger repeated DB scans.
+
+        How:
+        this method resolves the repository's configured variant paths, calls
+        the root-group service for each unique morph, and stores reports in the
+        caller-provided cache keyed by variant set and root.
+
+        Responsibility:
+        keep root grouping read-only and variant-aware at the translation
+        boundary.
+        """
+
+        unique = sorted({str(morph or "").strip().upper() for morph in morphs if str(morph or "").strip()})
+        if not unique:
+            return {}
+        selected_variants = tuple(sorted(str(v) for v in (variants or self.repository.variants)))
+        variant_paths = self._root_group_variant_paths()
+        shared_cache = cache if cache is not None else {}
+        reports: dict[str, dict[str, object]] = {}
+        for morph in unique:
+            key = (selected_variants, morph)
+            cached = shared_cache.get(key)
+            if cached is None:
+                try:
+                    cached = RootSenseGroupService(
+                        RootGroupOptions(
+                            variant_paths=variant_paths,
+                            variants=selected_variants,
+                            detail="full",
+                            max_groups=12,
+                        )
+                    ).build_report(morph)
+                except (FileNotFoundError, RootGroupError, ValueError) as error:
+                    cached = {
+                        "root": morph,
+                        "variants_queried": list(selected_variants),
+                        "groups": [],
+                        "diagnostics": {
+                            "packet_count": 0,
+                            "group_count": 0,
+                            "ungrouped_count": 0,
+                            "rejected_merges": [],
+                            "embedding_backend": "error",
+                            "warnings": [str(error)],
+                            "empty_reason": "root_group_report_error",
+                        },
+                    }
+                shared_cache[key] = cached
+            reports[morph] = cached
+        return reports
+
+    def _root_group_variant_paths(self) -> dict[str, Path | None]:
+        """Return configured insights DB paths suitable for root grouping.
+
+        The repository already knows the active solo/debate paths. This adapter
+        avoids hardcoding config paths in translation internals while tolerating
+        lightweight test repositories that only expose path diagnostics.
+        """
+
+        diagnostics = self.repository.path_diagnostics()
+        variant_paths = diagnostics.get("variant_paths", {})
+        paths: dict[str, Path | None] = {}
+        if isinstance(variant_paths, Mapping):
+            for variant in ("solo", "debate"):
+                info = variant_paths.get(variant)
+                raw_path = info.get("path") if isinstance(info, Mapping) else None
+                paths[variant] = Path(raw_path) if isinstance(raw_path, str) and raw_path else None
+        return paths
+
+    def _attach_root_group_context_to_candidates(
+        self,
+        candidates: list[dict[str, object]],
+        *,
+        reports_by_morph: Mapping[str, Mapping[str, object]],
+        variants: Iterable[str] | None,
+        evidence_word: str,
+        diagnostics: dict[str, object],
+        use_for_ranking: bool,
+    ) -> None:
+        """Attach compact root-group diagnostics to selected candidates.
+
+        Why:
+        Phase 3 makes sense groups visible to users and optional LLM renderers,
+        but selected morph meanings remain authoritative.
+
+        How:
+        each candidate meaning is aligned to the corresponding full report and
+        projected into compact alignment payloads. Diagnostics receive a
+        by-morph inventory so consumers can inspect alternates.
+
+        Responsibility:
+        enrich output only. This method does not reorder candidates.
+        """
+
+        for candidate in candidates:
+            alignments = self._candidate_root_group_alignments(
+                candidate,
+                reports_by_morph=reports_by_morph,
+                evidence_word=evidence_word,
+            )
+            if alignments:
+                candidate["root_group_alignments"] = alignments
+        diagnostics["root_groups"] = {
+            "enabled": True,
+            "used_for_ranking": use_for_ranking,
+            "variants": list(variants or self.repository.variants),
+            "max_groups_per_root": self.ROOT_GROUP_MAX_GROUPS_PER_ROOT,
+            "root_groups_by_morph": {
+                morph: {
+                    "root": report.get("root"),
+                    "groups": compact_report_groups(
+                        report,
+                        max_groups=self.ROOT_GROUP_MAX_GROUPS_PER_ROOT,
+                    ),
+                    "diagnostics": report.get("diagnostics", {}),
+                }
+                for morph, report in sorted(reports_by_morph.items())
+            },
+        }
+
+    def _candidate_root_group_alignments(
+        self,
+        candidate: Mapping[str, object],
+        *,
+        reports_by_morph: Mapping[str, Mapping[str, object]],
+        evidence_word: str,
+    ) -> list[dict[str, object]]:
+        """Return root-group alignments for a selected candidate payload."""
+
+        morphs = [
+            str(morph).upper()
+            for morph in candidate.get("morphs") or []
+            if isinstance(morph, str) and morph.strip()
+        ]
+        meanings = candidate.get("meanings")
+        meaning_list = meanings if isinstance(meanings, Sequence) and not isinstance(meanings, (str, bytes)) else []
+        alignments: list[dict[str, object]] = []
+        for index, morph in enumerate(morphs):
+            meaning = meaning_list[index] if index < len(meaning_list) and isinstance(meaning_list[index], Mapping) else {}
+            report = reports_by_morph.get(morph)
+            source_ids = self._source_cluster_ids_from_meaning(meaning)
+            semantic_text = self._semantic_text_from_meaning(meaning, candidate)
+            alignments.append(
+                align_root_groups_for_morph(
+                    morph=morph,
+                    span_role=self._span_role(index, len(morphs)),
+                    report=report,
+                    source_cluster_ids=source_ids,
+                    evidence_word=evidence_word,
+                    semantic_text=semantic_text,
+                    max_alternates=2,
+                )
+            )
+        return alignments
+
+    def _root_group_decision_feature(
+        self,
+        *,
+        decomp: Decomposition,
+        evidence: WordEvidence,
+        reports_by_morph: Mapping[str, Mapping[str, object]],
+    ) -> dict[str, object]:
+        """Compute the bounded Phase 4 ranking feature for one decomposition.
+
+        The score is intentionally small and additive. It rewards local
+        alignment between a morph occurrence and an existing root group, while
+        leaving hard filters, attestation, FNP, and baseline decision rows
+        authoritative.
+        """
+
+        morphs = [str(morph).upper() for morph in decomp.morphs if str(morph).strip()]
+        if not morphs:
+            return {"score": 0.0, "alignments": [], "warnings": []}
+        alignments: list[dict[str, object]] = []
+        warnings: list[str] = []
+        for index, morph in enumerate(morphs):
+            report = reports_by_morph.get(morph)
+            source_ids = self._source_cluster_ids_for_morph(morph, evidence)
+            semantic_text = self._semantic_text_for_morph_from_evidence(morph, evidence)
+            alignment = align_root_groups_for_morph(
+                morph=morph,
+                span_role=self._span_role(index, len(morphs)),
+                report=report,
+                source_cluster_ids=source_ids,
+                evidence_word=evidence.word,
+                semantic_text=semantic_text,
+                max_alternates=1,
+            )
+            alignments.append(alignment)
+            warnings.extend(str(w) for w in alignment.get("warnings") or [])
+        scores = [
+            float(alignment.get("alignment_score") or 0.0)
+            for alignment in alignments
+        ]
+        score = sum(scores) / float(len(scores)) if scores else 0.0
+        return {
+            "score": max(0.0, min(1.0, score)),
+            "alignments": alignments,
+            "warnings": sorted(set(warnings)),
+        }
+
+    def _source_cluster_ids_for_morph(
+        self,
+        morph: str,
+        evidence: WordEvidence,
+    ) -> list[int]:
+        """Collect cluster IDs that directly support a morph in current evidence."""
+
+        root = str(morph or "").upper()
+        ids: list[int] = []
+        for cluster in evidence.direct_clusters:
+            if cluster.ngram.upper() == root:
+                ids.append(int(cluster.cluster_id))
+        for attested in evidence.attested_definitions:
+            if attested.source_word.upper() == root or attested.root_ngram.upper() == root:
+                ids.append(int(attested.cluster_id))
+        return sorted(set(ids))
+
+    @staticmethod
+    def _source_cluster_ids_from_meaning(meaning: Mapping[str, object]) -> list[int]:
+        ids: list[int] = []
+        for key in ("source_cluster_id", "cluster_id"):
+            value = meaning.get(key)
+            if isinstance(value, int):
+                ids.append(value)
+            elif isinstance(value, str):
+                try:
+                    ids.append(int(float(value)))
+                except ValueError:
+                    pass
+        trace = meaning.get("definition_trace")
+        detail = trace.get("selected_source_detail") if isinstance(trace, Mapping) else None
+        if isinstance(detail, Mapping):
+            for key in ("source_cluster_id", "cluster_id"):
+                value = detail.get(key)
+                if isinstance(value, int):
+                    ids.append(value)
+                elif isinstance(value, str):
+                    try:
+                        ids.append(int(float(value)))
+                    except ValueError:
+                        pass
+        return sorted(set(ids))
+
+    @staticmethod
+    def _semantic_text_from_meaning(
+        meaning: Mapping[str, object],
+        candidate: Mapping[str, object],
+    ) -> str:
+        pieces: list[str] = []
+        for key in ("definition", "raw_definition", "surface_gloss"):
+            value = meaning.get(key)
+            if isinstance(value, str):
+                pieces.append(value)
+        for key in ("semantic_core", "semantic_core_terms", "negative_contrast"):
+            values = meaning.get(key)
+            if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+                pieces.extend(str(value) for value in values)
+        for key in ("bundle_surface_gloss", "bundle_head_gloss"):
+            value = candidate.get(key)
+            if isinstance(value, str):
+                pieces.append(value)
+        return " ".join(piece for piece in pieces if piece)
+
+    def _semantic_text_for_morph_from_evidence(
+        self,
+        morph: str,
+        evidence: WordEvidence,
+    ) -> str:
+        pieces: list[str] = []
+        root = str(morph or "").upper()
+        for cluster in evidence.direct_clusters:
+            if cluster.ngram.upper() == root:
+                pieces.extend(cluster.semantic_core)
+                if cluster.glossator_def:
+                    pieces.append(cluster.glossator_def)
+        for residual in evidence.residual_semantics:
+            if residual.residual.upper() == root:
+                pieces.extend(residual.semantic_core)
+                if residual.glossator_def:
+                    pieces.append(residual.glossator_def)
+        for attested in evidence.attested_definitions:
+            if attested.source_word.upper() == root and attested.definition:
+                pieces.append(attested.definition)
+        return " ".join(piece for piece in pieces if piece)
+
+    @staticmethod
+    def _span_role(index: int, count: int) -> str:
+        if count <= 1:
+            return "free"
+        if index == 0:
+            return "prefix"
+        if index == count - 1:
+            return "suffix"
+        return "infix"
+
+    @staticmethod
+    def _empty_root_group_diagnostics(
+        *,
+        enabled: bool,
+        use_for_ranking: bool,
+    ) -> dict[str, object]:
+        return {
+            "enabled": enabled,
+            "used_for_ranking": use_for_ranking,
+            "root_groups_by_morph": {},
+        }
 
     def _enumerate_attested_full_cover_decompositions(
         self,

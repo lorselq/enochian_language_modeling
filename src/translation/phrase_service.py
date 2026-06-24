@@ -37,16 +37,18 @@ from .fnp import (
     phrase_fnp_analysis,
     role_hint_from_fnp,
 )
-from .memory import TranslationMemoryRepository
+from .memory import NullTranslationMemoryRepository, TranslationMemoryRepository
 from .placeholder_glosses import (
-    clean_lexical_gloss,
+    clean_translation_gloss,
     is_meta_linguistic_gloss,
     is_numeric_meta_gloss,
     numeric_meta_digits,
     normalize_semantic_terms,
     numeric_meta_gloss_matches_token,
+    root_term_fallback_gloss,
     sanitize_human_gloss,
     specific_gloss_from_definition_and_semantic_core,
+    translation_surface_has_diagnostic_metalanguage,
     unresolved_token_gloss,
 )
 from .repository import WordEvidence
@@ -161,6 +163,7 @@ class PhraseTokenCandidate:
     confidence: float
     score: float
     role_hint: str
+    translation_gloss: str | None = None
     selected_source: str = "unknown"
     definition_trace: dict[str, object] = field(default_factory=dict)
     decision_trace: dict[str, object] = field(default_factory=dict)
@@ -185,6 +188,7 @@ class PhraseTokenCandidate:
     fnp_confidence: float = 0.0
     fnp_warnings: list[str] = field(default_factory=list)
     head_analysis: dict[str, object] = field(default_factory=dict)
+    root_group_alignments: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -220,14 +224,16 @@ class PhraseTranslationService:
         self,
         *,
         word_service: SingleWordTranslationService,
-        memory_repository: TranslationMemoryRepository,
+        memory_repository: TranslationMemoryRepository | NullTranslationMemoryRepository | None = None,
+        use_memory: bool = False,
         llm_renderer: Callable[[dict[str, object], dict[str, object]], PhraseRenderResult] = render_phrase_translation,
         lay_renderer: Callable[[dict[str, object], dict[str, object]], PhraseRenderResult] = render_phrase_lay_translation,
         bundle_renderer: Callable[[dict[str, object], dict[str, object]], PhraseRenderBundleResult] | None = None,
         unknown_token_refiner: Callable[[dict[str, object], dict[str, object]], dict[str, object]] | None = refine_unknown_phrase_tokens,
     ) -> None:
         self.word_service = word_service
-        self.memory_repository = memory_repository
+        self.memory_repository = memory_repository or NullTranslationMemoryRepository()
+        self.use_memory = bool(use_memory)
         self.llm_renderer = llm_renderer
         self.lay_renderer = lay_renderer
         self.unknown_token_refiner = unknown_token_refiner
@@ -249,18 +255,30 @@ class PhraseTranslationService:
         llm_enabled: bool = False,
         llm_use_remote: bool = False,
         memory_db: Path | None = None,
+        use_memory: bool = False,
+        update_memory: bool = False,
     ) -> "PhraseTranslationService":
-        """Build a phrase translation service from repo-configured resources."""
+        """Build a phrase service without opening memory unless explicitly enabled.
+
+        Translation memory is deliberately opt-in so evaluation runs are not
+        influenced by provisional guesses from earlier experiments. A persistent
+        repository is opened only for memory lookup or memory update requests.
+        """
         paths = get_config_paths()
+        memory_enabled = bool(use_memory or update_memory)
+        memory_repository = (
+            TranslationMemoryRepository(memory_db or Path(paths["translation_memory"]))
+            if memory_enabled
+            else NullTranslationMemoryRepository()
+        )
         return cls(
             word_service=SingleWordTranslationService.from_config(
                 variants=variants,
                 llm_enabled=llm_enabled,
                 llm_use_remote=llm_use_remote,
             ),
-            memory_repository=TranslationMemoryRepository(
-                memory_db or Path(paths["translation_memory"])
-            ),
+            memory_repository=memory_repository,
+            use_memory=bool(use_memory),
         )
 
     def close(self) -> None:
@@ -288,11 +306,14 @@ class PhraseTranslationService:
         llm: bool | None = None,
         llm_context: str | None = None,
         llm_unknown_context: bool = False,
-        memory_update: bool = True,
+        use_memory: bool | None = None,
+        memory_update: bool = False,
         evidence_mode: SingleWordTranslationService.EvidenceMode = SingleWordTranslationService.EvidenceMode.ALL,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
         allow_dictionary: bool = True,
+        with_root_groups: bool = False,
+        use_root_groups_for_ranking: bool = False,
         progress_reporter: PhraseProgressReporter | None = None,
     ) -> dict[str, object]:
         """Translate one phrase, splitting semicolon/colon clauses first.
@@ -317,11 +338,14 @@ class PhraseTranslationService:
                     llm=llm,
                     llm_context=llm_context,
                     llm_unknown_context=llm_unknown_context,
+                    use_memory=use_memory,
                     memory_update=memory_update,
                     evidence_mode=evidence_mode,
                     weight_enabled=weight_enabled,
                     allow_whole_word=allow_whole_word,
                     allow_dictionary=allow_dictionary,
+                    with_root_groups=with_root_groups,
+                    use_root_groups_for_ranking=use_root_groups_for_ranking,
                     progress_reporter=progress_reporter,
                 )
                 for clause in clauses
@@ -339,11 +363,14 @@ class PhraseTranslationService:
             llm=llm,
             llm_context=llm_context,
             llm_unknown_context=llm_unknown_context,
+            use_memory=use_memory,
             memory_update=memory_update,
             evidence_mode=evidence_mode,
             weight_enabled=weight_enabled,
             allow_whole_word=allow_whole_word,
             allow_dictionary=allow_dictionary,
+            with_root_groups=with_root_groups,
+            use_root_groups_for_ranking=use_root_groups_for_ranking,
             progress_reporter=progress_reporter,
         )
 
@@ -357,11 +384,14 @@ class PhraseTranslationService:
         llm: bool | None = None,
         llm_context: str | None = None,
         llm_unknown_context: bool = False,
-        memory_update: bool = True,
+        use_memory: bool | None = None,
+        memory_update: bool = False,
         evidence_mode: SingleWordTranslationService.EvidenceMode = SingleWordTranslationService.EvidenceMode.ALL,
         weight_enabled: bool = True,
         allow_whole_word: bool = True,
         allow_dictionary: bool = True,
+        with_root_groups: bool = False,
+        use_root_groups_for_ranking: bool = False,
         progress_reporter: PhraseProgressReporter | None = None,
     ) -> dict[str, object]:
         """Translate a phrase and expose both technical and layman-readable outputs.
@@ -382,6 +412,7 @@ class PhraseTranslationService:
             raise ValueError("Phrase must contain at least one alphabetic token.")
 
         llm_enabled = self.word_service.llm_enabled if llm is None else bool(llm)
+        memory_lookup_enabled = self.use_memory if use_memory is None else bool(use_memory)
         active_variants = list(variants) if variants else self.word_service.active_variants
         candidate_matrix: list[list[PhraseTokenCandidate]] = []
         token_payloads: list[dict[str, object]] = []
@@ -423,6 +454,8 @@ class PhraseTranslationService:
                     allow_whole_word=allow_whole_word,
                     allow_dictionary=allow_dictionary,
                     use_beam_search=True,
+                    with_root_groups=bool(use_root_groups_for_ranking),
+                    use_root_groups_for_ranking=bool(use_root_groups_for_ranking),
                 )
                 word_result_cache[token.upper()] = copy.deepcopy(cached_result)
             word_result = copy.deepcopy(cached_result)
@@ -433,7 +466,11 @@ class PhraseTranslationService:
                 allow_whole_word=allow_whole_word,
             )
             if not token_candidates:
-                fallback_candidates = self._fallback_token_candidates(token)
+                fallback_candidates = (
+                    self._fallback_token_candidates(token)
+                    if memory_lookup_enabled
+                    else []
+                )
                 if fallback_candidates:
                     token_candidates = fallback_candidates
                 else:
@@ -469,6 +506,13 @@ class PhraseTranslationService:
                 token_payloads=token_payloads,
                 chosen_parse=chosen_parse,
             )
+            if with_root_groups or use_root_groups_for_ranking:
+                self._attach_root_group_context_to_chosen_parse(
+                    chosen_parse=chosen_parse,
+                    token_payloads=token_payloads,
+                    variants=active_variants,
+                    use_for_ranking=use_root_groups_for_ranking,
+                )
         llm_logging_context = self._llm_logging_context(active_variants)
         unknown_context_enabled = llm_enabled and bool(llm_unknown_context)
         unknown_context_applied = False
@@ -714,7 +758,7 @@ class PhraseTranslationService:
                         update["display_note"] = candidate.weak_fallback_note
                 memory_updates.append(update)
 
-        return {
+        result_payload = {
             "phrase": normalized_phrase,
             "tokens": tokens,
             "variants_queried": active_variants or self.word_service.repository.variants,
@@ -735,6 +779,8 @@ class PhraseTranslationService:
             "llm_unknown_context_applied": unknown_context_applied,
             "llm_unknown_context_updates": unknown_context_updates,
             "llm_unknown_context_warnings": unknown_context_warnings,
+            "translation_memory_enabled": memory_lookup_enabled,
+            "translation_memory_update_enabled": bool(memory_update),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "token_analyses": token_payloads,
             "parse_candidates": [asdict(candidate) for candidate in parse_candidates],
@@ -783,6 +829,167 @@ class PhraseTranslationService:
             ),
             "memory_updates": memory_updates,
         }
+        self._apply_translation_surface_guard(
+            result_payload,
+            chosen_parse=chosen_parse,
+        )
+        return result_payload
+
+    @staticmethod
+    def _apply_translation_surface_guard(
+        payload: dict[str, object],
+        *,
+        chosen_parse: PhraseParseCandidate | None,
+    ) -> None:
+        """Scrub rendered translation fields after deterministic/LLM rendering.
+
+        LLMs and weak fallback paths can still echo diagnostic prose even after
+        candidate selection has preserved it only as trace data. This final
+        guard replaces contaminated rendered fields with the deterministic
+        skeleton or token-level translation glosses while leaving provenance
+        fields untouched.
+        """
+
+        warnings: list[str] = []
+        fallback = PhraseTranslationService._surface_guard_fallback(
+            payload,
+            chosen_parse=chosen_parse,
+        )
+        translation_fields = (
+            "rendered_translation",
+            "lay_translation",
+            "poetic_translation",
+            "contextual_lay_translation",
+            "contextual_poetic_translation",
+            "interpretive_translation",
+        )
+        for field in translation_fields:
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            if not translation_surface_has_diagnostic_metalanguage(value):
+                continue
+            payload[field] = fallback or ""
+            warnings.append(
+                f"Replaced diagnostic metalanguage in {field} with safe token glosses."
+            )
+
+        footnotes = payload.get("translation_footnotes")
+        if isinstance(footnotes, list):
+            replacements = PhraseTranslationService._surface_guard_token_glosses(
+                payload,
+                chosen_parse=chosen_parse,
+            )
+            changed = False
+            for note in footnotes:
+                if not isinstance(note, dict):
+                    continue
+                rendered = note.get("rendered_text")
+                if not isinstance(rendered, str) or not rendered.strip():
+                    continue
+                if not translation_surface_has_diagnostic_metalanguage(rendered):
+                    continue
+                token = str(note.get("source_token") or "").upper()
+                note["rendered_text"] = replacements.get(token) or fallback or "unresolved"
+                changed = True
+                warnings.append(
+                    f"Replaced diagnostic metalanguage in footnote for {token or 'token'}."
+                )
+            if changed:
+                payload["footnoted_translation"] = _build_footnoted_translation(
+                    [note for note in footnotes if isinstance(note, Mapping)]
+                )
+
+        if not warnings:
+            return
+        existing = payload.get("translation_surface_guard_warnings")
+        merged = [
+            str(item)
+            for item in existing
+            if isinstance(item, str)
+        ] if isinstance(existing, Sequence) and not isinstance(existing, (str, bytes)) else []
+        for warning in warnings:
+            if warning not in merged:
+                merged.append(warning)
+        payload["translation_surface_guard_warnings"] = merged
+        render_warnings = payload.setdefault("render_warnings", [])
+        if isinstance(render_warnings, list):
+            for warning in warnings:
+                if warning not in render_warnings:
+                    render_warnings.append(warning)
+
+    @staticmethod
+    def _surface_guard_fallback(
+        payload: Mapping[str, object],
+        *,
+        chosen_parse: PhraseParseCandidate | None,
+    ) -> str | None:
+        """Return the safest whole-phrase replacement for contaminated output."""
+
+        if chosen_parse is not None and chosen_parse.translation_skeleton.strip():
+            skeleton = chosen_parse.translation_skeleton.strip()
+            if not translation_surface_has_diagnostic_metalanguage(skeleton):
+                return skeleton
+        chosen_payload = payload.get("chosen_parse")
+        if isinstance(chosen_payload, Mapping):
+            skeleton = str(chosen_payload.get("translation_skeleton") or "").strip()
+            if skeleton and not translation_surface_has_diagnostic_metalanguage(skeleton):
+                return skeleton
+        token_glosses = PhraseTranslationService._surface_guard_token_glosses(
+            payload,
+            chosen_parse=chosen_parse,
+        )
+        joined = " ".join(gloss for gloss in token_glosses.values() if gloss).strip()
+        if joined and not translation_surface_has_diagnostic_metalanguage(joined):
+            return joined
+        return None
+
+    @staticmethod
+    def _surface_guard_token_glosses(
+        payload: Mapping[str, object],
+        *,
+        chosen_parse: PhraseParseCandidate | None,
+    ) -> dict[str, str]:
+        """Return token-to-safe-gloss mappings for surface guard repairs."""
+
+        glosses: dict[str, str] = {}
+        if chosen_parse is not None:
+            for candidate in chosen_parse.token_choices:
+                gloss = (
+                    candidate.translation_gloss
+                    or PhraseTranslationService._translation_gloss_for_candidate(candidate)
+                    or PhraseTranslationService._human_facing_candidate_gloss(candidate)
+                )
+                if gloss:
+                    glosses[candidate.token.upper()] = gloss
+            return glosses
+
+        chosen_payload = payload.get("chosen_parse")
+        token_choices = (
+            chosen_payload.get("token_choices")
+            if isinstance(chosen_payload, Mapping)
+            else None
+        )
+        if not isinstance(token_choices, Sequence) or isinstance(token_choices, (str, bytes)):
+            return glosses
+        for choice in token_choices:
+            if not isinstance(choice, Mapping):
+                continue
+            token = str(choice.get("token") or "").upper()
+            if not token:
+                continue
+            gloss = clean_translation_gloss(choice.get("translation_gloss"), token=token)
+            if gloss is None:
+                gloss = root_term_fallback_gloss(
+                    choice.get("semantic_bundle"),
+                    choice.get("root_group_alignments"),
+                    semantic_core=choice.get("semantic_core"),
+                    negative_contrast=choice.get("negative_contrast"),
+                    token=token,
+                )
+            if gloss:
+                glosses[token] = gloss
+        return glosses
 
     @staticmethod
     def _split_phrase_clauses(phrase: str) -> list[str]:
@@ -1079,6 +1286,10 @@ class PhraseTranslationService:
                 "clause_translations": clause_payloads,
             }
         )
+        PhraseTranslationService._apply_translation_surface_guard(
+            combined,
+            chosen_parse=None,
+        )
         return combined
 
     @staticmethod
@@ -1358,6 +1569,9 @@ class PhraseTranslationService:
                 fnp_warnings=fnp_warnings,
                 head_analysis=head_analysis,
             )
+            phrase_candidate.translation_gloss = self._translation_gloss_for_candidate(
+                phrase_candidate
+            )
             if (
                 not allow_whole_word
                 and phrase_candidate.blind_mode_whole_word_rescue
@@ -1568,7 +1782,7 @@ class PhraseTranslationService:
         def add_piece(raw_piece: object) -> None:
             if not isinstance(raw_piece, str) or not raw_piece.strip():
                 return
-            cleaned = cls._human_facing_definition(raw_piece.strip())
+            cleaned = clean_translation_gloss(raw_piece.strip())
             if cleaned is None:
                 return
             lowered = cleaned.lower()
@@ -2020,14 +2234,11 @@ class PhraseTranslationService:
                     definition=surface_gloss,
                     negative_contrast=negative_contrast,
                 )
-                cleaned = PhraseTranslationService._human_facing_definition(
+                cleaned = clean_translation_gloss(
                     specific or surface_gloss,
+                    semantic_core=semantic_core,
+                    negative_contrast=negative_contrast,
                     token=token,
-                    exact_token=PhraseTranslationService._is_exact_token_meaning(
-                        token,
-                        candidate,
-                        meaning,
-                    ),
                 )
                 if cleaned is not None:
                     return cleaned
@@ -2038,14 +2249,11 @@ class PhraseTranslationService:
                     definition=definition,
                     negative_contrast=negative_contrast,
                 )
-                cleaned = PhraseTranslationService._human_facing_definition(
+                cleaned = clean_translation_gloss(
                     specific or definition,
+                    semantic_core=semantic_core,
+                    negative_contrast=negative_contrast,
                     token=token,
-                    exact_token=PhraseTranslationService._is_exact_token_meaning(
-                        token,
-                        candidate,
-                        meaning,
-                    ),
                 )
                 if cleaned is not None:
                     return cleaned
@@ -2155,10 +2363,11 @@ class PhraseTranslationService:
                     definition=value,
                     negative_contrast=negative_contrast,
                 )
-                cleaned = PhraseTranslationService._human_facing_definition(
+                cleaned = clean_translation_gloss(
                     specific or value,
+                    semantic_core=semantic_core,
+                    negative_contrast=negative_contrast,
                     token=token,
-                    exact_token=False,
                 )
                 if cleaned is not None:
                     lexical_heads.append(cleaned)
@@ -2200,7 +2409,7 @@ class PhraseTranslationService:
             for runner_up in runner_ups:
                 if not isinstance(runner_up, Mapping):
                     continue
-                definition = cls._human_facing_definition(runner_up.get("definition"))
+                definition = clean_translation_gloss(runner_up.get("definition"))
                 if not definition or definition == selected_definition or definition in seen:
                     continue
                 seen.add(definition)
@@ -2214,7 +2423,7 @@ class PhraseTranslationService:
             for definition in definitions:
                 if not isinstance(definition, str):
                     continue
-                normalized = cls._human_facing_definition(definition)
+                normalized = clean_translation_gloss(definition)
                 if (
                     not normalized
                     or normalized == selected_definition
@@ -2306,9 +2515,7 @@ class PhraseTranslationService:
             if exact_token and numeric_meta_gloss_matches_token(cleaned, token=token):
                 return cleaned
             return None
-        if PhraseTranslationService._is_phrase_meta_gloss(cleaned):
-            return None
-        return cleaned
+        return clean_translation_gloss(cleaned, token=token)
 
     @staticmethod
     def _is_phrase_meta_gloss(definition: str) -> bool:
@@ -2330,6 +2537,7 @@ class PhraseTranslationService:
         """Return the best phrase-safe gloss already carried by a token candidate."""
 
         for value in (
+            candidate.translation_gloss,
             candidate.definition,
             candidate.bundle_surface_gloss,
             candidate.bundle_head_gloss,
@@ -2363,7 +2571,59 @@ class PhraseTranslationService:
             )
             if cleaned is not None:
                 return cleaned
+        fallback = root_term_fallback_gloss(
+            candidate.semantic_bundle,
+            candidate.root_group_alignments,
+            semantic_core=candidate.definition_trace.get("selected_semantic_core"),
+            negative_contrast=candidate.definition_trace.get("selected_negative_contrast"),
+            token=candidate.token,
+        )
+        if fallback is not None:
+            return fallback
         return None
+
+    @staticmethod
+    def _translation_gloss_for_candidate(
+        candidate: PhraseTokenCandidate,
+    ) -> str | None:
+        """Derive the token's render-only gloss from safe lexical evidence.
+
+        Phrase candidates deliberately keep raw definitions for traceability.
+        This field is the separate surface contract consumed by deterministic
+        rendering and LLM payloads so diagnostic metalanguage cannot escape into
+        translations.
+        """
+
+        trace = candidate.definition_trace
+        semantic_core = trace.get("selected_semantic_core")
+        negative_contrast = trace.get("selected_negative_contrast")
+        for value in (
+            candidate.definition,
+            trace.get("surface_gloss"),
+            trace.get("selected_definition"),
+            candidate.bundle_surface_gloss,
+            candidate.bundle_head_gloss,
+            candidate.dictionary_rescue_gloss,
+            candidate.weak_fallback_gloss,
+            trace.get("raw_selected_definition"),
+            candidate.raw_definition,
+            *candidate.alternates,
+        ):
+            cleaned = clean_translation_gloss(
+                value,
+                semantic_core=semantic_core,
+                negative_contrast=negative_contrast,
+                token=candidate.token,
+            )
+            if cleaned is not None:
+                return cleaned
+        return root_term_fallback_gloss(
+            semantic_core,
+            candidate.semantic_bundle,
+            candidate.root_group_alignments,
+            negative_contrast=negative_contrast,
+            token=candidate.token,
+        )
 
     @staticmethod
     def _is_exact_token_candidate(
@@ -2747,7 +3007,12 @@ class PhraseTranslationService:
             return "let there be"
         if profile == "feminine_locative_possessive":
             next_gloss = str(
-                (following.bundle_surface_gloss or following.definition or "")
+                (
+                    following.translation_gloss
+                    or following.bundle_surface_gloss
+                    or following.definition
+                    or ""
+                )
                 if following is not None
                 else ""
             ).strip().lower()
@@ -2759,19 +3024,6 @@ class PhraseTranslationService:
 
         if human_facing is not None:
             return human_facing
-        preferred = (
-            candidate.bundle_surface_gloss
-            or candidate.bundle_head_gloss
-            or candidate.definition
-        )
-        if isinstance(preferred, str) and preferred.strip():
-            cleaned_preferred = PhraseTranslationService._human_facing_definition(
-                preferred,
-                token=token,
-                exact_token=PhraseTranslationService._is_exact_phrase_candidate(candidate),
-            )
-            if cleaned_preferred is not None:
-                return cleaned_preferred
         raise RuntimeError(
             f"Phrase token {token.upper()} reached clause rendering without a grounded gloss."
         )
@@ -2931,6 +3183,7 @@ class PhraseTranslationService:
                 candidate.alternates = [previous_definition.strip(), *candidate.alternates]
 
             candidate.definition = replacement
+            candidate.translation_gloss = replacement
             if candidate.raw_definition is None:
                 candidate.raw_definition = replacement
 
@@ -3030,9 +3283,7 @@ class PhraseTranslationService:
 
         if not isinstance(value, str) or not value.strip():
             return None
-        cleaned = clean_lexical_gloss(value, token=token)
-        if cleaned is None:
-            cleaned = PhraseTranslationService._human_facing_definition(value, token=token)
+        cleaned = clean_translation_gloss(value, token=token)
         if cleaned is None:
             return None
         normalized = cleaned.strip()
@@ -3055,6 +3306,91 @@ class PhraseTranslationService:
         )
         return selected_source in {"", "unknown"}
 
+    def _attach_root_group_context_to_chosen_parse(
+        self,
+        *,
+        chosen_parse: PhraseParseCandidate,
+        token_payloads: list[dict[str, object]],
+        variants: Iterable[str] | None,
+        use_for_ranking: bool,
+    ) -> None:
+        """Attach Phase 3 root-group diagnostics to chosen phrase tokens.
+
+        Why:
+        phrase translation should expose root sense inventories only after the
+        deterministic parse has been chosen, so diagnostics explain the chosen
+        read without creating substring noise across every possible token parse.
+
+        How:
+        the method reuses the word service's live root-group report helpers and
+        aligns each chosen token's morph provenance to compact root group
+        summaries.
+
+        Responsibility:
+        enrich chosen token diagnostics and LLM render payloads without
+        changing parse selection unless the caller already enabled Phase 4.
+        """
+
+        morphs = {
+            morph
+            for candidate in chosen_parse.token_choices
+            for morph in candidate.morphs
+            if isinstance(morph, str) and morph.strip()
+        }
+        reports = self.word_service._root_group_reports_for_morphs(
+            morphs,
+            variants=variants,
+            cache={},
+        )
+        for candidate in chosen_parse.token_choices:
+            proxy = {
+                "morphs": list(candidate.morphs),
+                "meanings": [
+                    {
+                        "morph": source.get("morph"),
+                        "canonical": source.get("canonical"),
+                        "definition": source.get("definition"),
+                        "raw_definition": source.get("raw_definition"),
+                        "semantic_core": source.get("semantic_core") or [],
+                        "negative_contrast": source.get("negative_contrast") or [],
+                        "source_cluster_id": source.get("source_cluster_id")
+                        or source.get("cluster_id"),
+                        "cluster_id": source.get("cluster_id"),
+                        "definition_trace": {
+                            "selected_source_detail": source,
+                        },
+                    }
+                    for source in candidate.morph_sources
+                ],
+                "bundle_surface_gloss": candidate.bundle_surface_gloss,
+                "bundle_head_gloss": candidate.bundle_head_gloss,
+            }
+            candidate.root_group_alignments = (
+                self.word_service._candidate_root_group_alignments(
+                    proxy,
+                    reports_by_morph=reports,
+                    evidence_word=candidate.token.upper(),
+                )
+            )
+            candidate.translation_gloss = self._translation_gloss_for_candidate(candidate)
+
+        for token_payload in token_payloads:
+            token = str(token_payload.get("token") or "").upper()
+            matching = [
+                candidate
+                for candidate in chosen_parse.token_choices
+                if candidate.token.upper() == token
+            ]
+            if not matching:
+                continue
+            diagnostics = token_payload.setdefault("diagnostics", {})
+            if isinstance(diagnostics, dict):
+                diagnostics["root_groups"] = {
+                    "enabled": True,
+                    "used_for_ranking": use_for_ranking,
+                    "alignments": list(matching[0].root_group_alignments),
+                }
+
     @staticmethod
     def _phrase_render_payload(
         phrase: str,
@@ -3071,20 +3407,37 @@ class PhraseTranslationService:
         token_choices: list[dict[str, object]] = []
         for candidate in chosen_parse.token_choices:
             trace = candidate.definition_trace
+            translation_gloss = (
+                candidate.translation_gloss
+                or PhraseTranslationService._translation_gloss_for_candidate(candidate)
+            )
             token_choices.append(
                 {
                     "token": candidate.token,
                     "selected_source": candidate.selected_source,
-                    "definition": candidate.definition,
-                    "surface_gloss": candidate.definition or trace.get("surface_gloss"),
-                    "bundle_surface_gloss": candidate.bundle_surface_gloss,
-                    "bundle_head_gloss": candidate.bundle_head_gloss,
+                    "translation_gloss": translation_gloss,
+                    "definition": translation_gloss,
+                    "surface_gloss": translation_gloss,
+                    "bundle_surface_gloss": clean_translation_gloss(
+                        candidate.bundle_surface_gloss,
+                        token=candidate.token,
+                    ),
+                    "bundle_head_gloss": clean_translation_gloss(
+                        candidate.bundle_head_gloss,
+                        token=candidate.token,
+                    ),
                     "bundle_function_profile": candidate.bundle_function_profile,
                     "blind_mode_whole_word_rescue": candidate.blind_mode_whole_word_rescue,
                     "blind_mode_rescue_note": candidate.blind_mode_rescue_note,
-                    "dictionary_rescue_gloss": candidate.dictionary_rescue_gloss,
+                    "dictionary_rescue_gloss": clean_translation_gloss(
+                        candidate.dictionary_rescue_gloss,
+                        token=candidate.token,
+                    ),
                     "dictionary_rescue_note": candidate.dictionary_rescue_note,
-                    "weak_fallback_gloss": candidate.weak_fallback_gloss,
+                    "weak_fallback_gloss": clean_translation_gloss(
+                        candidate.weak_fallback_gloss,
+                        token=candidate.token,
+                    ),
                     "weak_fallback_note": candidate.weak_fallback_note,
                     "semantic_core": list(trace.get("selected_semantic_core") or []),
                     "negative_contrast": list(trace.get("selected_negative_contrast") or []),
@@ -3098,6 +3451,7 @@ class PhraseTranslationService:
                     "fnp_confidence": candidate.fnp_confidence,
                     "fnp_warnings": list(candidate.fnp_warnings),
                     "head_analysis": dict(candidate.head_analysis),
+                    "root_group_alignments": list(candidate.root_group_alignments),
                 }
             )
         return {

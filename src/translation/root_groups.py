@@ -64,6 +64,18 @@ DEFAULT_PARAMETERS: dict[str, object] = {
     },
 }
 
+DEFAULT_ALIGNMENT_PARAMETERS: dict[str, float] = {
+    "source_cluster_id_match_weight": 0.45,
+    "nested_evidence_word_match_weight": 0.25,
+    "attachment_role_match_weight": 0.15,
+    "semantic_overlap_weight": 0.10,
+    "group_rank_weight": 0.05,
+    "needs_review_penalty": 0.08,
+    "split_recommended_penalty": 0.12,
+    "provisional_penalty": 0.02,
+    "max_alignment_score": 1.0,
+}
+
 
 @dataclass(slots=True)
 class RootGroupOptions:
@@ -639,6 +651,123 @@ def compact_group_summary(group: Mapping[str, object]) -> dict[str, object]:
         "surface_examples": list(group.get("surface_examples") or [])[:5],
         "source_cluster_ids": list(group.get("source_cluster_ids") or []),
         "warnings": list(group.get("warnings") or []),
+    }
+
+
+def compact_report_groups(
+    report: Mapping[str, object],
+    *,
+    max_groups: int = 3,
+) -> list[dict[str, object]]:
+    """Return bounded compact summaries from a full root group report.
+
+    Why:
+    translation diagnostics and LLM render payloads need enough sense inventory
+    context to explain a reading, but they must not carry full evidence packets
+    by default.
+
+    How:
+    this helper projects the report's ranked groups through
+    ``compact_group_summary`` and enforces the Phase 3 payload limit.
+
+    Responsibility:
+    keep report output, translation diagnostics, and LLM context on the same
+    compact public shape.
+    """
+
+    groups = report.get("groups")
+    group_list = groups if isinstance(groups, list) else []
+    return [
+        compact_group_summary(group)
+        for group in group_list[: max(0, int(max_groups))]
+        if isinstance(group, Mapping)
+    ]
+
+
+def align_root_groups_for_morph(
+    *,
+    morph: str,
+    span_role: str,
+    report: Mapping[str, object] | None,
+    source_cluster_ids: Sequence[int] | None = None,
+    evidence_word: str | None = None,
+    semantic_text: str | None = None,
+    max_alternates: int = 2,
+    parameters: Mapping[str, float] | None = None,
+) -> dict[str, object]:
+    """Align one morph occurrence to the most relevant root sense group.
+
+    Why:
+    a short root such as D or I can survive as many plausible groups. Translation
+    needs a local alignment decision for a particular decomposition occurrence,
+    not a single canonical root meaning.
+
+    How:
+    the scorer combines row provenance, nested evidence word matches,
+    attachment role compatibility, lexical overlap, and group rank. Status
+    penalties keep exception-heavy or split-recommended groups visible without
+    letting them dominate by accident.
+
+    Responsibility:
+    produce advisory diagnostics and bounded ranking features only. It must not
+    mutate reports or erase alternate senses.
+    """
+
+    if report is None:
+        return _empty_alignment(morph=morph, span_role=span_role)
+
+    params = {**DEFAULT_ALIGNMENT_PARAMETERS, **dict(parameters or {})}
+    groups_raw = report.get("groups")
+    groups = [group for group in groups_raw if isinstance(group, Mapping)] if isinstance(groups_raw, list) else []
+    if not groups:
+        return _empty_alignment(morph=morph, span_role=span_role)
+
+    source_ids = {
+        parsed
+        for value in (source_cluster_ids or [])
+        for parsed in [_safe_int(value)]
+        if parsed is not None
+    }
+    scored = [
+        _score_group_alignment(
+            morph=morph,
+            span_role=span_role,
+            group=group,
+            source_cluster_ids=source_ids,
+            evidence_word=evidence_word,
+            semantic_text=semantic_text,
+            parameters=params,
+        )
+        for group in groups
+    ]
+    scored.sort(
+        key=lambda item: (
+            -float(item["alignment_score"]),
+            str(item["group_summary"].get("label") or ""),
+            str(item["group_id"] or ""),
+        )
+    )
+    primary = scored[0]
+    alternates = scored[1 : 1 + max(0, int(max_alternates))]
+    return {
+        "morph": str(morph or "").upper(),
+        "span_role": _normalize_role(span_role),
+        "primary_group_id": primary["group_id"],
+        "alignment_score": primary["alignment_score"],
+        "reasons": primary["reasons"],
+        "warnings": primary["warnings"],
+        "source_cluster_ids": sorted(source_ids),
+        "primary_group": primary["group_summary"],
+        "alternates": [
+            {
+                "group_id": alternate["group_id"],
+                "alignment_score": alternate["alignment_score"],
+                "reasons": alternate["reasons"],
+                "warnings": alternate["warnings"],
+                "group": alternate["group_summary"],
+            }
+            for alternate in alternates
+        ],
     }
 
 
@@ -1329,6 +1458,169 @@ def _top_effects_from_group(group: Mapping[str, object]) -> list[str]:
             if effect and effect not in effects:
                 effects.append(effect)
     return effects
+
+
+def _empty_alignment(*, morph: str, span_role: str) -> dict[str, object]:
+    return {
+        "morph": str(morph or "").upper(),
+        "span_role": _normalize_role(span_role),
+        "primary_group_id": None,
+        "alignment_score": 0.0,
+        "reasons": ["no_root_groups_available"],
+        "warnings": [],
+        "source_cluster_ids": [],
+        "primary_group": None,
+        "alternates": [],
+    }
+
+
+def _score_group_alignment(
+    *,
+    morph: str,
+    span_role: str,
+    group: Mapping[str, object],
+    source_cluster_ids: set[int],
+    evidence_word: str | None,
+    semantic_text: str | None,
+    parameters: Mapping[str, float],
+) -> dict[str, object]:
+    score = 0.0
+    reasons: list[str] = []
+    warnings = [str(w) for w in group.get("warnings") or [] if str(w).strip()]
+
+    group_source_ids = {
+        parsed
+        for value in group.get("source_cluster_ids") or []
+        for parsed in [_safe_int(value)]
+        if parsed is not None
+    }
+    if source_cluster_ids and group_source_ids & source_cluster_ids:
+        score += float(parameters["source_cluster_id_match_weight"])
+        reasons.append("source_cluster_id_match")
+
+    if evidence_word and _group_contains_evidence_word(group, evidence_word):
+        score += float(parameters["nested_evidence_word_match_weight"])
+        reasons.append("nested_evidence_word_match")
+
+    role_score, role_reason = _attachment_role_alignment(group, span_role)
+    if role_score > 0:
+        score += float(parameters["attachment_role_match_weight"]) * role_score
+        reasons.append(role_reason)
+
+    semantic_overlap = _group_semantic_overlap(group, semantic_text)
+    if semantic_overlap > 0:
+        score += float(parameters["semantic_overlap_weight"]) * semantic_overlap
+        reasons.append("semantic_overlap")
+
+    rank_score = 0.0
+    ranking = group.get("ranking")
+    if isinstance(ranking, Mapping):
+        rank_score = max(0.0, min(1.0, _safe_float(ranking.get("rank_score")) or 0.0))
+    score += float(parameters["group_rank_weight"]) * rank_score
+    if rank_score > 0:
+        reasons.append("group_rank_support")
+
+    status = str(group.get("status") or "unknown")
+    if status == "needs_review":
+        score -= float(parameters["needs_review_penalty"])
+        warnings.append("alignment_penalized_needs_review")
+    elif status == "split_recommended":
+        score -= float(parameters["split_recommended_penalty"])
+        warnings.append("alignment_penalized_split_recommended")
+    elif status == "provisional":
+        score -= float(parameters["provisional_penalty"])
+
+    max_score = float(parameters["max_alignment_score"])
+    bounded = max(0.0, min(max_score, score))
+    if not reasons:
+        reasons.append("ranked_as_visible_alternate")
+
+    return {
+        "group_id": group.get("group_id"),
+        "alignment_score": round(bounded, 4),
+        "reasons": reasons,
+        "warnings": sorted(set(warnings)),
+        "group_summary": compact_group_summary(group),
+    }
+
+
+def _group_contains_evidence_word(
+    group: Mapping[str, object],
+    evidence_word: str,
+) -> bool:
+    target = str(evidence_word or "").strip().upper()
+    if not target:
+        return False
+    for packet in group.get("evidence_packets") or []:
+        if not isinstance(packet, Mapping):
+            continue
+        for item in packet.get("nested_evidence") or []:
+            if not isinstance(item, Mapping):
+                continue
+            if str(item.get("word") or "").strip().upper() == target:
+                return True
+        for example in packet.get("examples") or []:
+            if target in str(example or "").upper():
+                return True
+    return False
+
+
+def _attachment_role_alignment(
+    group: Mapping[str, object],
+    span_role: str,
+) -> tuple[float, str]:
+    role = _normalize_role(span_role)
+    if role == "unknown":
+        return 0.0, ""
+    attachment = group.get("attachment_profile")
+    if not isinstance(attachment, Mapping):
+        return 0.0, ""
+    key = f"{role}_likelihood"
+    likelihood = _safe_float(attachment.get(key))
+    if likelihood is not None:
+        return max(0.0, min(1.0, likelihood)), f"{role}_attachment_match"
+    count_key = f"observed_{role}_count"
+    count = _safe_int(attachment.get(count_key)) or 0
+    total = sum(
+        _safe_int(attachment.get(name)) or 0
+        for name in (
+            "observed_prefix_count",
+            "observed_suffix_count",
+            "observed_infix_count",
+            "observed_free_count",
+        )
+    )
+    if total <= 0:
+        return 0.0, ""
+    return count / float(total), f"{role}_observed_attachment_match"
+
+
+def _group_semantic_overlap(
+    group: Mapping[str, object],
+    semantic_text: str | None,
+) -> float:
+    source_terms = _term_tokens(str(semantic_text or ""))
+    if not source_terms:
+        return 0.0
+    group_terms: set[str] = set()
+    for field in ("semantic_terms", "surface_examples"):
+        for item in group.get(field) or []:
+            group_terms.update(_term_tokens(str(item)))
+    for packet in group.get("evidence_packets") or []:
+        if not isinstance(packet, Mapping):
+            continue
+        for item in packet.get("nested_evidence") or []:
+            if isinstance(item, Mapping):
+                group_terms.update(_term_tokens(str(item.get("effect") or "")))
+                group_terms.update(_term_tokens(str(item.get("sense") or "")))
+    return _jaccard(source_terms - GENERIC_TERMS, group_terms - GENERIC_TERMS)
+
+
+def _normalize_role(role: str | None) -> str:
+    value = str(role or "").strip().lower()
+    if value in {"prefix", "suffix", "infix", "free"}:
+        return value
+    return "unknown"
 
 
 def _surface_examples(
