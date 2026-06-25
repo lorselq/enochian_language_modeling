@@ -1,0 +1,57 @@
+profiles:
+  default:
+    motif_terms:
+      - separation
+      - separate
+      - division
+      - divide
+      - distinction
+      - distinct
+      - force
+      - pressure
+      - disturbance
+      - affliction
+    head_terms:
+      - pillar
+      - pillars
+      - column
+      - support
+      - structure
+      - geometry
+      - form
+    transformation_hint: Leading structural heads may be transformed by repeated modifier motifs into an artifact/function reading.
+  separation_artifact:
+    motif_terms:
+      - separation
+      - separate
+      - separated
+      - separating
+      - division
+      - divide
+      - dividing
+      - divided
+      - cut
+      - cutting
+      - sever
+      - severing
+      - distinction
+      - distinct
+      - apart
+      - force
+      - pressure
+      - disturbance
+      - vexing
+      - affliction
+    head_terms:
+      - pillar
+      - pillars
+      - column
+      - support
+      - rectangular
+      - linear
+      - geometry
+      - geometric
+      - form
+      - structure
+      - structural
+    transformation_hint: Rigid or linear head + separative modifiers can yield a sword-like blade/artifact reading.

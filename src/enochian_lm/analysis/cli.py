@@ -1497,6 +1497,27 @@ def _run_translate_phrase(args: argparse.Namespace) -> None:
         raise SystemExit(exit_code)
 
 
+def _run_agentic_translate(args: argparse.Namespace) -> None:
+    """Build a read-only agentic translation dossier using stored insights.
+
+    Why:
+    the research dossier must be available through the public `enlm` command
+    while preserving the dedicated translation CLI as the implementation owner.
+
+    How:
+    lazy-import the translation CLI entry point only when this subcommand runs.
+
+    Responsibility:
+    keep `poetry run enlm agentic-translate` behavior identical to
+    `enochian-interpret agentic-translate`.
+    """
+    from translation.cli import agentic_translate_from_args
+
+    exit_code = agentic_translate_from_args(args)
+    if exit_code != 0:
+        raise SystemExit(exit_code)
+
+
 def _configure_translate_word_command(parser: argparse.ArgumentParser) -> None:
     """Attach translate-word arguments without top-level translation imports.
 
@@ -1537,6 +1558,26 @@ def _configure_translate_phrase_command(parser: argparse.ArgumentParser) -> None
     from translation.cli import configure_translate_phrase_parser
 
     configure_translate_phrase_parser(parser)
+
+
+def _configure_agentic_translate_command(parser: argparse.ArgumentParser) -> None:
+    """Attach agentic-translate arguments without eager translation imports.
+
+    Why:
+    the top-level analysis CLI should stay light for unrelated commands, but
+    the new dossier command must reuse the translation package parser contract.
+
+    How:
+    import the parser configurator at parser-build time only, matching the
+    existing translation command pattern.
+
+    Responsibility:
+    keep agentic translation flags identical across public entry points.
+    """
+
+    from translation.cli import configure_agentic_translate_parser
+
+    configure_agentic_translate_parser(parser)
 
 
 def _configure_find_ngram_parser(parser: argparse.ArgumentParser) -> None:
@@ -1914,6 +1955,13 @@ def _build_parser() -> argparse.ArgumentParser:
     _configure_translate_phrase_command(translate_phrase)
     translate_phrase.set_defaults(handler=_run_translate_phrase)
 
+    agentic_translate = subparsers.add_parser(
+        "agentic-translate",
+        help="Build a read-only agentic translation dossier",
+    )
+    _configure_agentic_translate_command(agentic_translate)
+    agentic_translate.set_defaults(handler=_run_agentic_translate)
+
     find_ngram = subparsers.add_parser(
         "find-ngram",
         help="Find dictionary words containing an ngram",
@@ -2096,7 +2144,7 @@ def _should_bootstrap_command_db(args: argparse.Namespace) -> bool:
     commands.
     """
 
-    if args.command == "translate-word":
+    if args.command in {"translate-word", "translate-phrase", "agentic-translate"}:
         return False
     if args.command == "find-ngram":
         return False

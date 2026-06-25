@@ -119,6 +119,71 @@ def test_query_model_tool_uses_non_stream_completion_when_requested(
     assert not any(event.get("state") == "waiting for first token" for event in events)
 
 
+def test_query_model_tool_compact_stream_keeps_first_chunk(monkeypatch) -> None:
+    """Do not discard one-chunk streamed responses in compact/silent mode."""
+
+    calls: list[dict[str, object]] = []
+    events: list[dict[str, object]] = []
+
+    class _OneChunkStream:
+        def __init__(self) -> None:
+            self._chunks = iter(
+                [
+                    SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(
+                                delta=SimpleNamespace(content='{"answer":"ok"}'),
+                                finish_reason="stop",
+                            )
+                        ]
+                    )
+                ]
+            )
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self._chunks)
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(dict(kwargs))
+            if kwargs.get("stream") is False:
+                raise AssertionError("non-stream fallback should not be called")
+            return _OneChunkStream()
+
+    class _FakeOpenAI:
+        def __init__(self, *args, **kwargs) -> None:
+            self.chat = SimpleNamespace(completions=_FakeCompletions())
+
+    query_model_tool_module = _load_query_model_tool_module()
+    monkeypatch.setattr(query_model_tool_module, "OpenAI", _FakeOpenAI)
+    monkeypatch.setenv("LOCAL_OPENAI_API_BASE", "http://localhost:1234")
+    monkeypatch.setenv("LOCAL_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("LOCAL_MODEL_NAME", "test-model")
+
+    tool = query_model_tool_module.QueryModelTool(
+        system_prompt="Return JSON only.",
+        use_remote=False,
+        progress_style="silent",
+        stream_response=True,
+    )
+
+    response = tool._run(
+        prompt="Say ok.",
+        progress_callback=lambda event: events.append(dict(event)),
+    )
+
+    assert response["response_text"] == '{"answer":"ok"}'
+    assert len(calls) == 1
+    assert calls[0]["stream"] is True
+    assert any(
+        event.get("state") == "streaming response" and event.get("char_count") == 15
+        for event in events
+    )
+
+
 def test_query_model_tool_non_stream_returns_full_response(monkeypatch) -> None:
     """Allow remote phrase rendering to skip first-token waits with one call.
 

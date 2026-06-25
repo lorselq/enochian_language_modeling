@@ -415,6 +415,16 @@ class QueryModelTool(BaseTool):
             return "".join(parts)
         return ""
 
+    @staticmethod
+    def _extract_chunk_reasoning(chunk) -> str:
+        """Extract reasoning-only stream metadata without treating it as output."""
+        try:
+            delta = chunk.choices[0].delta
+        except Exception:
+            return ""
+        content = getattr(delta, "reasoning_content", "") or ""
+        return content if isinstance(content, str) else ""
+
     def _llm_call(
         self,
         api_base_env: str,
@@ -449,6 +459,8 @@ class QueryModelTool(BaseTool):
             "elapsed_seconds": 0.0,
             "chunk_count": 0,
             "char_count": 0,
+            "reasoning_chunk_count": 0,
+            "reasoning_char_count": 0,
         }
 
         def _snapshot() -> dict[str, object]:
@@ -590,6 +602,17 @@ class QueryModelTool(BaseTool):
 
                     content = self._extract_chunk_text(chunk)
                     if not content:
+                        reasoning = self._extract_chunk_reasoning(chunk)
+                        if reasoning:
+                            progress_state["state"] = "streaming reasoning"
+                            progress_state["reasoning_chunk_count"] = (
+                                int(progress_state.get("reasoning_chunk_count") or 0) + 1
+                            )
+                            progress_state["reasoning_char_count"] = (
+                                int(progress_state.get("reasoning_char_count") or 0)
+                                + len(reasoning)
+                            )
+                            self._emit_progress_event(_snapshot())
                         continue
 
                     response_text += content
@@ -611,12 +634,49 @@ class QueryModelTool(BaseTool):
                 except StopIteration:
                     # no data at all
                     break
+                content = self._extract_chunk_text(chunk)
+                if not content:
+                    reasoning = self._extract_chunk_reasoning(chunk)
+                    if reasoning:
+                        progress_state["state"] = "streaming reasoning"
+                        progress_state["reasoning_chunk_count"] = (
+                            int(progress_state.get("reasoning_chunk_count") or 0) + 1
+                        )
+                        progress_state["reasoning_char_count"] = (
+                            int(progress_state.get("reasoning_char_count") or 0)
+                            + len(reasoning)
+                        )
+                        self._emit_progress_event(_snapshot())
+                    continue
+                response_text += content
+                progress_state["state"] = "streaming response"
+                progress_state["chunk_count"] = int(progress_state.get("chunk_count") or 0) + 1
+                progress_state["char_count"] = int(progress_state.get("char_count") or 0) + len(content)
+                self._emit_progress_event(_snapshot())
+                self._emit(
+                    print_chunks,
+                    stream_callback,
+                    role_name or self.name,
+                    f"{GRAY}{content}{RESET}",
+                )
+                break
 
         # 5) Consume the rest of the stream
         if self._stream_response:
             for chunk in completion:
                 content = self._extract_chunk_text(chunk)
                 if not content:
+                    reasoning = self._extract_chunk_reasoning(chunk)
+                    if reasoning:
+                        progress_state["state"] = "streaming reasoning"
+                        progress_state["reasoning_chunk_count"] = (
+                            int(progress_state.get("reasoning_chunk_count") or 0) + 1
+                        )
+                        progress_state["reasoning_char_count"] = (
+                            int(progress_state.get("reasoning_char_count") or 0)
+                            + len(reasoning)
+                        )
+                        self._emit_progress_event(_snapshot())
                     continue
                 response_text += content
                 progress_state["state"] = "streaming response"
@@ -649,7 +709,13 @@ class QueryModelTool(BaseTool):
                 )
                 response_text = (non_stream.choices[0].message.content or "").strip()
             except Exception as exc:
-                logger.warning("Non-stream fallback failed: %s", exc)
+                if int(progress_state.get("reasoning_chunk_count") or 0) > 0:
+                    logger.warning(
+                        "Non-stream fallback failed after reasoning-only stream: %s",
+                        exc,
+                    )
+                else:
+                    logger.warning("Non-stream fallback failed: %s", exc)
                 failure_state = _snapshot()
                 failure_state["state"] = "non-stream fallback failed"
                 failure_state["warning"] = f"{type(exc).__name__}: {exc}"

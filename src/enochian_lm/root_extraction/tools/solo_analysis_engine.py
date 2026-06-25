@@ -70,14 +70,14 @@ def solo_agent_ngram_analysis(
                         "loc": "dict/corpus",
                         "note": {
                             "role": 'must be one of: "prefix", "suffix", "free", "infix" (choose exactly one)',
-                            "effect": f"effect of {root.upper()} on {word}",
+                            "effect": f"concrete effect of {root.upper()} on {word}; preserve hardship, distress, judgment, affective force, or other valence if the host sense shows it",
                             "sense_alignment": (
                                 "cosine-ish semantic alignment between the sense of "
                                 f"{word} and {root.upper()}'s proposed semantics"
                             ),
                             "confidence": "must be a float between 0.0 and 1.0 (e.g., 0.75, 0.92)",
                             "note": (
-                                f"breakdown for how {root.upper()} contributes to the sense of {word}"
+                                f"break down how {root.upper()} contributes to the sense of {word}; do not reduce woe, suffering, judgment, or other concrete force to a bare state or condition"
                             ),
                         },
                     },
@@ -152,13 +152,13 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
             "loc": "dict/corpus",
             "note": {
                 "role": 'must be one of: "prefix", "suffix", "free", "infix" (choose exactly one)',
-                "effect": f"effect of {root.upper()} on <word>",
+                "effect": f"concrete effect of {root.upper()} on <word>; preserve hardship, distress, judgment, affective force, or other valence if the host sense shows it",
                 "sense_alignment": (
                     "cosine-ish semantic alignment between the sense of <word> and "
                     f"{root.upper()}'s proposed semantics"
                 ),
                 "confidence": "must be a float between 0.0 and 1.0 (e.g., 0.75, 0.92)",
-                "note": f"breakdown for how {root.upper()} contributes to the sense of <word>",
+                "note": f"break down how {root.upper()} contributes to the sense of <word>; do not reduce woe, suffering, judgment, or other concrete force to a bare state or condition",
             },
         },
         ensure_ascii=False,
@@ -172,12 +172,12 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
           "ROOT": "{root.upper()}",
           "EVALUATION": "accepted or rejected (choose exactly one)",
           "REASON": "1-3 sentences explaining the reason for the evaluation selected",
-          "DEFINITION": "1-3 sentences of core semantics; no negatives, be as concrete as possible and not vague",
-          "EXAMPLE": "give 1-3 short example sentences of how its English equivalence would be used, marking it in each sentence",
-          "DECODING_GUIDE": "concrete rules to resolve compound words, <=25 words",
-          "SEMANTIC_CORE": ["up to three nouns or gerunds that captures the semantics of the root {root.upper()}"],
+          "DEFINITION": "1-3 sentences of core semantics; use affirmative dictionary-style phrasing, but preserve evidence-backed hardship, distress, judgment, or affective force; avoid vague abstractions by themselves",
+          "EXAMPLE": "give 1-3 short English examples that show the concrete force of the gloss, including hardship or judgment when the evidence supports it",
+          "DECODING_GUIDE": "concrete rules to resolve compound words, <=25 words; name the semantic force the root adds, not only an abstract category",
+          "SEMANTIC_CORE": ["up to three concrete nouns or gerunds that capture the semantic force of the root {root.upper()}; pair abstractions like state/presence with the specific affect, judgment, hardship, or action when present"],
           "NEGATIVE_CONTRAST": ["max 4 phrases (e.g., 'non-temporal', 'non-agentive')"],
-          "CONTRIBUTION": {{"lemmas describing ontology of {root.upper()}, accompanied by a rating of semantic composition": 0.0}},
+          "CONTRIBUTION": {{"concrete lemmas describing what {root.upper()} contributes, including valence-bearing lemmas when supported": 0.0}},
           "POS_BIAS": {{"nounness": 0.0, "modifier": 0.0, "verbness": 0.0}},
           "ATTACHMENT": {{
             "prefix": {{"prob": 0.0}},
@@ -210,6 +210,13 @@ Be thorough, avoid vague generalizations, and always back claims with observed d
         If uncertain or any constraint cannot be met, set "evaluation": "rejected".
 
         You are the Chief Enochian Lexicographer and GLOSSATOR. Use only internal Enochian evidence provided below. Apply strict-but-gracious micro-corpus standards.
+
+        OPINIONATED GLOSS STYLE
+        -----------------------
+        - Write affirmative dictionary-style glosses, but preserve negative, painful, judgmental, affective, or hardship valence when the evidence carries it.
+        - Do not launder evidence into generic abstractions. If a source sense is "woe", "suffering", "distress", "judgment", "curse", or another forceful condition, keep that force visible in DEFINITION, SEMANTIC_CORE, CONTRIBUTION, EXAMPLE, DECODING_GUIDE, and EVIDENCE.
+        - Abstractions such as "state", "condition", "presence", "existence", or "manifestation" are allowed only when paired with the concrete force they carry, such as "manifested distress", "afflicted condition", or "judgment-laden proclamation".
+        - For OHIO-style evidence, prefer concrete readings like distress, affliction, woe-manifestation, vocalized judgment, or suffered condition over bare phrases like "state of being".
 
         INPUT
 

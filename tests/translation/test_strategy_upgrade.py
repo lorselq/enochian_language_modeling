@@ -200,6 +200,11 @@ from translation.repository import (
     WordEvidence,
     _parse_glossator_definition,
 )
+from translation.profiles import (
+    analyze_head_modifier,
+    load_translation_profile,
+    score_decomposition_profile,
+)
 from translation.strategies import (
     compose_semantic_bundle,
     compute_complementarity_band_similarity,
@@ -1654,6 +1659,85 @@ def test_extract_definition_candidates_blind_mode_reintroduces_dictionary_as_las
     assert candidates["CAOSGO"]
     assert candidates["CAOSGO"][0]["source"] == "dictionary"
     assert candidates["CAOSGO"][0]["blind_dictionary_fallback"] is True
+
+
+def test_extract_definition_candidates_returns_all_senses_by_default() -> None:
+    """Definition extraction should not truncate root senses unless asked."""
+
+    evidence = WordEvidence(
+        word="SA",
+        variants_queried=["debate"],
+        direct_clusters=[
+            _cluster_record("SA", f"sense {idx}", cluster_id=200 + idx)
+            for idx in range(6)
+        ],
+    )
+
+    candidates = extract_definition_candidates(["SA"], evidence)
+    capped = extract_definition_candidates(["SA"], evidence, max_per_morph=3)
+
+    assert len(candidates["SA"]) == 6
+    assert len(capped["SA"]) == 3
+
+
+def test_head_modifier_profile_rewards_distributed_separation_motif() -> None:
+    """Repeated modifier agreement should be visible as a profile signal."""
+
+    profile = load_translation_profile("separation_artifact")
+    definition_candidates = {
+        "NAZ": [
+            {"definition": "linear geometric pillar form", "source": "cluster"}
+        ],
+        "P": [
+            {"definition": "separation and division", "source": "cluster"}
+        ],
+        "SA": [
+            {"definition": "to mark as distinct or set apart", "source": "cluster"}
+        ],
+        "D": [
+            {"definition": "disturbance and force", "source": "cluster"}
+        ],
+        "AD": [
+            {"definition": "divine justice", "source": "cluster"}
+        ],
+    }
+
+    distributed = score_decomposition_profile(
+        ["NAZ", "P", "SA", "D"],
+        definition_candidates,
+        profile=profile,
+    )
+    single = score_decomposition_profile(
+        ["NAZ", "P", "SA", "AD"],
+        definition_candidates,
+        profile=profile,
+    )
+
+    assert distributed["head_roots"] == ["NAZ"]
+    assert distributed["modifier_roots"] == ["P", "SA", "D"]
+    assert distributed["distributed_motif_count"] == 3
+    assert distributed["score"] > single["score"]
+    assert "sword-like artifact" in str(distributed["transformational_gloss"])
+
+
+def test_head_modifier_analysis_marks_leading_long_root_as_head() -> None:
+    """A leading three-letter root should act as the semantic head."""
+
+    profile = load_translation_profile("separation_artifact")
+    analysis = analyze_head_modifier(
+        ["NAZ", "P", "SA", "D"],
+        [
+            {"morph": "NAZ", "definition": "linear geometric pillar form"},
+            {"morph": "P", "definition": "separation"},
+            {"morph": "SA", "definition": "distinct separation"},
+            {"morph": "D", "definition": "force"},
+        ],
+        profile=profile,
+    )
+
+    assert analysis["head_roots"] == ["NAZ"]
+    assert analysis["modifier_roots"] == ["P", "SA", "D"]
+    assert analysis["distributed_motif_roots"] == ["P", "SA", "D"]
 
 
 def test_extract_definition_candidates_prefers_semantic_core_over_verbose_definition() -> None:
@@ -5221,6 +5305,7 @@ def test_translate_phrase_cli_emits_progress_updates_to_stderr(
     captured = capsys.readouterr()
 
     assert exit_code == 0
+    assert "Translating phrase for variant solo..." in captured.err
     assert "Preparing phrase translation..." in captured.err
     assert "Analyzing token 1/2: MIRC" in captured.err
     assert "Building and scoring parse candidates..." in captured.err
@@ -5364,6 +5449,7 @@ def test_translate_word_cli_emits_progress_updates_to_stderr(capsys, monkeypatch
 
     assert exit_code == 0
     assert "Starting variant solo (1/1)..." in captured.err
+    assert "Translating word OL for variant solo..." in captured.err
     assert "Completed variant solo (1/1)." in captured.err
     assert "Done." in captured.err
     assert "Preparing LLM synthesis..." not in captured.err
@@ -5420,6 +5506,7 @@ def test_translate_word_cli_reports_variant_boundaries_once(capsys, monkeypatch)
     assert exit_code == 0
     assert "Running 2 translation variants: solo, debate" in captured.err
     assert "Starting variant solo (1/2)..." in captured.err
+    assert "Translating word OL for variant solo..." in captured.err
     assert "Completed variant solo (1/2)." in captured.err
     assert "Starting variant debate (2/2)..." in captured.err
     assert "Completed variant debate (2/2)." in captured.err
@@ -5482,6 +5569,7 @@ def test_translate_phrase_cli_reports_variant_boundaries_once(
     assert exit_code == 0
     assert "Running 2 translation variants: solo, debate" in captured.err
     assert "Starting variant solo (1/2)..." in captured.err
+    assert "Translating phrase for variant solo..." in captured.err
     assert "Completed variant solo (1/2)." in captured.err
     assert "Starting variant debate (2/2)..." in captured.err
     assert "Completed variant debate (2/2)." in captured.err
@@ -6449,6 +6537,52 @@ def test_phrase_translation_hides_placeholder_leftovers_when_no_clean_gloss_exis
         match="reached clause rendering without a grounded gloss",
     ):
         service.translate_phrase("nacro", top_k=1, llm=False)
+
+
+def test_phrase_translation_includes_speculative_word_hypotheses(
+    tmp_path: Path,
+) -> None:
+    """Phrase parsing should see speculative token branches beyond top-k."""
+
+    regular = _word_candidate(
+        "heavenly pillars",
+        analysis_type="compositional",
+        score=9.0,
+        confidence=0.9,
+        morphs=["NAZ", "PS", "AD"],
+        bundle_surface_gloss="heavenly pillars",
+    )
+    speculative = _word_candidate(
+        "pillars separation distinction disturbance",
+        analysis_type="speculative_compositional",
+        score=4.0,
+        confidence=0.62,
+        morphs=["NAZ", "P", "SA", "D"],
+        bundle_surface_gloss="pillars separation distinction disturbance",
+        bundle_coherence_score=0.4,
+    )
+    word_result = _word_result("NAZPSAD", regular)
+    word_result["speculative_hypotheses"] = [speculative]
+    word_service = FakeWordService(results_by_word={"NAZPSAD": word_result})
+    memory = TranslationMemoryRepository(tmp_path / "phrase-speculative.sqlite3")
+    service = PhraseTranslationService(
+        word_service=word_service,
+        memory_repository=memory,
+    )
+
+    result = service.translate_phrase(
+        "nazpsad",
+        top_k=1,
+        llm=False,
+        speculative=True,
+    )
+
+    candidates = result["token_analyses"][0]["candidates"]
+    assert any(
+        candidate["analysis_type"] == "speculative_compositional"
+        and candidate["morphs"] == ["NAZ", "P", "SA", "D"]
+        for candidate in candidates
+    )
 
 
 def test_phrase_translation_raises_for_missing_token_candidates_without_memory(

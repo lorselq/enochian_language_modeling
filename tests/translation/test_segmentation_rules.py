@@ -58,7 +58,9 @@ from enochian_lm.common.sqlite_bootstrap import sqlite3
 from enochian_lm.root_extraction.utils.candidate_finder import MorphemeCandidateFinder
 from enochian_lm.root_extraction.utils.types_lexicon import EntryRecord
 from translation.decomposition import DecompositionEngine
+from translation.profiles import load_translation_profile
 from translation.repository import ClusterRecord, WordEvidence
+from translation.speculative import SpeculativeProfile, build_speculative_candidates
 
 
 class DummyVectors(dict):
@@ -328,6 +330,75 @@ def test_attested_only_enumerator_respects_cluster_evidence(
     for path in paths:
         assert "ZPSAD" not in path
         assert "NAZPSAD" not in path
+
+
+def test_speculative_explorer_surfaces_singleton_separation_split(
+    tmp_path: Path, monkeypatched_fasttext: None
+) -> None:
+    """Low-prevalence singleton roots can surface as an exploratory branch."""
+
+    finder = _build_finder(
+        tmp_path,
+        ["NAZ", "P", "SA", "D", "PS", "AD", "PSAD"],
+        min_n=1,
+        beam_width=10,
+    )
+    evidence = WordEvidence(
+        word="NAZPSAD",
+        variants_queried=["debate"],
+        direct_clusters=[
+            _cluster("NAZ", cluster_id=100),
+            _cluster("P", cluster_id=4677),
+            _cluster("SA", cluster_id=2595),
+            _cluster("D", cluster_id=4632),
+            _cluster("PS", cluster_id=200),
+            _cluster("AD", cluster_id=201),
+        ],
+    )
+    evidence.direct_clusters[0].glossator_def = {
+        "DEFINITION": "Pillars or rectangular supports.",
+        "SEMANTIC_CORE": ["pillars", "support"],
+    }
+    evidence.direct_clusters[1].glossator_def = {
+        "DEFINITION": "Separation or division.",
+        "SEMANTIC_CORE": ["separation", "division"],
+    }
+    evidence.direct_clusters[2].glossator_def = {
+        "DEFINITION": "To mark as distinct, separate, or set apart.",
+        "SEMANTIC_CORE": ["distinction", "separation"],
+    }
+    evidence.direct_clusters[3].glossator_def = {
+        "DEFINITION": "Disturbance, vexing, or affliction.",
+        "SEMANTIC_CORE": ["disturbance", "affliction"],
+    }
+
+    candidates, diagnostics = build_speculative_candidates(
+        "NAZPSAD",
+        evidence=evidence,
+        candidate_finder=finder,
+        existing_candidates=[],
+        allow_dictionary=False,
+        evidence_mode="clusters-only",
+        profile=SpeculativeProfile(min_score=0.1, max_branches=10),
+        translation_profile=load_translation_profile("separation_artifact"),
+    )
+
+    paths = {tuple(candidate["morphs"]) for candidate in candidates}
+    assert ("NAZ", "P", "SA", "D") in paths
+    candidate = next(
+        candidate
+        for candidate in candidates
+        if tuple(candidate["morphs"]) == ("NAZ", "P", "SA", "D")
+    )
+    meanings = {meaning["morph"]: meaning["definition"] for meaning in candidate["meanings"]}
+    assert candidate["analysis_type"] == "speculative_compositional"
+    assert meanings["P"] == "Separation or division"
+    assert meanings["SA"] == "To mark as distinct, separate, or set apart"
+    assert meanings["D"] == "Disturbance, vexing, or affliction"
+    assert candidate["head_modifier_analysis"]["head_roots"] == ["NAZ"]
+    assert candidate["head_modifier_analysis"]["distributed_motif_count"] == 3
+    assert candidate["decision_trace"]["motif_groups"]
+    assert diagnostics["returned_count"] > 0
 
 
 def test_segment_target_cluster_attestation_bonus_prefers_atomic_cluster(

@@ -30,12 +30,26 @@ from .service import InterpretationService, SingleWordTranslationService
 INTERPRET_COMMAND = "interpret-text"
 TRANSLATE_WORD_COMMAND = "translate-word"
 TRANSLATE_PHRASE_COMMAND = "translate-phrase"
+AGENTIC_TRANSLATE_COMMAND = "agentic-translate"
 COMMAND_ALIASES = {
     "interpret": INTERPRET_COMMAND,
     INTERPRET_COMMAND: INTERPRET_COMMAND,
     TRANSLATE_WORD_COMMAND: TRANSLATE_WORD_COMMAND,
     TRANSLATE_PHRASE_COMMAND: TRANSLATE_PHRASE_COMMAND,
+    AGENTIC_TRANSLATE_COMMAND: AGENTIC_TRANSLATE_COMMAND,
 }
+
+class _LazyAgenticTranslationService:
+    """Defer agentic service imports until the dossier command actually runs."""
+
+    @classmethod
+    def from_config(cls, *args, **kwargs):
+        from .agentic_service import AgenticTranslationService as service_cls
+
+        return service_cls.from_config(*args, **kwargs)
+
+
+AgenticTranslationService = _LazyAgenticTranslationService
 
 
 class TranslationCLIProgressRenderer:
@@ -60,6 +74,9 @@ class TranslationCLIProgressRenderer:
         self._current_variant: str | None = None
         self._current_variant_index: int | None = None
         self._current_variant_total: int | None = None
+        self._heartbeat_stop: threading.Event | None = None
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_message: str | None = None
         self._lock = threading.Lock()
 
     def prepare(self, progress: LLMRequestProgress) -> None:
@@ -89,6 +106,8 @@ class TranslationCLIProgressRenderer:
                 self._begin_stage(stage_id, now)
             elif self._stage_id is None:
                 self._begin_stage("generic", now)
+            if self._heartbeat_stop is not None:
+                self._heartbeat_message = message
 
             elapsed = metadata.get("elapsed_seconds")
             elapsed_seconds = (
@@ -163,6 +182,8 @@ class TranslationCLIProgressRenderer:
                 base = f"{label} | {state} ({warning_head})"
             else:
                 base = f"{label} | {state}"
+            if self._heartbeat_stop is not None:
+                self._heartbeat_message = base
             extras = []
             variant_label = self._variant_label()
             if variant_label:
@@ -193,7 +214,61 @@ class TranslationCLIProgressRenderer:
             extras.append(f"elapsed {self._format_duration(elapsed_seconds)}")
             self._write(self._compose_line(base, extras))
 
+    def start_heartbeat(
+        self,
+        message: str,
+        *,
+        stage_id: str,
+        interval_seconds: float = 5.0,
+        **metadata: object,
+    ) -> None:
+        """Emit periodic progress while a blocking translation stage runs."""
+
+        self.stop_heartbeat()
+        with self._lock:
+            now = self._clock()
+            self._apply_context(metadata)
+            self._begin_stage(stage_id, now)
+            self._write(self._compose_line(message, self._common_extras(0.0)))
+
+        stop_event = threading.Event()
+        self._heartbeat_stop = stop_event
+        self._heartbeat_message = message
+
+        def _loop() -> None:
+            while not stop_event.wait(max(0.5, float(interval_seconds))):
+                with self._lock:
+                    now = self._clock()
+                    elapsed_seconds = max(0.0, now - self._stage_started)
+                    active_message = self._heartbeat_message or message
+                    self._write(
+                        self._compose_line(
+                            active_message,
+                            self._common_extras(elapsed_seconds),
+                        )
+                    )
+
+        thread = threading.Thread(
+            target=_loop,
+            name="translation-cli-progress-heartbeat",
+            daemon=True,
+        )
+        self._heartbeat_thread = thread
+        thread.start()
+
+    def stop_heartbeat(self) -> None:
+        stop_event = self._heartbeat_stop
+        thread = self._heartbeat_thread
+        self._heartbeat_stop = None
+        self._heartbeat_thread = None
+        self._heartbeat_message = None
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.25)
+
     def done(self) -> None:
+        self.stop_heartbeat()
         with self._lock:
             total_elapsed = max(0.0, self._clock() - self._overall_started)
             line = self._compose_line(
@@ -325,6 +400,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     configure_translate_phrase_parser(translate_phrase_parser)
     translate_phrase_parser.set_defaults(handler=_run_translate_phrase)
+
+    agentic_translate_parser = subparsers.add_parser(
+        AGENTIC_TRANSLATE_COMMAND,
+        help="Build a read-only agentic translation dossier.",
+    )
+    configure_agentic_translate_parser(agentic_translate_parser)
+    agentic_translate_parser.set_defaults(handler=_run_agentic_translate)
 
     return parser
 
@@ -470,6 +552,21 @@ def configure_translate_word_parser(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--speculative",
+        action="store_true",
+        help="Include bounded speculative decomposition hypotheses in diagnostics.",
+    )
+    parser.add_argument(
+        "--speculative-profile",
+        default="default",
+        help="Named speculative heuristic profile to use (default: default).",
+    )
+    parser.add_argument(
+        "--translation-profile",
+        default="default",
+        help="Named translation profile for soft motif/head-modifier scoring.",
+    )
+    parser.add_argument(
         "--allow-whole-word",
         dest="allow_whole_word",
         action="store_true",
@@ -575,6 +672,30 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
             "refinement pass after parse selection."
         ),
     )
+    speculative_group = parser.add_mutually_exclusive_group()
+    speculative_group.add_argument(
+        "--speculative",
+        dest="speculative",
+        action="store_true",
+        default=True,
+        help="Allow bounded speculative token candidates to compete in phrase parsing.",
+    )
+    speculative_group.add_argument(
+        "--no-speculative",
+        dest="speculative",
+        action="store_false",
+        help="Disable speculative token candidates in phrase parsing.",
+    )
+    parser.add_argument(
+        "--speculative-profile",
+        default="default",
+        help="Named speculative heuristic profile to use (default: default).",
+    )
+    parser.add_argument(
+        "--translation-profile",
+        default="default",
+        help="Named translation profile for soft motif/head-modifier scoring.",
+    )
     parser.add_argument(
         "--format",
         choices=["text", "json"],
@@ -673,6 +794,134 @@ def configure_translate_phrase_parser(parser: argparse.ArgumentParser) -> None:
             "single-piece whole-word token analyses. Short 1-4 character DB roots "
             "and non-dictionary provisional exact reads may still appear."
         ),
+    )
+
+
+def configure_agentic_translate_parser(parser: argparse.ArgumentParser) -> None:
+    """Register the read-only agentic dossier CLI arguments.
+
+    The agentic command intentionally lives beside, not inside, the current
+    word/phrase translators. That keeps existing output contracts stable while
+    exposing a richer researcher workflow with explicit solo/debate provenance.
+    """
+
+    parser.add_argument("text", help="Word or phrase to translate into a dossier.")
+    parser.add_argument(
+        "--kind",
+        choices=["auto", "word", "phrase"],
+        default="auto",
+        help="Treat input as a word, phrase, or infer from token count (default: auto).",
+    )
+    parser.add_argument(
+        "--analysis-source",
+        choices=["solo", "debate", "both"],
+        default="both",
+        help="Analysis corpus to inspect while preserving source provenance.",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=3,
+        help="Number of baseline candidates to carry into the dossier.",
+    )
+    parser.add_argument(
+        "--exploration-budget",
+        type=int,
+        default=4,
+        help="Maximum number of otherwise/alternate-reading probes to emit.",
+    )
+    parser.add_argument(
+        "--no-dictionary",
+        dest="allow_dictionary",
+        action="store_false",
+        default=True,
+        help="Blind mode: suppress dictionary anchors and dictionary evidence packets.",
+    )
+    parser.add_argument(
+        "--allow-whole-word",
+        dest="allow_whole_word",
+        action="store_true",
+        default=True,
+        help="Allow whole-word baseline analyses (default: true).",
+    )
+    parser.add_argument(
+        "--no-whole-word",
+        "--no-whole-words",
+        dest="allow_whole_word",
+        action="store_false",
+        help="Blind mode: suppress whole-word baseline analyses.",
+    )
+
+    llm_group = parser.add_mutually_exclusive_group()
+    llm_group.add_argument(
+        "--llm",
+        action="store_true",
+        help="Allow existing baseline LLM synthesis/rendering where applicable.",
+    )
+    llm_group.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Disable LLM synthesis/rendering (default).",
+    )
+    parser.add_argument(
+        "--llm-mode",
+        choices=["local", "remote"],
+        default="remote",
+        help="Choose which LLM backend to use when --llm is enabled.",
+    )
+    parser.add_argument(
+        "--llm-context",
+        default=DEFAULT_LLM_CONTEXT,
+        help="Historical/context scope for any enabled LLM synthesis.",
+    )
+    speculative_group = parser.add_mutually_exclusive_group()
+    speculative_group.add_argument(
+        "--speculative",
+        dest="speculative",
+        action="store_true",
+        default=True,
+        help="Include bounded speculative decomposition hypotheses.",
+    )
+    speculative_group.add_argument(
+        "--no-speculative",
+        dest="speculative",
+        action="store_false",
+        help="Disable speculative decomposition hypotheses.",
+    )
+    parser.add_argument(
+        "--speculative-profile",
+        default="default",
+        help="Named speculative heuristic profile to use (default: default).",
+    )
+    parser.add_argument(
+        "--translation-profile",
+        default="default",
+        help="Named translation profile for soft motif/head-modifier scoring.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "markdown", "json"],
+        default="text",
+        help=(
+            "Output Markdown-oriented text, explicit markdown, or structured JSON "
+            "(default: text)."
+        ),
+    )
+    parser.add_argument(
+        "--detail",
+        choices=["summary", "full"],
+        default="summary",
+        help="For JSON output, emit the compact summary or full raw dossier.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Optional path to write the dossier. Defaults to stdout.",
+    )
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output with indentation.",
     )
 
 
@@ -802,6 +1051,88 @@ def _run_translate_phrase(args: argparse.Namespace) -> int:
     return translate_phrase_from_args(args)
 
 
+def _run_agentic_translate(args: argparse.Namespace) -> int:
+    """Run the read-only agentic translation dossier workflow."""
+    return agentic_translate_from_args(args)
+
+
+def agentic_translate_from_args(args: argparse.Namespace) -> int:
+    """Build an agentic translation dossier from parsed CLI arguments.
+
+    The command is intentionally read-only: it preflights DB paths, optionally
+    loads LLM environment variables, delegates evidence gathering to
+    `AgenticTranslationService`, and renders either Markdown-oriented text or
+    stable JSON.
+    """
+
+    text = (args.text or "").strip()
+    if not text:
+        _emit_error("Text must be a non-empty string.")
+        return 2
+
+    variants = _resolve_variants(args.analysis_source)
+    missing = _missing_db_paths(variants)
+    if missing:
+        _emit_error(
+            "Missing insights database file(s): "
+            + ", ".join(str(path) for path in missing)
+        )
+        return 2
+
+    llm_enabled = bool(args.llm) if args.llm or args.no_llm else False
+    llm_use_remote = args.llm_mode == "remote"
+    if llm_enabled:
+        try:
+            _configure_llm_env(args.llm_mode)
+        except FileNotFoundError as exc:
+            _emit_error(str(exc))
+            return 2
+
+    try:
+        with AgenticTranslationService.from_config(
+            sources=variants,
+            llm_enabled=llm_enabled,
+            llm_use_remote=llm_use_remote,
+        ) as service:
+            dossier = service.build_dossier(
+                text,
+                kind=args.kind,
+                analysis_source=args.analysis_source,
+                top_k=max(1, int(args.top_k)),
+                exploration_budget=max(0, int(args.exploration_budget)),
+                llm=llm_enabled,
+                llm_context=args.llm_context,
+                allow_dictionary=bool(args.allow_dictionary),
+                allow_whole_word=bool(args.allow_whole_word),
+                speculative=bool(args.speculative),
+                speculative_profile=str(args.speculative_profile),
+                translation_profile=str(args.translation_profile),
+            )
+            if args.format == "json":
+                payload = (
+                    dossier
+                    if args.detail == "full"
+                    else service.compact_dossier(dossier)
+                )
+                rendered = _render_json(payload, pretty=args.pretty)
+            else:
+                rendered = service.render_markdown(dossier)
+    except FileNotFoundError as exc:
+        _emit_error(str(exc))
+        return 2
+    except ValueError as exc:
+        _emit_error(str(exc))
+        return 2
+
+    _emit_output(rendered, output_path=args.output, newline=True)
+    if args.output:
+        print(f"Done. Wrote dossier to {args.output}")
+    recommendation = dossier.get("final_recommendation")
+    if isinstance(recommendation, dict) and recommendation.get("translation"):
+        return 0
+    return 1
+
+
 def translate_word_from_args(args: argparse.Namespace) -> int:
     """Translate a single word based on parsed CLI arguments.
 
@@ -862,25 +1193,39 @@ def translate_word_from_args(args: argparse.Namespace) -> int:
                     variant_index=index,
                     variant_total=len(variants),
                 )
-                result = service.translate_word(
-                    word,
-                    variants=[variant],
-                    strategy=args.strategy,
-                    top_k=top_k,
-                    llm=llm_enabled,
-                    llm_context=args.llm_context,
-                    fallback_top_n=fallback_top_n,
-                    evidence_mode=_resolve_evidence_mode(args.evidence_mode),
-                    weight_enabled=bool(args.weight),
-                    allow_whole_word=bool(args.allow_whole_word),
-                    allow_dictionary=bool(args.allow_dictionary),
-                    with_root_groups=bool(args.with_root_groups)
-                    or bool(args.use_root_groups_for_ranking),
-                    use_root_groups_for_ranking=bool(
-                        args.use_root_groups_for_ranking
-                    ),
-                    progress_reporter=progress_renderer if llm_enabled else None,
+                progress_renderer.start_heartbeat(
+                    f"Translating word {word.upper()} for variant {variant}...",
+                    stage_id="word_translation",
+                    variant=variant,
+                    variant_index=index,
+                    variant_total=len(variants),
                 )
+                try:
+                    result = service.translate_word(
+                        word,
+                        variants=[variant],
+                        strategy=args.strategy,
+                        top_k=top_k,
+                        llm=llm_enabled,
+                        llm_context=args.llm_context,
+                        fallback_top_n=fallback_top_n,
+                        evidence_mode=_resolve_evidence_mode(args.evidence_mode),
+                        weight_enabled=bool(args.weight),
+                        allow_whole_word=bool(args.allow_whole_word),
+                        allow_dictionary=bool(args.allow_dictionary),
+                        with_root_groups=bool(args.with_root_groups)
+                        or bool(args.use_root_groups_for_ranking),
+                        use_root_groups_for_ranking=bool(
+                            args.use_root_groups_for_ranking
+                        ),
+                        speculative=bool(args.speculative),
+                        speculative_compete=False,
+                        speculative_profile=str(args.speculative_profile),
+                        translation_profile=str(args.translation_profile),
+                        progress_reporter=progress_renderer if llm_enabled else None,
+                    )
+                finally:
+                    progress_renderer.stop_heartbeat()
                 outputs.append(
                     _build_output_payload(result, variant=variant, verbose=args.verbose)
                 )
@@ -975,27 +1320,40 @@ def translate_phrase_from_args(args: argparse.Namespace) -> int:
                     variant_index=index,
                     variant_total=len(variants),
                 )
-                result = service.translate_phrase(
-                    phrase,
-                    variants=[variant],
-                    strategy=args.strategy,
-                    top_k=top_k,
-                    llm=llm_enabled,
-                    llm_context=args.llm_context,
-                    llm_unknown_context=bool(args.llm_unknown_context),
-                    use_memory=bool(args.use_memory),
-                    memory_update=bool(args.update_memory),
-                    evidence_mode=_resolve_evidence_mode(args.evidence_mode),
-                    weight_enabled=bool(args.weight),
-                    allow_whole_word=bool(args.allow_whole_word),
-                    allow_dictionary=bool(args.allow_dictionary),
-                    with_root_groups=bool(args.with_root_groups)
-                    or bool(args.use_root_groups_for_ranking),
-                    use_root_groups_for_ranking=bool(
-                        args.use_root_groups_for_ranking
-                    ),
-                    progress_reporter=progress_renderer,
+                progress_renderer.start_heartbeat(
+                    f"Translating phrase for variant {variant}...",
+                    stage_id="phrase_translation",
+                    variant=variant,
+                    variant_index=index,
+                    variant_total=len(variants),
                 )
+                try:
+                    result = service.translate_phrase(
+                        phrase,
+                        variants=[variant],
+                        strategy=args.strategy,
+                        top_k=top_k,
+                        llm=llm_enabled,
+                        llm_context=args.llm_context,
+                        llm_unknown_context=bool(args.llm_unknown_context),
+                        use_memory=bool(args.use_memory),
+                        memory_update=bool(args.update_memory),
+                        evidence_mode=_resolve_evidence_mode(args.evidence_mode),
+                        weight_enabled=bool(args.weight),
+                        allow_whole_word=bool(args.allow_whole_word),
+                        allow_dictionary=bool(args.allow_dictionary),
+                        with_root_groups=bool(args.with_root_groups)
+                        or bool(args.use_root_groups_for_ranking),
+                        use_root_groups_for_ranking=bool(
+                            args.use_root_groups_for_ranking
+                        ),
+                        speculative=bool(args.speculative),
+                        speculative_profile=str(args.speculative_profile),
+                        translation_profile=str(args.translation_profile),
+                        progress_reporter=progress_renderer,
+                    )
+                finally:
+                    progress_renderer.stop_heartbeat()
                 outputs.append(
                     _build_phrase_output_payload(
                         result,
@@ -1194,6 +1552,7 @@ def _build_output_payload(
         "evidence_mode": result.get("evidence_mode"),
         "weighting_enabled": result.get("weighting_enabled"),
         "dictionary_enabled": result.get("dictionary_enabled"),
+        "translation_profile": result.get("translation_profile"),
         "timestamp": result.get("timestamp"),
         "llm_enabled": result.get("llm_enabled"),
         "llm_mode": result.get("llm_mode"),
@@ -1202,6 +1561,7 @@ def _build_output_payload(
         "evidence": evidence,
         "fallback_morphs": result.get("fallback_morphs", []),
         "consensus_synthesis": result.get("consensus_synthesis"),
+        "speculative_hypotheses": result.get("speculative_hypotheses", []),
     }
 
     candidates_raw = result.get("candidates")
@@ -1277,6 +1637,7 @@ def _build_phrase_output_payload(
         "evidence_mode": result.get("evidence_mode"),
         "weighting_enabled": result.get("weighting_enabled"),
         "dictionary_enabled": result.get("dictionary_enabled"),
+        "translation_profile": result.get("translation_profile"),
         "timestamp": result.get("timestamp"),
         "llm_enabled": result.get("llm_enabled"),
         "llm_mode": result.get("llm_mode"),

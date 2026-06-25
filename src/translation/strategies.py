@@ -24,6 +24,11 @@ from .placeholder_glosses import (
     semantic_core_gloss,
     surface_gloss_from_sources,
 )
+from .profiles import (
+    TranslationProfile,
+    analyze_head_modifier,
+    apply_profile_preferred_meanings,
+)
 from .repository import ClusterRecord, DictionaryMorph, WordEvidence
 
 
@@ -172,6 +177,7 @@ def select_top_k(
     *,
     evidence: WordEvidence | None = None,
     allow_dictionary: bool = True,
+    translation_profile: TranslationProfile | None = None,
 ) -> list[dict[str, object]]:
     if not ranked:
         return []
@@ -213,7 +219,33 @@ def select_top_k(
             evidence=evidence,
             allow_dictionary=allow_dictionary,
         )
+        head_modifier_analysis: dict[str, object] | None = None
+        if translation_profile is not None and evidence is not None:
+            definition_candidates = extract_definition_candidates(
+                decomp.morphs,
+                evidence,
+                allow_dictionary=allow_dictionary,
+            )
+            profile_candidate = {
+                "morphs": list(decomp.morphs),
+                "meanings": meanings,
+            }
+            apply_profile_preferred_meanings(
+                profile_candidate,
+                definition_candidates,
+                profile=translation_profile,
+            )
+            meanings = list(profile_candidate.get("meanings") or meanings)
+            raw_analysis = profile_candidate.get("head_modifier_analysis")
+            if isinstance(raw_analysis, dict):
+                head_modifier_analysis = raw_analysis
         bundle = compose_semantic_bundle(meanings)
+        if head_modifier_analysis is None and translation_profile is not None:
+            head_modifier_analysis = analyze_head_modifier(
+                decomp.morphs,
+                meanings,
+                profile=translation_profile,
+            )
         adjusted_score = float(score) + _bundle_score_bonus(bundle)
         prepared_results.append(
             {
@@ -226,6 +258,7 @@ def select_top_k(
                 else None,
                 "meanings": meanings,
                 "warnings": warnings,
+                "head_modifier_analysis": head_modifier_analysis,
                 **bundle,
             }
         )
@@ -254,6 +287,7 @@ def select_top_k(
                 "bundle_head_gloss": prepared.get("bundle_head_gloss"),
                 "bundle_function_profile": prepared.get("bundle_function_profile"),
                 "bundle_coherence_score": prepared.get("bundle_coherence_score"),
+                "head_modifier_analysis": prepared.get("head_modifier_analysis"),
                 "warnings": warnings,
             }
         )
@@ -286,7 +320,6 @@ def _extract_meanings(
     candidates = extract_definition_candidates(
         decomp.morphs,
         evidence,
-        max_per_morph=4,
         allow_dictionary=allow_dictionary,
     )
     for idx, morph in enumerate(decomp.morphs):
@@ -1224,12 +1257,12 @@ def extract_definition_candidates(
     morphs: Iterable[str],
     evidence: WordEvidence,
     *,
-    max_per_morph: int = 3,
+    max_per_morph: int | None = 0,
     allow_dictionary: bool = True,
 ) -> dict[str, list[dict[str, object]]]:
     """Return candidate definitions per morph with quality metadata."""
     try:
-        limit = max(0, int(max_per_morph))
+        limit = max(0, int(max_per_morph or 0))
     except (TypeError, ValueError):
         limit = 0
 
@@ -1366,7 +1399,7 @@ def compute_contradiction_penalty_for_candidates(
     candidates: Mapping[str, list[dict[str, object]]],
     *,
     beam_width: int = 6,
-    max_defs_per_morph: int = 4,
+    max_defs_per_morph: int = 0,
     keyword_pairs: Iterable[tuple[str, str]] | None = None,
     penalty_per_pair: float = 0.20,
     max_penalty: float = 0.50,
@@ -1415,7 +1448,7 @@ def _select_definition_combination(
     candidates: Mapping[str, list[dict[str, object]]],
     *,
     beam_width: int = 6,
-    max_defs_per_morph: int = 4,
+    max_defs_per_morph: int = 0,
 ) -> tuple[dict[str, dict[str, object]], list[DefinitionBeamResult]]:
     morph_list = [m.upper() for m in morphs if m]
     if not morph_list:

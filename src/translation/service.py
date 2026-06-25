@@ -56,6 +56,11 @@ from .placeholder_glosses import (
     is_numeric_meta_gloss,
     numeric_meta_gloss_matches_token,
 )
+from .profiles import (
+    TranslationProfile,
+    load_translation_profile,
+    score_decomposition_profile,
+)
 from .repository import (
     ClusterRecord,
     DictionaryMorph,
@@ -89,6 +94,11 @@ from .strategies import (
     compute_contradiction_penalty_for_candidates,
     extract_definition_candidates,
     select_top_k,
+)
+from .speculative import (
+    DEFAULT_SPECULATIVE_PROFILE,
+    SpeculativeProfile,
+    build_speculative_candidates,
 )
 from .substitution_aliases import (
     LookupSubstitutionRule,
@@ -372,6 +382,7 @@ class SingleWordTranslationService:
     DECISION_FEWER_MORPHS_TIE_MARGIN = 0.10
     DECISION_SINGLETON_CLEAR_WIN_MARGIN = 0.18
     ROOT_GROUP_DECISION_WEIGHT = 0.06
+    TRANSLATION_PROFILE_DECISION_WEIGHT = 0.05
     ROOT_GROUP_MAX_GROUPS_PER_ROOT = 3
 
     class EvidenceMode(str, Enum):
@@ -571,6 +582,10 @@ class SingleWordTranslationService:
         use_beam_search: bool = False,
         with_root_groups: bool = False,
         use_root_groups_for_ranking: bool = False,
+        speculative: bool = False,
+        speculative_compete: bool = False,
+        speculative_profile: str = "default",
+        translation_profile: str = "default",
         progress_reporter: TranslationProgressReporter | None = None,
     ) -> dict[str, object]:
         """Run the full single-word pipeline with optional LLM synthesis.
@@ -589,6 +604,7 @@ class SingleWordTranslationService:
         active_variants = list(variants) if variants else self.active_variants
         if active_variants:
             self.repository.require_variants(active_variants)
+        active_translation_profile = load_translation_profile(translation_profile)
 
         dictionary_snapshot = self.candidate_finder.dictionary
         try:
@@ -999,7 +1015,6 @@ class SingleWordTranslationService:
                     definition_candidates = extract_definition_candidates(
                         all_morphs,
                         evidence,
-                        max_per_morph=3,
                         allow_dictionary=allow_whole_word,
                     )
                     for key, score in parsed_paths:
@@ -1123,6 +1138,14 @@ class SingleWordTranslationService:
                 )
             fallback_decompositions: list[Decomposition] = []
             fallback_min_coverage: float | None = None
+            speculative_candidates: list[dict[str, object]] = []
+            speculative_diagnostics: dict[str, object] = {
+                "enabled": bool(speculative),
+                "profile": speculative_profile,
+                "competitive": bool(speculative_compete),
+                "returned_count": 0,
+                "paths": [],
+            }
             selected = self._select_compositional_candidates(
                 filtered,
                 evidence=evidence,
@@ -1134,6 +1157,7 @@ class SingleWordTranslationService:
                 root_fnp_profiles=root_fnp_profiles,
                 root_group_reports=root_group_reports,
                 use_root_groups_for_ranking=use_root_groups_for_ranking,
+                translation_profile=active_translation_profile,
             )
             blind_full_cover_candidates = [
                 candidate
@@ -1201,6 +1225,7 @@ class SingleWordTranslationService:
                         root_fnp_profiles=root_fnp_profiles,
                         root_group_reports=root_group_reports,
                         use_root_groups_for_ranking=use_root_groups_for_ranking,
+                        translation_profile=active_translation_profile,
                     )
                     blind_full_cover_candidates = [
                         candidate
@@ -1272,12 +1297,44 @@ class SingleWordTranslationService:
                         root_fnp_profiles=root_fnp_profiles,
                         root_group_reports=root_group_reports,
                         use_root_groups_for_ranking=use_root_groups_for_ranking,
+                        translation_profile=active_translation_profile,
                     )
                     blind_full_cover_candidates = [
                         candidate
                         for candidate in selected
                         if self._is_grounded_full_cover_compositional(candidate)
                     ]
+
+            if speculative:
+                profile = self._resolve_speculative_profile(speculative_profile)
+                speculative_candidates, speculative_diagnostics = (
+                    build_speculative_candidates(
+                        normalized,
+                        evidence=evidence,
+                        candidate_finder=self.candidate_finder,
+                        existing_candidates=[
+                            *exact_candidates,
+                            *selected,
+                        ],
+                        allow_dictionary=allow_dictionary,
+                        evidence_mode=evidence_mode.value,
+                        profile=profile,
+                        translation_profile=active_translation_profile,
+                    )
+                )
+                speculative_diagnostics["competitive"] = bool(speculative_compete)
+                for candidate in speculative_candidates:
+                    self._annotate_candidate(
+                        candidate,
+                        evidence=evidence,
+                        analysis_type="speculative_compositional",
+                    )
+                    self._attach_candidate_bundle_metadata(candidate)
+                    self._attach_candidate_fnp_metadata(
+                        candidate,
+                        evidence=evidence,
+                        root_fnp_profiles=root_fnp_profiles,
+                    )
 
             (
                 provisional_candidates,
@@ -1335,6 +1392,7 @@ class SingleWordTranslationService:
             candidate_pool = self._merge_candidate_pool(
                 exact_candidates,
                 selected,
+                speculative_candidates if speculative_compete else [],
                 provisional_candidates,
                 top_k=top_k,
             )
@@ -1409,6 +1467,7 @@ class SingleWordTranslationService:
                 "evidence_mode": evidence_mode.value,
                 "weighting_enabled": weight_enabled,
                 "dictionary_enabled": allow_dictionary,
+                "translation_profile": active_translation_profile.name,
                 "llm_enabled": llm_enabled,
                 "llm_mode": (
                     "remote"
@@ -1442,6 +1501,10 @@ class SingleWordTranslationService:
                         else None
                     ),
                     "weighting_enabled": weight_enabled,
+                    "translation_profile": {
+                        "name": active_translation_profile.name,
+                        "source": active_translation_profile.source,
+                    },
                     "hard_filters": filter_diagnostics,
                     "decomposition": {
                         "generated": len(decompositions),
@@ -1452,11 +1515,28 @@ class SingleWordTranslationService:
                         "fallback_mode": fallback_mode,
                         "fallback_min_coverage_ratio": fallback_min_coverage,
                     },
+                    "speculative": speculative_diagnostics,
                     "fnp_profile_count": len(root_fnp_profiles),
                 },
+                "speculative_hypotheses": [
+                    dict(candidate) for candidate in speculative_candidates
+                ],
             }
         finally:
             self.candidate_finder.dictionary = dictionary_snapshot
+
+    @staticmethod
+    def _resolve_speculative_profile(name: str) -> SpeculativeProfile:
+        """Resolve a named speculative profile.
+
+        The first implementation intentionally exposes one stable default
+        profile while leaving the name in the public API for later config-backed
+        heuristic sets.
+        """
+
+        if (name or "default").strip() == "default":
+            return DEFAULT_SPECULATIVE_PROFILE
+        return SpeculativeProfile(name=(name or "default").strip())
 
     def _enrich_candidates(
         self,
@@ -1697,7 +1777,6 @@ class SingleWordTranslationService:
         exact_definition_candidates = extract_definition_candidates(
             [word],
             evidence,
-            max_per_morph=4,
         ).get(word, [])
         anchor_candidates = [
             entry
@@ -2148,6 +2227,7 @@ class SingleWordTranslationService:
         root_fnp_profiles: Mapping[str, RootFNPProfile] | None = None,
         root_group_reports: Mapping[str, Mapping[str, object]] | None = None,
         use_root_groups_for_ranking: bool = False,
+        translation_profile: TranslationProfile | None = None,
     ) -> list[dict[str, object]]:
         """Score decompositions via an explicit context-weighted decision function.
 
@@ -2259,6 +2339,20 @@ class SingleWordTranslationService:
 
         decision_rows: list[dict[str, object]] = []
         active_fnp_profiles = dict(root_fnp_profiles or {})
+        profile_definition_candidates = (
+            extract_definition_candidates(
+                {
+                    morph
+                    for decomp in filtered
+                    for morph in getattr(decomp, "morphs", [])
+                    if morph
+                },
+                evidence,
+                allow_dictionary=allow_whole_word,
+            )
+            if translation_profile is not None
+            else {}
+        )
         for decomp, legacy_score in ranked:
             morph_key = tuple(decomp.morphs)
             base_component = float(
@@ -2286,11 +2380,29 @@ class SingleWordTranslationService:
             )
             fnp_raw = float(fnp_analysis.fnp_raw)
             fnp_component = self.FNP_DECISION_WEIGHT * fnp_raw
+            profile_analysis = (
+                score_decomposition_profile(
+                    decomp.morphs,
+                    profile_definition_candidates,
+                    profile=translation_profile,
+                )
+                if translation_profile is not None
+                else {
+                    "score": 0.0,
+                    "profile": "none",
+                    "head_roots": [],
+                    "modifier_roots": [],
+                    "distributed_motif_count": 0,
+                }
+            )
+            profile_raw = float(profile_analysis.get("score") or 0.0)
+            profile_component = self.TRANSLATION_PROFILE_DECISION_WEIGHT * profile_raw
             decision_score = (
                 base_component
                 + semantic_component
                 + attestation_component
                 + fnp_component
+                + profile_component
                 - singleton_burden_component
             )
             baseline_decision_score = decision_score
@@ -2328,6 +2440,9 @@ class SingleWordTranslationService:
                     "attestation_component": attestation_component,
                     "fnp_raw": fnp_raw,
                     "fnp_component": fnp_component,
+                    "translation_profile_raw": profile_raw,
+                    "translation_profile_component": profile_component,
+                    "head_modifier_analysis": profile_analysis,
                     "attachment_fit_score": fnp_analysis.attachment_fit_score,
                     "local_fnp_score": fnp_analysis.local_fnp_score,
                     "uncertainty_penalty": fnp_analysis.uncertainty_penalty,
@@ -2371,6 +2486,10 @@ class SingleWordTranslationService:
             "semantic_weight": self.DECISION_SEMANTIC_WEIGHT,
             "attestation_weight": self.DECISION_ATTESTATION_WEIGHT,
             "fnp_weight": self.FNP_DECISION_WEIGHT,
+            "translation_profile_weight": self.TRANSLATION_PROFILE_DECISION_WEIGHT,
+            "translation_profile": (
+                translation_profile.name if translation_profile is not None else None
+            ),
             "singleton_burden_weight": self.DECISION_SINGLETON_BURDEN_WEIGHT,
             "fewer_morphs_tie_margin": self.DECISION_FEWER_MORPHS_TIE_MARGIN,
             "singleton_clear_win_margin": self.DECISION_SINGLETON_CLEAR_WIN_MARGIN,
@@ -2410,6 +2529,7 @@ class SingleWordTranslationService:
             k=top_k,
             evidence=evidence,
             allow_dictionary=allow_whole_word,
+            translation_profile=translation_profile,
         )
         self._attach_decision_traces_to_candidates(selected, decision_rows)
         for candidate in selected:
@@ -2660,6 +2780,17 @@ class SingleWordTranslationService:
             "attestation_component": float(row.get("attestation_component") or 0.0),
             "fnp_raw": float(row.get("fnp_raw") or 0.0),
             "fnp_component": float(row.get("fnp_component") or 0.0),
+            "translation_profile_raw": float(
+                row.get("translation_profile_raw") or 0.0
+            ),
+            "translation_profile_component": float(
+                row.get("translation_profile_component") or 0.0
+            ),
+            "head_modifier_analysis": dict(
+                row.get("head_modifier_analysis")
+                if isinstance(row.get("head_modifier_analysis"), Mapping)
+                else {}
+            ),
             "attachment_fit_score": float(row.get("attachment_fit_score") or 0.0),
             "local_fnp_score": float(row.get("local_fnp_score") or 0.0),
             "uncertainty_penalty": float(row.get("uncertainty_penalty") or 0.0),
@@ -3187,7 +3318,6 @@ class SingleWordTranslationService:
         definition_candidates = extract_definition_candidates(
             all_morphs,
             evidence,
-            max_per_morph=3,
             allow_dictionary=allow_whole_word,
         )
         for key, score in parsed_paths:

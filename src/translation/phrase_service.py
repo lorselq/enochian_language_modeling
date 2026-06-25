@@ -314,6 +314,9 @@ class PhraseTranslationService:
         allow_dictionary: bool = True,
         with_root_groups: bool = False,
         use_root_groups_for_ranking: bool = False,
+        speculative: bool = True,
+        speculative_profile: str = "default",
+        translation_profile: str = "default",
         progress_reporter: PhraseProgressReporter | None = None,
     ) -> dict[str, object]:
         """Translate one phrase, splitting semicolon/colon clauses first.
@@ -346,6 +349,9 @@ class PhraseTranslationService:
                     allow_dictionary=allow_dictionary,
                     with_root_groups=with_root_groups,
                     use_root_groups_for_ranking=use_root_groups_for_ranking,
+                    speculative=speculative,
+                    speculative_profile=speculative_profile,
+                    translation_profile=translation_profile,
                     progress_reporter=progress_reporter,
                 )
                 for clause in clauses
@@ -371,6 +377,9 @@ class PhraseTranslationService:
             allow_dictionary=allow_dictionary,
             with_root_groups=with_root_groups,
             use_root_groups_for_ranking=use_root_groups_for_ranking,
+            speculative=speculative,
+            speculative_profile=speculative_profile,
+            translation_profile=translation_profile,
             progress_reporter=progress_reporter,
         )
 
@@ -392,6 +401,9 @@ class PhraseTranslationService:
         allow_dictionary: bool = True,
         with_root_groups: bool = False,
         use_root_groups_for_ranking: bool = False,
+        speculative: bool = True,
+        speculative_profile: str = "default",
+        translation_profile: str = "default",
         progress_reporter: PhraseProgressReporter | None = None,
     ) -> dict[str, object]:
         """Translate a phrase and expose both technical and layman-readable outputs.
@@ -456,6 +468,10 @@ class PhraseTranslationService:
                     use_beam_search=True,
                     with_root_groups=bool(use_root_groups_for_ranking),
                     use_root_groups_for_ranking=bool(use_root_groups_for_ranking),
+                    speculative=bool(speculative),
+                    speculative_compete=bool(speculative),
+                    speculative_profile=speculative_profile,
+                    translation_profile=translation_profile,
                 )
                 word_result_cache[token.upper()] = copy.deepcopy(cached_result)
             word_result = copy.deepcopy(cached_result)
@@ -766,6 +782,7 @@ class PhraseTranslationService:
             "evidence_mode": evidence_mode.value,
             "weighting_enabled": weight_enabled,
             "dictionary_enabled": allow_dictionary,
+            "translation_profile": translation_profile,
             "llm_enabled": llm_enabled,
             "llm_mode": (
                 "remote"
@@ -1435,8 +1452,18 @@ class PhraseTranslationService:
         """Convert single-word results into phrase-level candidate objects."""
         candidates_raw = result.get("candidates")
         candidates = candidates_raw if isinstance(candidates_raw, list) else []
+        speculative_raw = result.get("speculative_hypotheses")
+        speculative_candidates = speculative_raw if isinstance(speculative_raw, list) else []
         converted: list[PhraseTokenCandidate] = []
-        for candidate in candidates[: max(1, top_k)]:
+        selected_candidates = list(candidates[: max(1, top_k)])
+        for candidate in [*candidates, *speculative_candidates]:
+            if not isinstance(candidate, dict):
+                continue
+            if candidate in selected_candidates:
+                continue
+            if str(candidate.get("analysis_type") or "") == "speculative_compositional":
+                selected_candidates.append(candidate)
+        for candidate in selected_candidates:
             if not isinstance(candidate, dict):
                 continue
             meanings = candidate.get("meanings", [])
